@@ -1,0 +1,72 @@
+# Core async and web
+asyncio
+aiohttp==3.9.1
+httpx==0.26.0
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Message queue
+aiokafka==0.10.0
+
+# Databases
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+motor==3.3.2
+pymongo==4.6.1
+
+# Cache
+redis[hiredis]==5.0.1
+
+# Web scraping
+beautifulsoup4==4.12.2
+lxml==5.0.0
+playwright==1.40.0
+
+# PDF processing
+PyMuPDF==1.23.8
+pdfplumber==0.11.0
+pytesseract==0.3.10
+pdf2image==1.16.3
+Pillow==10.2.0
+
+# Language and translation
+fasttext-langdetect==1.0.5
+anthropic==0.18.1
+
+# File processing
+pandas==2.1.4
+openpyxl==3.1.2
+python-docx==1.1.0
+xmltodict==0.13.0
+
+# Reliability
+tenacity==8.2.3
+pybreaker==1.0.2
+aiolimiter==1.1.0
+
+# Deduplication
+pybloom-live==4.0.0
+
+# Monitoring
+prometheus-client==0.19.0
+structlog==24.1.0
+opentelemetry-api==1.22.0
+opentelemetry-sdk==1.22.0
+opentelemetry-exporter-jaeger==1.22.0
+
+# Progress bars
+tqdm==4.66.1
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+httpx==0.26.0
+
+# Code quality
+black==24.1.1
+flake8==7.0.0
+mypy==1.8.0
