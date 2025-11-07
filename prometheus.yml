@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'document-processor'
+    environment: 'production'
+
+scrape_configs:
+  - job_name: 'document-processor'
+    static_configs:
+      - targets: ['app:9090']
+        labels:
+          service: 'document-processor'
+
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  # - "alerts.yml"
