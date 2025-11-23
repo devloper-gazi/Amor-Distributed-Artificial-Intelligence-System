@@ -6,7 +6,7 @@ LABEL description="Production-ready multi-lingual document processing system"
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (combined for better layer caching)
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libtesseract-dev \
     poppler-utils \
     curl \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -39,6 +40,9 @@ RUN playwright install chromium && \
 
 # Copy application code
 COPY document_processor/ ./document_processor/
+
+# Fix line endings for all Python files (cross-platform compatibility)
+RUN find . -type f -name "*.py" -exec dos2unix {} \;
 
 # Create directories for data
 RUN mkdir -p /data/documents

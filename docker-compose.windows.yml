@@ -1,0 +1,71 @@
+version: '3.8'
+
+# Windows-specific overrides for docker-compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+
+services:
+  # Main application - Windows overrides
+  app:
+    environment:
+      # Windows-specific path separators
+      - PLATFORM=windows
+    volumes:
+      # Windows path format for volume mounts
+      - ./data:/data/documents:rw
+    deploy:
+      # Adjusted for Windows Docker Desktop
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '1'
+          memory: 1.5G
+
+  # Kafka - Windows specific networking
+  kafka:
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Use localhost for Windows Docker Desktop
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # PostgreSQL - Windows volume handling
+  postgres:
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:rw
+
+  # MongoDB - Windows volume handling
+  mongo:
+    volumes:
+      - mongo-data:/data/db:rw
+
+  # Prometheus - Windows path handling
+  prometheus:
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus:rw
+
+  # Grafana - Windows volume handling
+  grafana:
+    volumes:
+      - grafana-data:/var/lib/grafana:rw
+
+# Named volumes remain the same
+volumes:
+  postgres-data:
+  mongo-data:
+  prometheus-data:
+  grafana-data:
+
+# Network configuration for Windows
+networks:
+  docprocessor-network:
+    driver: bridge
