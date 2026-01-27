@@ -2,6 +2,11 @@
 
 A complete, production-ready Python system for real-time processing, translation, and consolidation of hundreds of thousands of documents across multiple formats and languages.
 
+### 🌕 Development Notice ☀️
+-- **It is actively being developed and may contain bugs. Please check the Version History.
+ - Link: https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System/blob/main/Version%20History.md
+
+
 ## Features
 
 ### 🌍 Multi-Source Support
