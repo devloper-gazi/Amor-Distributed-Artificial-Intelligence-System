@@ -389,8 +389,8 @@ async def _ollama_pull_model(model_name: str) -> None:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    f\"Ollama model '{model_name}' is not installed. \"  # noqa: E501
-                    f\"Install it with: docker exec amor-ollama ollama pull {model_name}\"
+                    f"Ollama model '{model_name}' is not installed. "
+                    f"Install it with: docker exec amor-ollama ollama pull {model_name}"
                 ),
             )
 
