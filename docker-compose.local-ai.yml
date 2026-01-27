@@ -1,0 +1,239 @@
+# ==================== Local AI Research System ====================
+# Optimized for RTX 4060 8GB VRAM + 16GB RAM
+# Uses Ollama, CrewAI, NLLB Translation, and LanceDB
+
+name: amor
+
+services:
+  # ==================== Ollama LLM Server ====================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: amor-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ai-network
+
+  # ==================== Main Application with Local AI ====================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.local-ai
+    container_name: amor-app-local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Ollama Configuration
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+      - OLLAMA_AUTO_PULL=true
+
+      # Local Translation
+      - TRANSLATION_MODE=local
+      - NLLB_MODEL_PATH=/models/nllb-200-distilled-600M
+
+      # Vector Database
+      - LANCEDB_PATH=/data/vectors
+      - EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1
+
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+
+      # PostgreSQL
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=research_db
+      - POSTGRES_USER=research_user
+      - POSTGRES_PASSWORD=research_pass
+
+      # MongoDB
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DATABASE=research_documents
+
+      # Claude API Configuration (optional - for chat research)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # System
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - MAX_WORKERS=4
+
+      # Resource Limits
+      - MAX_CONCURRENT_TASKS=2
+      - CHUNK_SIZE=1000
+      - CHUNK_OVERLAP=200
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ai_cache:/app/.cache
+    depends_on:
+      ollama:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+    networks:
+      - ai-network
+
+  # ==================== Redis Cache ====================
+  redis:
+    image: redis:7-alpine
+    container_name: amor-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - ai-network
+
+  # ==================== PostgreSQL Metadata ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: amor-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=research_db
+      - POSTGRES_USER=research_user
+      - POSTGRES_PASSWORD=research_pass
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=en_US.utf8 --lc-ctype=en_US.utf8
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research_user -d research_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-network
+
+  # ==================== MongoDB Document Storage ====================
+  mongo:
+    image: mongo:7
+    container_name: amor-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=research_documents
+    volumes:
+      - mongo_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+    command: mongod --wiredTigerCacheSizeGB 0.5
+    networks:
+      - ai-network
+
+  # ==================== Prometheus Monitoring ====================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: amor-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    networks:
+      - ai-network
+
+  # ==================== Grafana Dashboards ====================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: amor-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    networks:
+      - ai-network
+
+volumes:
+  ollama_data:
+  redis_data:
+  postgres_data:
+  mongo_data:
+  prometheus_data:
+  grafana_data:
+  ai_cache:
+
+networks:
+  ai-network:
+    driver: bridge

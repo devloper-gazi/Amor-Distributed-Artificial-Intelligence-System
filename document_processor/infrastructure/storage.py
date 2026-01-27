@@ -7,7 +7,7 @@ import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Text, Boolean
+from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Text, Boolean, text
 from sqlalchemy.orm import declarative_base
 from motor.motor_asyncio import AsyncIOMotorClient
 from ..config.settings import settings
@@ -38,7 +38,7 @@ class TranslatedDocumentModel(Base):
     status = Column(String(20), index=True)
     error = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
-    metadata = Column(JSON)
+    document_metadata = Column(JSON)  # Changed from 'metadata' to 'document_metadata'
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -184,7 +184,7 @@ class StorageManager:
                 status=document.status,
                 error=document.error,
                 retry_count=document.retry_count,
-                metadata=document.metadata,
+                document_metadata=document.metadata,  # Changed from 'metadata' to 'document_metadata'
                 created_at=document.created_at,
                 completed_at=document.completed_at,
             )
@@ -346,7 +346,7 @@ class StorageManager:
                 await self.connect_postgres()
 
             async with self.pg_engine.connect() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             health["postgres"] = True
         except Exception as e:
             logger.error("postgres_health_check_failed", error=str(e))

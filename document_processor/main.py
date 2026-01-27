@@ -6,8 +6,13 @@ Provides REST API for document processing and monitoring.
 import asyncio
 from contextlib import asynccontextmanager
 from typing import List
+import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.requests import Request
+from fastapi.middleware.cors import CORSMiddleware
 from .config.settings import settings
 from .config.logging_config import logger
 from .core.models import (
@@ -20,6 +25,40 @@ from .processing.pipeline import pipeline
 from .infrastructure.monitoring import monitor
 from .infrastructure.cache import cache_manager
 from .infrastructure.storage import storage_manager
+from .infrastructure.chat_store import chat_store
+
+# Import API routers
+try:
+    from .api.chat_research_routes import router as chat_research_router
+    CHAT_RESEARCH_AVAILABLE = True
+except ImportError:
+    CHAT_RESEARCH_AVAILABLE = False
+    logger.warning("Chat research routes not available")
+
+try:
+    from .api.local_ai_routes_simple import router as local_ai_router, initialize_local_ai, cleanup_local_ai
+    LOCAL_AI_AVAILABLE = True
+except ImportError:
+    LOCAL_AI_AVAILABLE = False
+    logger.warning("Local AI routes not available")
+
+from .api.chat_sessions_routes import router as chat_sessions_router
+from .api.chat_folders_routes import router as chat_folders_router
+
+# Crawling and Translation API routes
+try:
+    from .api.crawling_routes import router as crawling_router
+    CRAWLING_AVAILABLE = True
+except ImportError:
+    CRAWLING_AVAILABLE = False
+    logger.warning("Crawling routes not available")
+
+try:
+    from .api.translation_routes import router as translation_router
+    TRANSLATION_AVAILABLE = True
+except ImportError:
+    TRANSLATION_AVAILABLE = False
+    logger.warning("Translation routes not available")
 
 
 @asynccontextmanager
@@ -31,11 +70,40 @@ async def lifespan(app: FastAPI):
     try:
         # Start pipeline
         await pipeline.start()
+
+        # Ensure chat persistence indexes exist (MongoDB)
+        try:
+            await chat_store.ensure_indexes()
+        except Exception as e:
+            logger.warning("chat_store_indexes_failed", error=str(e))
+
+        # Initialize Local AI if available
+        if LOCAL_AI_AVAILABLE:
+            import os
+            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+            nllb_path = os.getenv("NLLB_MODEL_PATH")
+            vector_path = os.getenv("LANCEDB_PATH", "/data/vectors")
+
+            await initialize_local_ai(
+                ollama_url=ollama_url,
+                ollama_model=ollama_model,
+                nllb_model_path=nllb_path,
+                vector_db_path=vector_path
+            )
+            logger.info("local_ai_initialized")
+
         logger.info("application_started")
         yield
     finally:
         # Shutdown
         logger.info("application_stopping")
+
+        # Cleanup Local AI if available
+        if LOCAL_AI_AVAILABLE:
+            await cleanup_local_ai()
+            logger.info("local_ai_cleaned_up")
+
         await pipeline.stop()
         logger.info("application_stopped")
 
@@ -48,16 +116,73 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files and templates
+import os
+web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
+app.mount("/static", StaticFiles(directory=os.path.join(web_ui_path, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(web_ui_path, "templates"))
+app.state.static_version = os.getenv("STATIC_VERSION") or str(int(time.time()))
+
 
 @app.get("/")
-async def root():
-    """Root endpoint."""
+async def root(request: Request):
+    """Serve the unified monochrome chat UI with Research, Thinking, and Coding modes."""
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "static_version": app.state.static_version},
+    )
+
+
+@app.get("/api")
+async def api_root():
+    """API root endpoint."""
     return {
         "service": settings.service_name,
         "version": "1.0.0",
         "environment": settings.environment,
         "status": "running",
+        "chat_research_available": CHAT_RESEARCH_AVAILABLE,
+        "local_ai_available": LOCAL_AI_AVAILABLE,
+        "crawling_available": CRAWLING_AVAILABLE,
+        "translation_available": TRANSLATION_AVAILABLE,
     }
+
+
+# Include API routers
+if CHAT_RESEARCH_AVAILABLE:
+    app.include_router(chat_research_router)
+    logger.info("Chat research routes included")
+
+if LOCAL_AI_AVAILABLE:
+    app.include_router(local_ai_router)
+    logger.info("Local AI routes included")
+
+# Chat sessions persistence (MongoDB)
+app.include_router(chat_sessions_router)
+logger.info("Chat sessions routes included")
+
+# Chat folders persistence (MongoDB)
+app.include_router(chat_folders_router)
+logger.info("Chat folders routes included")
+
+# Crawling API routes
+if CRAWLING_AVAILABLE:
+    app.include_router(crawling_router)
+    logger.info("Crawling routes included")
+
+# Translation API routes
+if TRANSLATION_AVAILABLE:
+    app.include_router(translation_router)
+    logger.info("Translation routes included")
 
 
 @app.get("/health")

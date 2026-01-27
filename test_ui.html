@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Interface Test</title>
+    <link rel="stylesheet" href="web_ui/static/css/tokens.css">
+    <link rel="stylesheet" href="web_ui/static/css/styles.css">
+    <link rel="stylesheet" href="web_ui/static/css/chat-research.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Minimal Top Bar -->
+    <header class="top-bar-minimal">
+        <div class="top-bar-left">
+            <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="logo">
+                <i class="fas fa-robot"></i>
+                <span class="logo-text">Amor</span>
+            </div>
+        </div>
+
+        <div class="top-bar-center">
+            <div class="mode-selector-container">
+                <select class="mode-selector" id="modeSelector" aria-label="Select mode">
+                    <option value="research">Research</option>
+                    <option value="thinking">Thinking</option>
+                    <option value="coding">Coding</option>
+                </select>
+                <i class="fas fa-chevron-down mode-selector-icon"></i>
+            </div>
+        </div>
+
+        <div class="top-bar-right">
+            <button class="top-bar-btn" id="historyBtn" aria-label="Chat history" title="Chat History">
+                <i class="fas fa-history"></i>
+            </button>
+            <button class="top-bar-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Toggle Theme">
+                <i class="fas fa-moon"></i>
+            </button>
+            <button class="top-bar-btn" id="settingsBtn" aria-label="Settings" title="Settings">
+                <i class="fas fa-cog"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Sidebar Backdrop -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- Collapsible Sidebar -->
+    <aside class="sidebar-collapsible" id="sidebarCollapsible" role="navigation" aria-label="Chat navigation">
+        <div class="sidebar-header">
+            <button class="new-chat-btn" id="newChatBtn">
+                <i class="fas fa-plus"></i>
+                <span>New Chat</span>
+            </button>
+        </div>
+
+        <div class="sidebar-content">
+            <div class="chat-history-section">
+                <div class="section-title">Chat History</div>
+                <div class="chat-history-list" id="chatHistoryList">
+                    <div class="history-empty">
+                        <i class="fas fa-comments"></i>
+                        <p>No chat history yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mode-section">
+                <div class="section-title">Mode</div>
+                <div class="mode-options">
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="research" checked>
+                        <span class="mode-icon">🔍</span>
+                        <span class="mode-label">Research</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="thinking">
+                        <span class="mode-icon">🧠</span>
+                        <span class="mode-label">Thinking</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="coding">
+                        <span class="mode-icon">💻</span>
+                        <span class="mode-label">Coding</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            <button class="sidebar-link" id="sidebarAnalyticsBtn">
+                <i class="fas fa-chart-bar"></i>
+                <span>Analytics</span>
+            </button>
+            <button class="sidebar-link" id="sidebarSettingsBtn">
+                <i class="fas fa-cog"></i>
+                <span>Settings</span>
+            </button>
+
+            <div class="system-status" id="systemStatus">
+                <div class="status-indicator">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="status-text" id="statusText">Testing Mode</span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Chat Container -->
+    <main class="chat-main" id="chatMain">
+        <div class="messages-area" id="messagesArea">
+            <div class="welcome-container" id="welcomeContainer">
+                <div class="welcome-header">
+                    <div class="welcome-icon">
+                        <div class="icon-sparkle icon-sparkle-1"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-2"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-3"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-4"><i class="fas fa-star"></i></div>
+                        <i class="fas fa-search icon-main"></i>
+                    </div>
+                    <h1>Welcome to AI Research Assistant</h1>
+                    <p>Test Interface - Frontend Only</p>
+                </div>
+
+                <div class="capability-cards">
+                    <div class="capability-card" data-mode="research">
+                        <div class="card-icon">🔍</div>
+                        <h3>Conduct Research</h3>
+                        <p>Comprehensive research with web scraping and analysis</p>
+                    </div>
+                    <div class="capability-card" data-mode="thinking">
+                        <div class="card-icon">🧠</div>
+                        <h3>Analyze & Think</h3>
+                        <p>Deep reasoning and analytical problem-solving</p>
+                    </div>
+                    <div class="capability-card" data-mode="coding">
+                        <div class="card-icon">💻</div>
+                        <h3>Generate Code</h3>
+                        <p>Code generation, debugging, and technical assistance</p>
+                    </div>
+                </div>
+
+                <div class="welcome-footer">
+                    <p class="ai-mode-hint">
+                        <strong>Current Mode:</strong> <span id="currentModeDisplay">Research</span>
+                    </p>
+                    <p class="ai-type-hint">
+                        <span id="currentAIType">Frontend Test Mode</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area" id="inputArea">
+            <div class="input-container">
+                <textarea
+                    id="chatInput"
+                    class="chat-input"
+                    placeholder="Type your message... (Frontend test - no backend)"
+                    rows="1"
+                    aria-label="Chat message input"
+                ></textarea>
+                <button id="sendButton" class="send-btn" aria-label="Send message">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+            <div class="input-footer">
+                <span class="character-count" id="characterCount">0 characters</span>
+                <span class="ai-indicator" id="aiIndicator">
+                    <span class="indicator-dot"></span>
+                    <span id="aiModeText">Test Mode</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Research Progress Modal -->
+        <div class="progress-modal" id="progressModal" style="display: none;">
+            <div class="progress-content">
+                <div class="progress-header">
+                    <h3>Research in Progress</h3>
+                    <div class="progress-status" id="progressStatus">Initializing...</div>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                </div>
+                <div class="agent-activity" id="agentActivity">
+                    <div class="agent-item">
+                        <span class="agent-icon">🔍</span>
+                        <span class="agent-name">Research Specialist</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                    <div class="agent-item">
+                        <span class="agent-icon">📊</span>
+                        <span class="agent-name">Data Analyst</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                    <div class="agent-item">
+                        <span class="agent-icon">✍️</span>
+                        <span class="agent-name">Technical Writer</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="modal-close" data-modal="settingsModal" aria-label="Close settings">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Preferences</h3>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Dark Mode</div>
+                            <div class="setting-desc">Use dark color scheme</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="darkModeToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Use Claude API</div>
+                            <div class="setting-desc">Switch between Local AI and Claude API</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="useClaudeAPI">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Modal -->
+    <div class="modal" id="analyticsModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>System Analytics</h2>
+                <button class="modal-close" data-modal="analyticsModal" aria-label="Close analytics">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="analytics-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-comments"></i></div>
+                        <div class="stat-value" id="totalChats">0</div>
+                        <div class="stat-label">Total Chats</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="web_ui/static/js/app.js"></script>
+    <script src="web_ui/static/js/chat-research.js"></script>
+
+    <script>
+        // Test mode override - mock API calls
+        console.log('🧪 Running in test mode');
+
+        // Add test message functionality
+        if (window.chatController) {
+            const originalSendMessage = window.chatController.sendMessage.bind(window.chatController);
+            window.chatController.sendMessage = async function() {
+                const message = this.chatInput?.value.trim();
+                if (!message) return;
+
+                // Add user message
+                this.addMessage('user', message);
+                this.messageHistory.push({ role: 'user', content: message });
+
+                this.chatInput.value = '';
+                this.chatInput.style.height = 'auto';
+                this.updateCharacterCount();
+
+                // Hide welcome
+                const welcomeContainer = document.getElementById('welcomeContainer');
+                if (welcomeContainer) {
+                    welcomeContainer.style.display = 'none';
+                }
+
+                // Show typing indicator
+                const typingId = this.addTypingIndicator();
+
+                // Simulate response after 1.5 seconds
+                setTimeout(() => {
+                    this.removeTypingIndicator(typingId);
+
+                    const responses = {
+                        research: `Based on my research, I found the following information about "${message}":\n\n• Key finding 1: This is a test response\n• Key finding 2: The frontend is working correctly\n• Key finding 3: Mode switching is functional\n\nThis is a simulated response in ${this.mode} mode.`,
+                        thinking: `Let me think about "${message}"...\n\nAfter analyzing this deeply:\n\n1. First consideration: Frontend integration works\n2. Second consideration: The UI is responsive\n3. Conclusion: All systems operational\n\nThis is a simulated response in ${this.mode} mode.`,
+                        coding: `Here's some example code for "${message}":\n\n\`\`\`javascript\nfunction example() {\n  console.log('Frontend test successful');\n  console.log('Mode:', '${this.mode}');\n  return true;\n}\n\`\`\`\n\nThis is a simulated response in ${this.mode} mode.`
+                    };
+
+                    const response = responses[this.mode] || 'Test response';
+                    this.addMessage('assistant', response, 'test-mode');
+                    this.messageHistory.push({ role: 'assistant', content: response });
+                }, 1500);
+            };
+        }
+
+        console.log('✅ Test mode initialized');
+        console.log('📝 All JavaScript files loaded');
+        console.log('🎨 All CSS files loaded');
+        console.log('🔧 ChatController:', window.chatController ? 'Ready' : 'Not initialized');
+        console.log('🔧 App State:', window.appState ? 'Ready' : 'Not initialized');
+    </script>
+</body>
+</html>

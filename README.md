@@ -100,11 +100,75 @@ docker-compose -f docker-compose.yml -f docker-compose.windows.yml up -d
 ### Access the Services
 
 Once started, access the following URLs:
-- **API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **Metrics Endpoint**: http://localhost:9090
-- **Prometheus**: http://localhost:9091
-- **Grafana**: http://localhost:3000 (username: admin, password: admin123)
+- **Amor Web UI**: `http://localhost:8000`
+- **API Docs**: `http://localhost:8000/docs`
+- **Metrics**: `http://localhost:8000/metrics`
+
+If you can only expose a single port (8000), monitoring UIs are also available via:
+- **Grafana (via 8000)**: `http://localhost:8000/grafana/` (admin/admin123)
+- **Prometheus (via 8000)**: `http://localhost:8000/prometheus/`
+
+Direct access (optional, if those ports are allowed):
+- **Grafana**: `http://localhost:3000` (admin/admin123)
+- **Prometheus**: `http://localhost:9091`
+
+---
+
+## Amor Research Modes & API Overview
+
+Amor exposes two research providers that share a unified chat-first UI (research / thinking / coding modes) and common UX:
+
+- **Claude API mode** (cloud):
+  - Uses Anthropic’s Claude models via `ANTHROPIC_API_KEY`.
+  - Endpoints are under `"/api/chat/*"` (for example `POST /api/chat/research`, `/api/chat/thinking`, `/api/chat/coding`).
+  - Best when you want highest quality answers and are online.
+
+- **Local AI mode** (offline):
+  - Uses the `ollama` service (container name `amor-ollama`) running a local model such as `qwen2.5:7b`.
+  - Endpoints are under `"/api/local-ai/*"` (for example `POST /api/local-ai/research`, `/api/local-ai/thinking`, `/api/local-ai/coding`).
+  - Can optionally use the local NLLB translator and LanceDB vector store for multilingual, retrieval-augmented research.
+
+The main API entrypoints for checking research availability are:
+
+- `GET /api` – high-level flags: `chat_research_available`, `local_ai_available`, `crawling_available`, `translation_available`.
+- `GET /api/chat/health` – Claude API configuration and connectivity.
+- `GET /api/local-ai/health` – Local AI + Ollama + translation readiness.
+
+See `CHAT_RESEARCH_GUIDE.md`, `RESEARCH_GUIDE.md`, and `LOCAL_AI_SETUP.md` for mode-specific payloads and examples.
+
+---
+
+## Docker Stack (Amor)
+
+The Docker Compose file (`docker-compose.yml`) defines the canonical Amor stack:
+
+- **Project name**: `amor` (top-level `name` in `docker-compose.yml`).
+- **Gateway (`gateway`)**:
+  - Nginx entrypoint that exposes **port 8000**.
+  - Routes `/` to the FastAPI app, `/grafana` to Grafana, `/prometheus` to Prometheus.
+- **Application (`app`)**:
+  - FastAPI document processor and chat research API.
+  - Talks to Kafka, Redis, PostgreSQL, MongoDB, Ollama, and LanceDB.
+- **Local AI (`ollama`)**:
+  - Service name: `ollama`
+  - Container name: `amor-ollama`
+  - Exposes port `11434` inside the Docker network; the app uses `OLLAMA_BASE_URL=http://ollama:11434`.
+- **Datastores**:
+  - `postgres` – metadata (documents, stats, etc.).
+  - `mongo` – full document content.
+  - `redis` – cache and rate limiting.
+  - `lancedb-data` volume – vector store path mounted at `/data/vectors`.
+- **Streaming & Monitoring**:
+  - `kafka` + `zookeeper` – ingestion/event pipeline.
+  - `prometheus` – metrics at `/prometheus` (or `http://localhost:9091` directly).
+  - `grafana` – dashboards exposed via `/grafana` (or `http://localhost:3000` directly).
+
+Key research-related environment variables (set via `.env` and consumed by the `app` service):
+
+- `ANTHROPIC_API_KEY` – required for Claude API research mode.
+- `OLLAMA_BASE_URL` – defaults to `http://ollama:11434` (service name `ollama`).
+- `OLLAMA_MODEL` – default `qwen2.5:7b`, can be changed to any installed Ollama model.
+- `OLLAMA_AUTO_PULL` – when `true`, the app may attempt to pull the model automatically on first use (requires internet).
 
 ## Usage
 
@@ -191,7 +255,46 @@ Infrastructure: Kafka + Redis + PostgreSQL + MongoDB
 
 ## Troubleshooting
 
-### Common Issues
+### Research & Chat-Specific Issues
+
+#### Claude API not configured
+- **Symptom**: Claude mode is unavailable in the UI, or `/api/chat/health` reports `claude_api_configured: false`.
+- **Fix**:
+  - Set `ANTHROPIC_API_KEY` in `.env` (see `.env.example`).
+  - Restart the app: `docker compose -f docker-compose.yml -f docker-compose.windows.yml restart app`.
+  - Re-check with `curl http://localhost:8000/api/chat/health`.
+
+#### Local AI (Ollama) unavailable
+- **Symptoms**:
+  - `GET /api/local-ai/health` returns 503 or `ollama_status != "healthy"`.
+  - UI shows messages like “Local AI is unavailable” when using Local mode.
+- **Quick checks**:
+  - Confirm the container is running: `docker compose ps ollama`.
+  - Inspect logs: `docker compose logs ollama`.
+  - From the host, list models: `docker exec amor-ollama ollama list`.
+
+If the expected model is missing:
+
+```bash
+docker exec amor-ollama ollama pull qwen2.5:7b
+```
+
+You can change the default model by updating `OLLAMA_MODEL` in `.env` and restarting the `app` service.
+
+#### Research endpoints failing
+- **Check core health**:
+  - `curl http://localhost:8000/health`
+  - `curl http://localhost:8000/api`
+- **Check specific provider**:
+  - `curl http://localhost:8000/api/chat/health`
+  - `curl http://localhost:8000/api/local-ai/health`
+- Review logs:
+  - `docker compose logs app`
+  - `docker compose logs ollama`
+
+### General Docker & Platform Issues
+
+#### Build fails with "Could not find a version that satisfies the requirement"
 
 #### Build fails with "Could not find a version that satisfies the requirement"
 - **Solution**: Ensure you're using the latest version of the repository. Package versions have been updated to use available versions.

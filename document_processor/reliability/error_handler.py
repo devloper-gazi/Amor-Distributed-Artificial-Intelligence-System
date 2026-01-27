@@ -5,7 +5,7 @@ Captures failed messages and routes them for later processing.
 
 import asyncio
 import json
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Type
 from datetime import datetime
 from ..config.logging_config import logger
 from ..core.models import SourceDocument, ProcessingStatus

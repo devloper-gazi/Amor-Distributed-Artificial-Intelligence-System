@@ -1,0 +1,98 @@
+# ==================== Local AI Research System Dockerfile ====================
+# Optimized for RTX 4060 8GB VRAM + 16GB RAM
+
+FROM python:3.11-slim
+
+LABEL maintainer="Amor"
+LABEL description="Autonomous Local AI Research System with Ollama, CrewAI, and NLLB"
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    build-essential \
+    libpq-dev \
+    # OCR and document processing
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-spa \
+    tesseract-ocr-fra \
+    tesseract-ocr-deu \
+    tesseract-ocr-ara \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-hin \
+    tesseract-ocr-rus \
+    tesseract-ocr-jpn \
+    tesseract-ocr-kor \
+    libtesseract-dev \
+    poppler-utils \
+    # Utilities
+    curl \
+    dos2unix \
+    wget \
+    git \
+    # Playwright dependencies
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libatspi2.0-0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libxcb1 \
+    libxkbcommon0 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    fonts-liberation \
+    libgtk-3-0 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements-local-ai-simple.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-local-ai-simple.txt
+
+# Install Playwright browsers
+RUN python -m playwright install chromium
+
+# Copy application code
+COPY document_processor/ ./document_processor/
+
+# Copy web UI
+COPY web_ui/ ./web_ui/
+
+# Copy local AI modules
+COPY local_ai/ ./local_ai/
+
+# Fix line endings for all Python files
+RUN find . -type f -name "*.py" -exec dos2unix {} \;
+
+# Create necessary directories
+RUN mkdir -p /data/documents /data/vectors /data/cache /models
+
+# Set permissions
+RUN chmod -R 755 /app
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run application
+CMD ["uvicorn", "document_processor.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

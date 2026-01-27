@@ -1,12 +1,26 @@
-version: '3.8'
+name: amor
 
 services:
+  # Single entrypoint for environments that only expose one port.
+  # Provides / -> app, /grafana -> grafana, /prometheus -> prometheus.
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+      - grafana
+      - prometheus
+    networks:
+      - docprocessor-network
+
   # Main application
   app:
     build: .
-    ports:
-      - "8000:8000"
-      - "9090:9090"
+    # NOTE: The app is exposed via the `gateway` service on port 8000.
+    # If you want direct access as well, add a port mapping like "8001:8000".
     environment:
       # Service
       - SERVICE_NAME=document-processor
@@ -38,11 +52,33 @@ services:
       - AZURE_TRANSLATOR_KEY=${AZURE_TRANSLATOR_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
+      # Ollama Local AI
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+      - OLLAMA_AUTO_PULL=true
+
+      # NLLB Translation Model
+      - NLLB_MODEL_PATH=/models/nllb-200-distilled-600M-ct2
+      - NLLB_DEVICE=cuda
+      - NLLB_COMPUTE_TYPE=int8_float16
+
+      # FastText Language Detection
+      - FASTTEXT_MODEL_PATH=/models/lid.176.bin
+
+      # LanceDB Vector Store
+      - LANCEDB_PATH=/data/vectors
+
     depends_on:
-      - kafka
-      - redis
-      - postgres
-      - mongo
+      ollama:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      mongo:
+        condition: service_started
 
     deploy:
       replicas: 2
@@ -53,9 +89,15 @@ services:
         reservations:
           cpus: '1'
           memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
     volumes:
       - ./data:/data/documents
+      - ./models:/models:ro
+      - lancedb-data:/data/vectors
 
     networks:
       - docprocessor-network
@@ -119,17 +161,48 @@ services:
     networks:
       - docprocessor-network
 
+  # Ollama Local AI Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: amor-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - docprocessor-network
+
   # Prometheus
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9091:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--web.route-prefix=/prometheus'
+      - '--web.external-url=/prometheus'
+      - '--web.enable-lifecycle'
     networks:
       - docprocessor-network
 
@@ -140,8 +213,16 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:8000/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/crawl-translation-dashboard.json
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
     networks:
       - docprocessor-network
 
@@ -150,6 +231,8 @@ volumes:
   mongo-data:
   prometheus-data:
   grafana-data:
+  ollama-data:
+  lancedb-data:
 
 networks:
   docprocessor-network:

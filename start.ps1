@@ -1,4 +1,7 @@
-# Claude Multi-Research Document Processor - Windows Startup Script
+# Allow this script to run in the current PowerShell process
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+# Amor Document Processor - Windows Startup Script
 # This script starts the document processing system with all required services on Windows
 
 # Requires PowerShell 5.1 or higher
@@ -60,7 +63,7 @@ try {
     }
 }
 
-Write-Info "Starting Claude Multi-Research Document Processor on Windows..."
+Write-Info "Starting Amor Document Processor on Windows..."
 
 # Check if .env file exists
 if (-not (Test-Path .env)) {
@@ -108,6 +111,22 @@ if ($dockerComposeCmd -eq "docker compose") {
 Write-Info "Waiting for services to be ready..."
 Start-Sleep -Seconds 10
 
+# Pull Ollama model (qwen2.5:7b) for Local AI
+Write-Info "Checking Ollama model (qwen2.5:7b)..."
+try {
+    $ollamaCheck = docker exec amor-ollama ollama list 2>&1
+    if ($ollamaCheck -match "qwen2.5:7b") {
+        Write-Success "Ollama model qwen2.5:7b is already installed"
+    } else {
+        Write-Info "Pulling Ollama model qwen2.5:7b (this may take 5-10 minutes)..."
+        docker exec amor-ollama ollama pull qwen2.5:7b
+        Write-Success "Ollama model qwen2.5:7b installed successfully"
+    }
+} catch {
+    Write-Warning "Could not check/pull Ollama model. Local AI features may not work until model is downloaded."
+    Write-Info "You can manually pull the model later with: docker exec amor-ollama ollama pull qwen2.5:7b"
+}
+
 # Check service status
 Write-Info "Checking service status..."
 if ($dockerComposeCmd -eq "docker compose") {
@@ -116,13 +135,19 @@ if ($dockerComposeCmd -eq "docker compose") {
     docker-compose -f docker-compose.yml -f docker-compose.windows.yml ps
 }
 
-Write-Success "Claude Multi-Research Document Processor is running!"
+Write-Success "Amor Document Processor is running!"
 Write-Host ""
 Write-Info "Service URLs:"
-Write-Host "  - API: http://localhost:8000"
-Write-Host "  - Metrics: http://localhost:9090"
+Write-Host "  - Web UI: http://localhost:8000"
+Write-Host "  - API Docs: http://localhost:8000/docs"
+Write-Host "  - Ollama (Local AI): http://localhost:11434"
 Write-Host "  - Grafana: http://localhost:3000 (admin/admin123)"
 Write-Host "  - Prometheus: http://localhost:9091"
+Write-Host ""
+Write-Info "The monochrome chat UI is available with three modes:"
+Write-Host "  - Research: Comprehensive research with web scraping"
+Write-Host "  - Thinking: Deep analytical problem-solving"
+Write-Host "  - Coding: Code generation and technical assistance"
 Write-Host ""
 Write-Info "To view logs: $dockerComposeCmd -f docker-compose.yml -f docker-compose.windows.yml logs -f"
 Write-Info "To stop services: $dockerComposeCmd -f docker-compose.yml -f docker-compose.windows.yml down"

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Claude Multi-Research Document Processor - Linux/Mac Startup Script
+# Amor Document Processor - Linux/Mac Startup Script
 # This script starts the document processing system with all required services
 
 set -e
@@ -48,7 +48,7 @@ else
     DOCKER_COMPOSE="docker-compose"
 fi
 
-print_info "Starting Claude Multi-Research Document Processor..."
+print_info "Starting Amor Document Processor..."
 
 # Check if .env file exists
 if [ ! -f .env ]; then
@@ -84,11 +84,25 @@ $DOCKER_COMPOSE up -d
 print_info "Waiting for services to be ready..."
 sleep 10
 
+# Pull Ollama model (qwen2.5:7b) for Local AI
+print_info "Checking Ollama model (qwen2.5:7b)..."
+if docker exec amor-ollama ollama list 2>/dev/null | grep -q "qwen2.5:7b"; then
+    print_success "Ollama model qwen2.5:7b is already installed"
+else
+    print_info "Pulling Ollama model qwen2.5:7b (this may take 5-10 minutes)..."
+    if docker exec amor-ollama ollama pull qwen2.5:7b; then
+        print_success "Ollama model qwen2.5:7b installed successfully"
+    else
+        print_warning "Could not pull Ollama model. Local AI features may not work until model is downloaded."
+        print_info "You can manually pull the model later with: docker exec amor-ollama ollama pull qwen2.5:7b"
+    fi
+fi
+
 # Check service status
 print_info "Checking service status..."
 $DOCKER_COMPOSE ps
 
-print_success "Claude Multi-Research Document Processor is running!"
+print_success "Amor Document Processor is running!"
 echo ""
 print_info "Service URLs:"
 echo "  - API: http://localhost:8000"

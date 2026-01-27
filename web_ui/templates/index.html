@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Research Assistant - Amor</title>
+    <link rel="stylesheet" href="/static/css/tokens.css?v={{ static_version }}">
+    <link rel="stylesheet" href="/static/css/styles.css?v={{ static_version }}">
+    <link rel="stylesheet" href="/static/css/chat-research.css?v={{ static_version }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Minimal Top Bar -->
+    <header class="top-bar-minimal">
+        <div class="top-bar-left">
+            <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="logo">
+                <i class="fas fa-robot"></i>
+                <span class="logo-text">Amor</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sidebar Backdrop -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- Collapsible Sidebar (Overlay) -->
+    <aside class="sidebar-collapsible" id="sidebarCollapsible" role="navigation" aria-label="Chat navigation">
+        <div class="sidebar-header">
+            <button class="new-chat-btn" id="newChatBtn">
+                <i class="fas fa-plus"></i>
+                <span>New Chat</span>
+            </button>
+        </div>
+
+        <div class="sidebar-content">
+            <!-- Chat History -->
+            <div class="chat-history-section">
+                <div class="section-title">Chat History</div>
+
+                <div class="chat-history-controls" id="chatHistoryControls">
+                    <button class="history-control active" id="historyViewAll" type="button">All</button>
+                    <button class="history-control" id="historyViewArchived" type="button">Archived</button>
+                </div>
+
+                <div class="chat-folders-section" id="chatFoldersSection" aria-label="Chat folders">
+                    <div class="chat-folders-title">Folders</div>
+                    <div class="chat-folders-list" id="chatFoldersList"></div>
+                </div>
+
+                <div class="chat-history-list" id="chatHistoryList">
+                    <!-- History items will be dynamically inserted here -->
+                    <div class="history-empty">
+                        <i class="fas fa-comments"></i>
+                        <p>No chat history yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mode Selection (Alternative UI) -->
+            <div class="mode-section">
+                <div class="section-title">Mode</div>
+                <div class="mode-options">
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="research" checked>
+                        <span class="mode-icon">🔍</span>
+                        <span class="mode-label">Research</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="thinking">
+                        <span class="mode-icon">🧠</span>
+                        <span class="mode-label">Thinking</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="mode" value="coding">
+                        <span class="mode-icon">💻</span>
+                        <span class="mode-label">Coding</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            <button class="sidebar-link" id="sidebarAnalyticsBtn">
+                <i class="fas fa-chart-bar"></i>
+                <span>Analytics</span>
+            </button>
+            <button class="sidebar-link" id="sidebarSettingsBtn">
+                <i class="fas fa-cog"></i>
+                <span>Settings</span>
+            </button>
+
+            <!-- System Status -->
+            <div class="system-status" id="systemStatus">
+                <div class="status-indicator">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="status-text" id="statusText">Checking...</span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Chat Container -->
+    <main class="chat-main" id="chatMain">
+        <!-- Messages Area -->
+        <div class="messages-area" id="messagesArea">
+            <!-- Welcome Screen -->
+            <div class="welcome-container" id="welcomeContainer">
+                <div class="welcome-header">
+                    <div class="welcome-icon">
+                        <div class="icon-sparkle icon-sparkle-1"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-2"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-3"><i class="fas fa-star"></i></div>
+                        <div class="icon-sparkle icon-sparkle-4"><i class="fas fa-star"></i></div>
+                        <i class="fas fa-search icon-main"></i>
+                    </div>
+                    <h1>Welcome to Amor</h1>
+                    <p>Ask me anything you'd like to research. I can:</p>
+                </div>
+
+                <div class="capability-cards">
+                    <div class="capability-card" data-mode="research">
+                        <div class="card-icon">🔍</div>
+                        <h3>Conduct Research</h3>
+                        <p>Comprehensive research with web scraping and analysis</p>
+                    </div>
+                    <div class="capability-card" data-mode="thinking">
+                        <div class="card-icon">🧠</div>
+                        <h3>Analyze & Think</h3>
+                        <p>Deep reasoning and analytical problem-solving</p>
+                    </div>
+                    <div class="capability-card" data-mode="coding">
+                        <div class="card-icon">💻</div>
+                        <h3>Generate Code</h3>
+                        <p>Code generation, debugging, and technical assistance</p>
+                    </div>
+                </div>
+
+                <div class="welcome-footer">
+                    <p class="ai-mode-hint">
+                        <strong>Current Mode:</strong> <span id="currentModeDisplay">Research</span>
+                    </p>
+                    <p class="ai-type-hint">
+                        <span id="currentAIType">Local AI (Offline + Web Scraping)</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Messages will be dynamically inserted here -->
+        </div>
+
+        <!-- Input Area (Fixed at bottom) -->
+        <div class="input-area" id="inputArea">
+            <!-- Research Settings Floating Panel -->
+            <div class="research-settings-panel" id="researchSettingsPanel" style="display: none;">
+                <div class="settings-panel-header">
+                    <h4><i class="fas fa-flask"></i> Research Settings</h4>
+                    <button class="close-panel-btn" id="closeSettingsPanel" aria-label="Close settings">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="settings-panel-content">
+                    <div class="panel-setting-row">
+                        <label class="panel-setting-label" for="researchDepth">
+                            <i class="fas fa-layer-group"></i>
+                            <span>Research Depth</span>
+                        </label>
+                        <select id="researchDepth" class="panel-setting-select">
+                            <option value="quick">Quick (4 sources)</option>
+                            <option value="standard" selected>Standard (8 sources)</option>
+                            <option value="deep">Deep (12 sources)</option>
+                        </select>
+                    </div>
+                    <div class="panel-setting-row">
+                        <label class="panel-setting-label">
+                            <i class="fas fa-language"></i>
+                            <span>Auto-translate Sources</span>
+                        </label>
+                        <label class="panel-toggle">
+                            <input type="checkbox" id="useTranslation" checked>
+                            <span class="panel-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="panel-setting-row">
+                        <label class="panel-setting-label" for="targetLanguage">
+                            <i class="fas fa-globe"></i>
+                            <span>Target Language</span>
+                        </label>
+                        <select id="targetLanguage" class="panel-setting-select">
+                            <option value="en" selected>English</option>
+                            <option value="es">Spanish</option>
+                            <option value="fr">French</option>
+                            <option value="de">German</option>
+                            <option value="zh">Chinese</option>
+                            <option value="ja">Japanese</option>
+                            <option value="ko">Korean</option>
+                            <option value="ar">Arabic</option>
+                            <option value="ru">Russian</option>
+                            <option value="pt">Portuguese</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-panel-footer">
+                    <div class="current-settings">
+                        <span id="settingsSummary">Standard depth, Translation ON</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-container">
+                <!-- Research Depth Button (Quick/Standard/Deep) -->
+                <div class="research-depth-control" id="researchDepthControl">
+                    <button
+                        id="researchDepthBtn"
+                        class="depth-toggle-btn"
+                        type="button"
+                        aria-label="Research depth"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        title="Research Depth (sources to scan)"
+                    >
+                        <span class="depth-icon" aria-hidden="true">
+                            <i class="fas fa-layer-group"></i>
+                        </span>
+                        <span class="depth-count" id="researchDepthLabel">8</span>
+                        <span class="depth-caret" aria-hidden="true">
+                            <i class="fas fa-chevron-up"></i>
+                        </span>
+                        <span class="depth-badge" id="depthBadge" style="display: none;">•</span>
+                    </button>
+
+                    <div id="researchDepthMenu" class="depth-menu" role="menu" aria-label="Select research depth" style="display: none;">
+                        <button class="depth-option" type="button" data-depth="quick" role="menuitemradio" aria-checked="false">
+                            <span class="opt-title">Quick</span>
+                            <span class="opt-sub">4 sources</span>
+                        </button>
+                        <button class="depth-option" type="button" data-depth="standard" role="menuitemradio" aria-checked="true">
+                            <span class="opt-title">Standard</span>
+                            <span class="opt-sub">8 sources</span>
+                        </button>
+                        <button class="depth-option" type="button" data-depth="deep" role="menuitemradio" aria-checked="false">
+                            <span class="opt-title">Deep</span>
+                            <span class="opt-sub">12 sources</span>
+                        </button>
+
+                        <div class="depth-menu-divider" role="separator" aria-hidden="true"></div>
+
+                        <button class="depth-option depth-option-secondary" type="button" id="openResearchSettingsFromDepth" role="menuitem">
+                            <i class="fas fa-sliders-h" aria-hidden="true"></i>
+                            <span>More settings</span>
+                        </button>
+                    </div>
+                </div>
+                <textarea
+                    id="chatInput"
+                    class="chat-input"
+                    placeholder="Type your message..."
+                    rows="1"
+                    aria-label="Chat message input"
+                ></textarea>
+                <button id="sendButton" class="send-btn" aria-label="Send message">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+            <div class="input-footer">
+                <span class="character-count" id="characterCount">0 characters</span>
+                <span class="ai-indicator" id="aiIndicator">
+                    <span class="indicator-dot"></span>
+                    <span id="aiModeText">Local AI</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Research Progress Modal -->
+        <div class="progress-modal" id="progressModal" style="display: none;">
+            <div class="progress-content">
+                <div class="progress-header">
+                    <h3>Research in Progress</h3>
+                    <div class="progress-status" id="progressStatus">Initializing...</div>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                </div>
+                <div class="agent-activity" id="agentActivity">
+                    <div class="agent-item">
+                        <span class="agent-icon">🔍</span>
+                        <span class="agent-name">Research Specialist</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                    <div class="agent-item">
+                        <span class="agent-icon">📊</span>
+                        <span class="agent-name">Data Analyst</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                    <div class="agent-item">
+                        <span class="agent-icon">✍️</span>
+                        <span class="agent-name">Technical Writer</span>
+                        <span class="agent-status">Idle</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="modal-close" data-modal="settingsModal" aria-label="Close settings">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Preferences</h3>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Dark Mode</div>
+                            <div class="setting-desc">Use dark color scheme</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="darkModeToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Keyboard Shortcuts</div>
+                            <div class="setting-desc">Enable keyboard navigation</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="keyboardToggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Use Claude API</div>
+                            <div class="setting-desc">Switch between Local AI and Claude API for research</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="useClaudeAPI">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Actions</h3>
+
+                    <button class="action-btn" id="resetMetricsBtn">
+                        <i class="fas fa-trash-alt"></i>
+                        <span>Reset Metrics</span>
+                    </button>
+
+                    <button class="action-btn" id="exportDataBtn">
+                        <i class="fas fa-download"></i>
+                        <span>Export Chat History</span>
+                    </button>
+
+                    <button class="action-btn" id="clearHistoryBtn">
+                        <i class="fas fa-eraser"></i>
+                        <span>Clear Chat History</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Modal -->
+    <div class="modal" id="analyticsModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>System Analytics</h2>
+                <button class="modal-close" data-modal="analyticsModal" aria-label="Close analytics">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="analytics-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-comments"></i></div>
+                        <div class="stat-value" id="totalChats">0</div>
+                        <div class="stat-label">Total Chats</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-search"></i></div>
+                        <div class="stat-value" id="totalResearches">0</div>
+                        <div class="stat-label">Researches Conducted</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                        <div class="stat-value" id="avgResponseTime">-</div>
+                        <div class="stat-label">Avg Response Time</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                        <div class="stat-value" id="systemHealth">Good</div>
+                        <div class="stat-label">System Health</div>
+                    </div>
+                </div>
+
+                <div class="health-section">
+                    <h3>System Health</h3>
+                    <div class="health-indicators" id="healthIndicators">
+                        <div class="health-item">
+                            <span class="health-label">API Status</span>
+                            <span class="health-status" id="apiStatus">Checking...</span>
+                        </div>
+                        <div class="health-item">
+                            <span class="health-label">Local AI</span>
+                            <span class="health-status" id="localAIStatus">Checking...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Move to Folder Modal -->
+    <div class="modal" id="moveToFolderModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Move to Folder</h2>
+                <button class="modal-close" data-modal="moveToFolderModal" aria-label="Close move to folder">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="folder-modal-row">
+                    <div class="folder-modal-label">Chat</div>
+                    <div class="folder-modal-value" id="moveToFolderChatTitle">—</div>
+                </div>
+
+                <div class="folder-modal-row">
+                    <label class="folder-modal-label" for="moveToFolderSelect">Folder</label>
+                    <select class="folder-modal-select" id="moveToFolderSelect">
+                        <option value="">No folder</option>
+                        <option value="__new__">+ New folder…</option>
+                    </select>
+                </div>
+
+                <div class="folder-modal-row" id="newFolderNameRow" style="display: none;">
+                    <label class="folder-modal-label" for="newFolderNameInput">New folder</label>
+                    <input class="folder-modal-input" id="newFolderNameInput" type="text" placeholder="Folder name" maxlength="120" />
+                </div>
+
+                <div class="folder-modal-actions">
+                    <button class="modal-action secondary" id="moveToFolderCancelBtn" type="button">Cancel</button>
+                    <button class="modal-action primary" id="moveToFolderSaveBtn" type="button">Move</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Delete Modal -->
+    <div class="modal" id="confirmDeleteModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Delete Chat</h2>
+                <button class="modal-close" data-modal="confirmDeleteModal" aria-label="Close delete confirmation">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="confirm-text" id="confirmDeleteText">Are you sure you want to delete this chat?</p>
+                <div class="folder-modal-actions">
+                    <button class="modal-action secondary" id="confirmDeleteCancelBtn" type="button">Cancel</button>
+                    <button class="modal-action danger" id="confirmDeleteBtn" type="button">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Folder Modal -->
+    <div class="modal" id="renameFolderModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Rename Folder</h2>
+                <button class="modal-close" data-modal="renameFolderModal" aria-label="Close rename folder">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="folder-modal-row">
+                    <label class="folder-modal-label" for="renameFolderInput">Name</label>
+                    <input class="folder-modal-input" id="renameFolderInput" type="text" placeholder="Folder name" maxlength="120" />
+                </div>
+
+                <div class="folder-modal-actions">
+                    <button class="modal-action secondary" id="renameFolderCancelBtn" type="button">Cancel</button>
+                    <button class="modal-action primary" id="renameFolderSaveBtn" type="button">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Delete Folder Modal -->
+    <div class="modal" id="confirmFolderDeleteModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Delete Folder</h2>
+                <button class="modal-close" data-modal="confirmFolderDeleteModal" aria-label="Close folder delete confirmation">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="confirm-text" id="confirmFolderDeleteText">Are you sure you want to delete this folder?</p>
+                <div class="folder-modal-actions">
+                    <button class="modal-action secondary" id="confirmFolderDeleteCancelBtn" type="button">Cancel</button>
+                    <button class="modal-action danger" id="confirmFolderDeleteBtn" type="button">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Context Menu -->
+    <div class="context-menu" id="historyContextMenu" style="display: none;" role="menu" aria-label="Chat actions"></div>
+
+    <!-- Folder Context Menu -->
+    <div class="context-menu" id="folderContextMenu" style="display: none;" role="menu" aria-label="Folder actions"></div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="/static/js/app.js?v={{ static_version }}"></script>
+    <script src="/static/js/chat-research.js?v={{ static_version }}"></script>
+</body>
+</html>

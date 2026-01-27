@@ -1,0 +1,192 @@
+groups:
+  - name: crawling_alerts
+    rules:
+      - alert: HighCrawlTimeoutRate
+        expr: crawl_timeout_rate > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High crawl timeout rate ({{ $value }}%)"
+          description: "Crawl timeout rate is above 1% for more than 5 minutes. Check network connectivity and target site availability."
+
+      - alert: CrawlQueueBacklog
+        expr: crawl_queue_depth > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Large crawl queue backlog ({{ $value }} URLs)"
+          description: "Crawl queue has accumulated more than 10,000 URLs. Consider scaling up workers."
+
+      - alert: LowCrawlThroughput
+        expr: crawl_requests_per_second < 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low crawl throughput ({{ $value }} req/s)"
+          description: "Crawl rate has dropped below 1 request per second."
+
+      - alert: CrawlCircuitBreakerOpen
+        expr: max(circuit_breaker_state{service=~"crawl.*"}) == 2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Crawl circuit breaker is OPEN"
+          description: "A crawl circuit breaker has tripped to OPEN state, blocking requests."
+
+  - name: translation_alerts
+    rules:
+      - alert: LowTranslationThroughput
+        expr: translation_throughput_tokens_per_second < 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low translation throughput ({{ $value }} tokens/s)"
+          description: "Translation throughput has dropped below target. Check GPU availability."
+
+      - alert: TranslationQueueBacklog
+        expr: translation_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Translation queue backlog ({{ $value }} texts)"
+          description: "Translation queue has accumulated more than 1,000 pending texts."
+
+      - alert: LowTranslationCacheHitRate
+        expr: (translation_cache_hits_total / (translation_cache_hits_total + translation_cache_misses_total)) < 0.5
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low translation cache hit rate ({{ $value | humanizePercentage }})"
+          description: "Translation cache hit rate is below 50%. Consider increasing cache size."
+
+      - alert: LowTranslationQuality
+        expr: histogram_quantile(0.5, rate(translation_bleu_score_bucket[5m])) < 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low translation BLEU score ({{ $value }})"
+          description: "Translation quality (BLEU score) is below 0.2 threshold."
+
+  - name: storage_alerts
+    rules:
+      - alert: HighStorageInsertLatency
+        expr: histogram_quantile(0.95, rate(storage_insert_latency_seconds_bucket[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High storage insert latency ({{ $value | humanizeDuration }})"
+          description: "Storage insert latency (p95) exceeds 50ms target."
+
+      - alert: StorageConnectionPoolExhausted
+        expr: storage_connections_active > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Storage connection pool nearly exhausted ({{ $value }} active)"
+          description: "Active storage connections are high. Risk of connection exhaustion."
+
+      - alert: StorageErrors
+        expr: increase(storage_errors_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Storage errors detected ({{ $value }} errors in 5m)"
+          description: "Multiple storage errors occurring. Check database connectivity."
+
+  - name: rag_alerts
+    rules:
+      - alert: HighRAGQueryLatency
+        expr: histogram_quantile(0.95, rate(rag_query_latency_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High RAG query latency ({{ $value | humanizeDuration }})"
+          description: "RAG query latency (p95) exceeds 2 second target."
+
+      - alert: LowRAGRelevanceScores
+        expr: histogram_quantile(0.5, rate(rag_relevance_scores_bucket[5m])) < 0.3
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low RAG relevance scores ({{ $value }})"
+          description: "RAG retrieval relevance scores are low. Consider reindexing or adjusting search parameters."
+
+  - name: system_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: system_cpu_usage_percent > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage ({{ $value }}%)"
+          description: "System CPU usage has been above 90% for 10 minutes."
+
+      - alert: HighMemoryUsage
+        expr: system_memory_usage_percent > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High memory usage ({{ $value }}%)"
+          description: "System memory usage has been above 90% for 5 minutes."
+
+      - alert: HighDiskUsage
+        expr: system_disk_usage_percent > 85
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage ({{ $value }}%)"
+          description: "Disk usage has exceeded 85%. Consider cleanup or expansion."
+
+      - alert: HighErrorRate
+        expr: sum(rate(errors_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate ({{ $value }} errors/s)"
+          description: "System is experiencing a high error rate."
+
+      - alert: DeadLetterQueueGrowing
+        expr: delta(dlq_messages[30m]) > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue growing ({{ $value }} new messages)"
+          description: "Dead letter queue has grown significantly. Review failed messages."
+
+  - name: pipeline_alerts
+    rules:
+      - alert: PipelineBackpressure
+        expr: sum(pipeline_stage_queue_depth) > 5000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline backpressure detected ({{ $value }} queued)"
+          description: "Pipeline is experiencing backpressure. Consider scaling or investigating slow stages."
+
+      - alert: SlowPipelineStage
+        expr: histogram_quantile(0.95, rate(pipeline_stage_duration_seconds_bucket[5m])) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow pipeline stage ({{ $labels.stage }}: {{ $value | humanizeDuration }})"
+          description: "Pipeline stage is taking longer than 60 seconds (p95)."

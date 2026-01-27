@@ -1,0 +1,17 @@
+# Grafana Dashboard Provisioning Configuration
+# Auto-loads dashboards from the specified folder
+
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: 'Crawl & Translation'
+    folderUid: 'crawl-translation-folder'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
