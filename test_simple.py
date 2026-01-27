@@ -14,6 +14,31 @@ import pytest
 import requests
 
 BASE_URL = os.getenv("AMOR_BASE_URL", "http://localhost:8000")
+try:
+    DEFAULT_TIMEOUT = float(os.getenv("AMOR_HTTP_TIMEOUT", "10"))
+except ValueError:
+    DEFAULT_TIMEOUT = 10.0
+
+
+def _service_available() -> bool:
+    try:
+        response = requests.get(f"{BASE_URL}/health", timeout=DEFAULT_TIMEOUT)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _require_service() -> None:
+    if _service_available():
+        return
+
+    message = (
+        f"Service not available at {BASE_URL}. "
+        "Start the application before running these tests."
+    )
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        pytest.skip(message)
+    raise requests.exceptions.ConnectionError(message)
 
 
 def test_simple_text_processing():
@@ -22,6 +47,7 @@ def test_simple_text_processing():
     Note: The current system expects web/pdf sources.
     This demonstrates the API structure.
     """
+    _require_service()
 
     print("=" * 60)
     print("Simple Document Processing Test")
@@ -29,13 +55,17 @@ def test_simple_text_processing():
 
     # Check health
     print("\n1. Checking system health...")
-    health = requests.get(f"{BASE_URL}/health").json()
+    health_response = requests.get(f"{BASE_URL}/health", timeout=DEFAULT_TIMEOUT)
+    health_response.raise_for_status()
+    health = health_response.json()
     print(f"   Status: {health['status']}")
     print(f"   Components: {json.dumps(health['components'], indent=2)}")
 
     # Get current stats
     print("\n2. Getting current statistics...")
-    stats = requests.get(f"{BASE_URL}/stats").json()
+    stats_response = requests.get(f"{BASE_URL}/stats", timeout=DEFAULT_TIMEOUT)
+    stats_response.raise_for_status()
+    stats = stats_response.json()
     print(f"   Documents processed: {stats['pipeline']['processed']}")
     print(f"   Cache hit rate: {stats['cache']['hit_rate']}%")
 
@@ -110,7 +140,8 @@ def test_api_root_smoke():
     """
     Basic smoke test for the /api root endpoint.
     """
-    response = requests.get(f"{BASE_URL}/api", timeout=10)
+    _require_service()
+    response = requests.get(f"{BASE_URL}/api", timeout=DEFAULT_TIMEOUT)
     assert response.status_code == 200
     data = response.json()
 
@@ -132,7 +163,8 @@ def test_health_smoke():
     """
     Basic smoke test for the /health endpoint.
     """
-    response = requests.get(f"{BASE_URL}/health", timeout=10)
+    _require_service()
+    response = requests.get(f"{BASE_URL}/health", timeout=DEFAULT_TIMEOUT)
     assert response.status_code == 200
     data = response.json()
 
@@ -149,6 +181,7 @@ def test_local_ai_research_smoke():
     is not available (e.g. Ollama/model not installed), the test is
     skipped instead of failing hard.
     """
+    _require_service()
     payload = {
         "topic": "Smoke test topic",
         "depth": "quick",
@@ -202,8 +235,9 @@ def test_claude_chat_research_smoke():
 
     If Claude is not configured (no ANTHROPIC_API_KEY), this test is skipped.
     """
+    _require_service()
     # First, check Claude health to see if it's configured.
-    health_response = requests.get(f"{BASE_URL}/api/chat/health", timeout=10)
+    health_response = requests.get(f"{BASE_URL}/api/chat/health", timeout=DEFAULT_TIMEOUT)
     if health_response.status_code != 200:
         pytest.skip("Claude chat health endpoint not available.")
 
