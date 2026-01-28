@@ -2,6 +2,53 @@
 
 A complete, production-ready Python system for real-time processing, translation, and consolidation of hundreds of thousands of documents across multiple formats and languages.
 
+## Description
+
+Amor is an end-to-end, containerized document processing and research platform. It ingests content from web, files, databases, and APIs, normalizes and translates it at scale, and exposes the results through a unified chat-first UI with Research, Thinking, and Coding modes. The system is designed for high throughput and operational resilience, combining async processing, event streaming, and multi-tier translation with deep observability.
+
+### Animated pipeline overview
+
+<p align="center">
+  <img src="docs/assets/amor-pipeline-animated.svg" alt="Animated pipeline flow from ingestion to storage" width="900">
+</p>
+
+**Explanation:** The animation depicts the core processing stages: ingestion, language detection, translation, enrichment, and storage/indexing. The moving nodes represent documents flowing through the pipeline, which is orchestrated by `document_processor/processing/pipeline.py` and guarded by circuit breakers and rate limiting in `document_processor/reliability/`.
+
+### Architecture graphic
+
+<p align="center">
+  <img src="docs/assets/amor-architecture.svg" alt="Architecture overview with UI, API, and infrastructure services" width="900">
+</p>
+
+**Explanation:** The Web UI and API clients call the FastAPI app (`document_processor/main.py`), which coordinates LLM providers (Claude API + Ollama), streaming services (Kafka + Redis), and storage backends (Postgres, MongoDB, LanceDB). Each subsystem has a dedicated module namespace, keeping the pipeline and chat features composable and testable.
+
+### Data flow (Mermaid diagram)
+
+```mermaid
+flowchart LR
+  UI[Web UI] --> API[FastAPI App]
+  API --> Sources[Sources: Web, PDF, DB, API, Files]
+  Sources --> Pipeline[Async Pipeline]
+  Pipeline --> Detect[Language Detection]
+  Detect --> Translate[Translation Tiers]
+  Translate --> QA[Quality Scoring + Dedup]
+  QA --> Store[Postgres + Mongo + LanceDB]
+  Store --> RAG[RAG + Retrieval]
+  RAG --> API
+  API --> UI
+```
+
+### Technical details and explanations
+
+- **Ingestion layer:** Implemented in `document_processor/sources/`, with source-specific adapters (web scraper, PDF processor, database connectors, file readers). Inputs stream into the pipeline to avoid large in-memory loads.
+- **Pipeline orchestration:** `document_processor/processing/pipeline.py` coordinates extraction, detection, translation, quality checks, and storage. Concurrency is bounded with async semaphores to handle thousands of sources without saturating resources.
+- **Translation strategy:** Tiered routing (Claude -> Google -> Azure) balances quality and cost, while Redis caching reduces repeated translations for near-duplicate content.
+- **Chat research modes:** `document_processor/api/chat_research_routes.py` and `document_processor/api/local_ai_routes_simple.py` expose Research, Thinking, and Coding endpoints with shared UX in `web_ui/`.
+- **Local AI + RAG:** Ollama-backed models (`local_ai/`) integrate with LanceDB for multilingual retrieval-augmented generation, optionally assisted by the NLLB translator.
+- **Reliability & observability:** Circuit breakers, rate limiters, and retries live in `document_processor/reliability/`. Prometheus + Grafana dashboards and structured logging provide operational visibility.
+
+This section is intentionally comprehensive to clarify how the UI, APIs, and infrastructure services collaborate end-to-end. For deeper payload examples, see `CHAT_RESEARCH_GUIDE.md`, `RESEARCH_GUIDE.md`, and `LOCAL_AI_SETUP.md`.
+
 ### 🌕 Development Notice ☀️
 ⚠️ **It is actively being developed and may contain bugs. Please check the Version History.** 🛠️
  - **Link:** https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System/blob/main/Version%20History.md
