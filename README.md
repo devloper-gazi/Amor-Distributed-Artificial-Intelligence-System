@@ -643,6 +643,8 @@ Copy-Item .env.example .env
 
 # Run the startup script
 .\start.ps1
+# Try this:
+PowerShell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
 #### Option 2: Manual Docker Compose
