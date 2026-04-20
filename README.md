@@ -35,6 +35,43 @@
 
 ---
 
+## 📸 Interface Preview
+
+A quick look at the Amor UI in action (captured on **v2.0.0**). The interface is fully monochrome, responsive, and matches the rest of the app's design language.
+
+<table>
+<tr>
+<td width="50%" align="center">
+<a href="docs/screenshots/website-register-login.png">
+<img src="docs/screenshots/website-register-login.png" alt="Amor — Sign-in / Create account overlay" />
+</a>
+<br /><br />
+<strong>🔐 Sign in / Create account</strong><br />
+<sub>Username + password flow (no email required). Two separate views with a smooth slide transition — no tabs. Runs entirely on your server — no API keys required.</sub>
+</td>
+<td width="50%" align="center">
+<a href="docs/screenshots/website.png">
+<img src="docs/screenshots/website.png" alt="Amor — Live research session streaming over SSE" />
+</a>
+<br /><br />
+<strong>🔍 Live research (Local AI)</strong><br />
+<sub>Research streams step-by-step over SSE — <em>Planning → Gathering → Analyzing → Writing</em> — with the authenticated user chip in the top-right and a message composer scoped to the current session.</sub>
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<a href="docs/screenshots/website-thinking.png">
+<img src="docs/screenshots/website-thinking.png" alt="Amor — Thinking Mode: clarify-first multi-phase reasoning" />
+</a>
+<br /><br />
+<strong>🧠 Thinking Mode — clarify-first deep reasoning</strong><br />
+<sub>Before tackling a complex problem (system design, architecture, multi-step plans) the AI <em>first asks clarifying questions</em> — scope, constraints, preferred stack — with suggestion chips to speed up answering. Once you reply (or skip), a six-phase pipeline runs live over SSE: <em>Understand → Decompose → Explore alternatives → Evaluate &amp; decide → Synthesize → Self-critique</em>. Every phase's artifacts — sub-questions, ranked alternatives with pros/cons, the chosen decision with a confidence bar, the final Markdown deliverable, and the red-team critique — are rendered as expandable cards. Effort is tunable: <em>quick / standard / deep</em>.</sub>
+</td>
+</tr>
+</table>
+
+---
+
 # System Development Status
 
 The system is under continuous development. You will find the latest stable and experimental versions documented below.

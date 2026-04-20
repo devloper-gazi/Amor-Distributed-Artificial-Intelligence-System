@@ -47,6 +47,14 @@ from .api.chat_folders_routes import router as chat_folders_router
 from .api.auth_routes import router as auth_router
 from .auth.service import auth_service
 
+# Thinking Mode — human-in-the-loop deep reasoning pipeline
+try:
+    from .api.thinking_routes import router as thinking_router
+    THINKING_AVAILABLE = True
+except ImportError as _thinking_exc:  # pragma: no cover
+    THINKING_AVAILABLE = False
+    logger.warning("Thinking routes not available: %s", _thinking_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -177,6 +185,11 @@ if LOCAL_AI_AVAILABLE:
 # Authentication (PostgreSQL-backed users + JWT)
 app.include_router(auth_router)
 logger.info("Auth routes included")
+
+# Thinking Mode (human-in-the-loop deep reasoning)
+if THINKING_AVAILABLE:
+    app.include_router(thinking_router)
+    logger.info("Thinking routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
