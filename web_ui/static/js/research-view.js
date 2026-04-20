@@ -608,12 +608,18 @@
         citations: Array.from(this.sources.values()),
         report_markdown: this.reportMarkdown,
         confidence: this.confidence,
+        startedAt: this.startedAt,
+        endedAt: this.endedAt,
       };
     }
 
     /** Build a fully-populated view from a saved snapshot (for history restore). */
     static fromSnapshot(snap) {
       const v = new ResearchView(snap.query, snap.depth);
+      // Preserve original durations so history review shows the real elapsed time
+      // instead of resetting the counter to "0s" on restore.
+      if (snap.startedAt) v.startedAt = snap.startedAt;
+      if (snap.endedAt) v.endedAt = snap.endedAt;
       v._applySnapshot({
         sub_questions: snap.sub_questions || [],
         live_sources: [],

@@ -392,6 +392,11 @@ class ChatController {
         const message = this.chatInput?.value.trim();
         if (!message || this.isProcessing) return;
 
+        // Lock immediately — before any await — so rapid double-clicks cannot
+        // slip past the guard during persistChatMessage / addTypingIndicator.
+        this.isProcessing = true;
+        if (this.sendButton) this.sendButton.disabled = true;
+
         // Add user message
         this.addMessage('user', message);
         const userMsg = { role: 'user', content: message, format: 'text' };
@@ -428,6 +433,19 @@ class ChatController {
             this.removeTypingIndicator(typingId);
             const friendly = this.formatErrorMessage(error);
             this.addMessage('assistant', friendly, 'error');
+            // Persist error bubble so page reload keeps the context.
+            const errMsg = {
+                role: 'assistant',
+                content: friendly,
+                aiType: 'error',
+                format: 'text',
+                extras: { error: error.message || String(error) },
+            };
+            this.messageHistory.push(errMsg);
+            try { await this.persistChatMessage(errMsg); } catch (_) {}
+        } finally {
+            this.isProcessing = false;
+            if (this.sendButton) this.sendButton.disabled = false;
         }
     }
 
@@ -506,29 +524,23 @@ class ChatController {
     }
 
     async processWithLocalAI(message, typingId) {
-        this.isProcessing = true;
-        if (this.sendButton) this.sendButton.disabled = true;
+        // Note: isProcessing / sendButton locking is handled in sendMessage() so
+        // it covers ALL code paths (Claude, local, thinking) uniformly and
+        // activates *before* the first await in sendMessage.
+        const endpoint = this.getEndpointForMode(false);
+        if (!endpoint) {
+            throw new Error(`No Local AI endpoint for ${this.mode} mode`);
+        }
 
-        try {
-            const endpoint = this.getEndpointForMode(false);
-            if (!endpoint) {
-                throw new Error(`No Local AI endpoint for ${this.mode} mode`);
-            }
-
-            // For research mode, use the existing workflow with progress modal
-            if (this.mode === 'research') {
-                await this.researchWithLocalAI(message, typingId);
-            } else if (this.mode === 'thinking') {
-                // Human-in-the-loop multi-phase reasoning (v2)
-                await this.thinkingWithLocalAI(message, typingId, 'local');
-            } else {
-                // Coding mode still uses simple request-response for now.
-                await this.simpleLocalAIRequest(endpoint, message, typingId);
-            }
-
-        } finally {
-            this.isProcessing = false;
-            if (this.sendButton) this.sendButton.disabled = false;
+        // For research mode, use the existing workflow with progress modal
+        if (this.mode === 'research') {
+            await this.researchWithLocalAI(message, typingId);
+        } else if (this.mode === 'thinking') {
+            // Human-in-the-loop multi-phase reasoning (v2)
+            await this.thinkingWithLocalAI(message, typingId, 'local');
+        } else {
+            // Coding mode still uses simple request-response for now.
+            await this.simpleLocalAIRequest(endpoint, message, typingId);
         }
     }
 
@@ -575,25 +587,39 @@ class ChatController {
         const view = new ResearchView(message, depth);
         this._mountResearchCard(view);
 
-        // Stream events; fall back to polling if SSE is unavailable.
+        // Stream events; fall back to polling if SSE is unavailable. Whatever
+        // happens — success, partial failure, full failure — we always persist
+        // the card's current snapshot so chat history keeps it and we always
+        // leave the card in a terminal state (never a permanent spinner).
+        let runError = null;
         try {
-            await this._streamResearch(session_id, view);
+            try {
+                await this._streamResearch(session_id, view);
+            } catch (sseErr) {
+                console.warn('SSE stream failed, falling back to polling:', sseErr);
+                await this._pollResearchInto(session_id, view);
+            }
         } catch (err) {
-            console.warn('SSE stream failed, falling back to polling:', err);
-            await this._pollResearchInto(session_id, view);
+            runError = err;
+            // Tell the view so the card stops spinning and shows the error.
+            try { view.handleEvent({ type: 'error', message: err.message || 'Research failed' }); } catch (_) {}
         }
 
-        // Persist final snapshot so chat history can restore it.
+        // Persist final snapshot (success OR partial/error) so chat history can restore it.
         const snap = view.toSnapshot();
         const assistantMsg = {
             role: 'assistant',
-            content: '',
+            content: runError ? `Research failed: ${runError.message}` : '',
             aiType: 'local-ai-research',
             format: 'research',
-            extras: { research: snap },
+            extras: { research: snap, error: runError ? runError.message : undefined },
         };
         this.messageHistory.push(assistantMsg);
-        await this.persistChatMessage(assistantMsg);
+        try { await this.persistChatMessage(assistantMsg); } catch (persistErr) {
+            console.warn('Failed to persist research snapshot:', persistErr);
+        }
+
+        if (runError) throw runError;
     }
 
     _mountResearchCard(view) {
@@ -719,25 +745,36 @@ class ChatController {
 
         view.showTimeline({ session_id: session.session_id, phases: [] });
 
-        // 4. Stream events
+        // 4. Stream events — always persist whatever state we reached and always
+        // leave the card in a terminal (completed/failed) state.
+        let runError = null;
         try {
-            await this._streamThinking(session.session_id, view);
+            try {
+                await this._streamThinking(session.session_id, view);
+            } catch (sseErr) {
+                console.warn('Thinking SSE failed, polling fallback:', sseErr);
+                await this._pollThinking(session.session_id, view);
+            }
         } catch (err) {
-            console.warn('Thinking SSE failed, polling fallback:', err);
-            await this._pollThinking(session.session_id, view);
+            runError = err;
+            try { view.handleEvent({ type: 'error', message: err.message || 'Thinking failed' }); } catch (_) {}
         }
 
         // 5. Persist final snapshot so history re-mounts it later.
         const snap = view.toSnapshot();
         const assistantMsg = {
             role: 'assistant',
-            content: '',
+            content: runError ? `Thinking failed: ${runError.message}` : '',
             aiType: 'local-ai-thinking',
             format: 'thinking',
-            extras: { thinking: snap },
+            extras: { thinking: snap, error: runError ? runError.message : undefined },
         };
         this.messageHistory.push(assistantMsg);
-        await this.persistChatMessage(assistantMsg);
+        try { await this.persistChatMessage(assistantMsg); } catch (persistErr) {
+            console.warn('Failed to persist thinking snapshot:', persistErr);
+        }
+
+        if (runError) throw runError;
     }
 
     _askClarifications(view, analysis) {
