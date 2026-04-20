@@ -11,9 +11,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..auth.dependencies import get_current_user
+from ..auth.models import User
 from ..infrastructure.chat_store import chat_store
 
 
@@ -61,12 +63,12 @@ async def list_folders(
     limit: int = Query(200, ge=1, le=200),
     offset: int = Query(0, ge=0),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     folders = await chat_store.list_folders(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         limit=limit,
         offset=offset,
     )
@@ -89,13 +91,13 @@ async def list_folders(
 async def create_folder(
     request: FolderCreateRequest,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     try:
         folder = await chat_store.create_folder(
             client_id=client_id,
-            user_id=x_user_id,
+            user_id=user.id,
             name=request.name,
         )
     except ValueError:
@@ -115,7 +117,7 @@ async def update_folder(
     folder_id: str,
     request: FolderUpdateRequest,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     try:
@@ -128,7 +130,7 @@ async def update_folder(
 
         await chat_store.update_folder(
             client_id=client_id,
-            user_id=x_user_id,
+            user_id=user.id,
             folder_id=folder_id,
             **updates,
         )
@@ -144,12 +146,12 @@ async def update_folder(
 async def delete_folder(
     folder_id: str,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     await chat_store.delete_folder(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         folder_id=folder_id,
     )
     return {"ok": True}
