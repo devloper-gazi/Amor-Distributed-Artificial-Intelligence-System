@@ -12,11 +12,16 @@ from uuid import uuid4
 import re
 from urllib.parse import quote_plus, urlparse
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import httpx
+import json
 from bs4 import BeautifulSoup
 from ..infrastructure.cache import cache_manager
+from ..research import AdvancedResearcher
+from ..auth.dependencies import get_current_user
+from ..auth.models import User
 
 try:
     import trafilatura
@@ -624,6 +629,7 @@ async def list_ollama_models():
 async def start_research(
     request: LocalAIResearchRequest,
     background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
 ):
     """Start autonomous research on a topic using Ollama."""
     # Ensure Ollama is reachable and the configured model is available (or can be auto-pulled).
@@ -651,6 +657,7 @@ async def start_research(
         # Initialize session tracking
         research_sessions[session_id] = {
             "session_id": session_id,
+            "user_id": user.id,
             "topic": request.topic,
             "depth": request.depth,
             "status": "started",
@@ -661,9 +668,11 @@ async def start_research(
         }
         await _persist_session(session_id, research_sessions[session_id])
 
-        # Start research in background
+        # Start the advanced (Claude Research-style) pipeline in background.
+        # The legacy `execute_research` function is kept for reference but no
+        # longer the default path.
         background_tasks.add_task(
-            execute_research,
+            execute_advanced_research,
             session_id,
             request,
         )
@@ -1052,12 +1061,250 @@ The summary should be clear, informative, and suitable for a general audience.""
         await _persist_session(session_id, session)
 
 
+# ───────────────────────────────────────────────────────────────────
+# Advanced research pipeline (Claude Research–style, local only)
+# ───────────────────────────────────────────────────────────────────
+
+# Per-session event queues for SSE streaming.
+_event_queues: Dict[str, asyncio.Queue] = {}
+
+
+def _event_queue(session_id: str) -> asyncio.Queue:
+    q = _event_queues.get(session_id)
+    if q is None:
+        q = asyncio.Queue()
+        _event_queues[session_id] = q
+    return q
+
+
+async def _publish(session_id: str, event: Dict[str, Any]) -> None:
+    await _event_queue(session_id).put(event)
+
+
+async def _translate_batch_for_research(
+    items: List[Dict[str, str]],
+    target_lang: str,
+) -> List[Dict[str, Any]]:
+    """Translate a batch of (url, content) items, reusing the helpers above."""
+    wrapped = [{"url": it["url"], "content": it.get("content", "")} for it in items]
+    translated = await translate_scraped_content(wrapped, target_lang=target_lang)
+    return translated
+
+
+async def execute_advanced_research(
+    session_id: str,
+    request: "LocalAIResearchRequest",
+) -> None:
+    """Run the AdvancedResearcher pipeline and persist results to the session."""
+    session = research_sessions.get(session_id)
+    if session is None:
+        return
+
+    async def llm(prompt: str, system: Optional[str], max_tokens: int) -> str:
+        return await call_ollama(prompt, system, max_tokens)
+
+    async def search(query: str, max_results: int) -> List[Dict[str, str]]:
+        return await search_web(query, max_results)
+
+    async def scrape(urls: List[str], concurrency: int) -> List[Dict[str, str]]:
+        return await scrape_multiple_urls(urls, max_concurrent=concurrency)
+
+    async def translator(items: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        return await _translate_batch_for_research(items, request.target_language)
+
+    phase_progress = {
+        "planning": 15,
+        "gathering": 45,
+        "analyzing": 75,
+        "synthesizing": 95,
+    }
+
+    async def on_event(event: Dict[str, Any]) -> None:
+        event_type = event.get("type")
+        # Update session state for polling clients
+        if event_type == "phase_start":
+            phase = event.get("phase")
+            session["current_task"] = f"Phase: {phase}"
+            session["current_phase"] = phase
+        elif event_type == "phase_complete":
+            phase = event.get("phase")
+            session["progress"] = phase_progress.get(phase, session.get("progress", 0))
+            session["last_completed_phase"] = phase
+        elif event_type == "source_added":
+            session.setdefault("live_sources", []).append(
+                {
+                    "id": event.get("id"),
+                    "url": event.get("url"),
+                    "title": event.get("title"),
+                    "domain": event.get("domain"),
+                    "snippet": event.get("snippet"),
+                    "sub_question_index": event.get("sub_question_index"),
+                }
+            )
+        elif event_type == "sub_question":
+            session.setdefault("sub_questions", []).append(event.get("question"))
+        await _persist_session(session_id, session)
+        await _publish(session_id, event)
+
+    researcher = AdvancedResearcher(
+        query=request.topic,
+        depth=request.depth,
+        llm_call=llm,
+        web_search=search,
+        web_scrape=scrape,
+        translate=translator if request.use_translation else None,
+        target_language=request.target_language,
+        on_event=on_event,
+    )
+
+    session["status"] = "in_progress"
+    session["progress"] = 5
+    session["current_task"] = "Planning research"
+    session["current_phase"] = "planning"
+    session["sub_questions"] = []
+    session["live_sources"] = []
+    session["phases"] = [
+        {"name": p.name, "label": p.label, "status": "pending"}
+        for p in researcher.phases
+    ]
+    await _persist_session(session_id, session)
+
+    try:
+        result = await researcher.run()
+    except Exception as e:
+        logger.exception("Advanced research failed for %s: %s", session_id, e)
+        session["status"] = "failed"
+        session["error"] = str(e)
+        await _persist_session(session_id, session)
+        await _publish(session_id, {"type": "error", "message": str(e)})
+        return
+
+    # Finalize session payload
+    session["status"] = "completed"
+    session["progress"] = 100
+    session["current_task"] = None
+    session["current_phase"] = None
+    session["query"] = result["query"]
+    session["sub_questions"] = result["sub_questions"]
+    session["phases"] = result["phases"]
+    session["citations"] = result["citations"]
+    session["report_markdown"] = result["report_markdown"]
+    session["confidence"] = result["confidence"]
+    session["translated"] = result["translated_any"]
+    session["depth"] = result["depth"]
+    session["completed_at"] = datetime.utcnow().isoformat()
+
+    # Derive a short summary for compatibility with earlier UI rendering
+    first_para = ""
+    for chunk in (result["report_markdown"] or "").split("\n\n"):
+        stripped = chunk.strip()
+        if stripped and not stripped.startswith("#"):
+            first_para = stripped
+            break
+    session["summary"] = first_para
+
+    # Build compatibility "sources" list used by old UI code paths
+    session["sources"] = [
+        {
+            "url": c["url"],
+            "title": c["title"],
+            "translated": c.get("translated", False),
+            "original_language": c.get("original_language"),
+        }
+        for c in result["citations"]
+    ]
+
+    await _persist_session(session_id, session)
+    await _publish(session_id, {"type": "done", "session_id": session_id})
+
+
+def _require_owner(session: Dict[str, Any], user: User) -> None:
+    """Ensure the authenticated user owns this research session."""
+    owner = session.get("user_id")
+    if owner and owner != user.id and user.role != "admin":
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/research/{session_id}/events")
+async def stream_research_events(
+    session_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """
+    Server-Sent Events stream for a running research session.
+
+    Emits structured events as the pipeline progresses:
+      phase_start, phase_complete, sub_question, source_added,
+      analyzing_source, source_refined, report_ready, done, error.
+
+    On connect, any already-emitted events from the session replay is not
+    guaranteed, so the client should also call `/status` once to seed state.
+    """
+    snapshot = await _load_session(session_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(snapshot, user)
+
+    async def event_stream():
+        queue = _event_queue(session_id)
+        try:
+            # Initial snapshot for late subscribers
+            snapshot = await _load_session(session_id)
+            if snapshot:
+                payload = json.dumps({
+                    "type": "snapshot",
+                    "status": snapshot.get("status"),
+                    "progress": snapshot.get("progress"),
+                    "current_task": snapshot.get("current_task"),
+                    "sub_questions": snapshot.get("sub_questions", []),
+                    "live_sources": snapshot.get("live_sources", []),
+                    "phases": snapshot.get("phases", []),
+                    "report_markdown": snapshot.get("report_markdown"),
+                    "citations": snapshot.get("citations", []),
+                    "confidence": snapshot.get("confidence"),
+                })
+                yield f"data: {payload}\n\n"
+                if snapshot.get("status") in {"completed", "failed"}:
+                    return
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") in {"done", "error"}:
+                    break
+        finally:
+            # Drop the queue once the stream ends — it will be recreated if
+            # the client reconnects to a still-running session.
+            _event_queues.pop(session_id, None)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/research/{session_id}/status")
-async def get_research_status(session_id: str):
+async def get_research_status(
+    session_id: str,
+    user: User = Depends(get_current_user),
+):
     """Get research session status."""
     session = await _load_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
 
     response = {
         "session_id": session_id,
@@ -1065,6 +1312,10 @@ async def get_research_status(session_id: str):
         "progress": session["progress"],
         "current_agent": session.get("current_agent"),
         "current_task": session.get("current_task"),
+        "current_phase": session.get("current_phase"),
+        "phases": session.get("phases", []),
+        "sub_questions": session.get("sub_questions", []),
+        "live_sources": session.get("live_sources", []),
     }
 
     # Include result if completed
@@ -1073,10 +1324,13 @@ async def get_research_status(session_id: str):
             "summary": session.get("summary", ""),
             "findings": session.get("findings", []),
             "analysis": session.get("analysis", ""),
+            "report_markdown": session.get("report_markdown", ""),
+            "citations": session.get("citations", []),
             "sources": session.get("sources", []),
             "confidence": session.get("confidence", 0),
             "translated": session.get("translated", False),
             "depth": session.get("depth", "standard"),
+            "query": session.get("query", ""),
         })
     elif session["status"] == "failed":
         response["error"] = session.get("error", "Unknown error")
@@ -1085,11 +1339,15 @@ async def get_research_status(session_id: str):
 
 
 @router.get("/research/{session_id}")
-async def get_research_result(session_id: str):
+async def get_research_result(
+    session_id: str,
+    user: User = Depends(get_current_user),
+):
     """Get completed research result."""
     session = await _load_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
 
     if session["status"] != "completed":
         raise HTTPException(status_code=400, detail=f"Research not completed yet (status: {session['status']})")
@@ -1098,10 +1356,15 @@ async def get_research_result(session_id: str):
         "summary": session.get("summary", ""),
         "findings": session.get("findings", []),
         "analysis": session.get("analysis", ""),
+        "report_markdown": session.get("report_markdown", ""),
+        "citations": session.get("citations", []),
         "sources": session.get("sources", []),
         "confidence": session.get("confidence", 0),
         "translated": session.get("translated", False),
         "depth": session.get("depth", "standard"),
+        "query": session.get("query", ""),
+        "phases": session.get("phases", []),
+        "sub_questions": session.get("sub_questions", []),
     }
 
 

@@ -270,16 +270,28 @@ class ChatController {
         this.chatSessionId = sessionId;
     }
 
+    // Auth-aware fetch — routes through window.amorAuth.fetch so the JWT is
+    // included on every request, with automatic refresh+retry on 401.
+    // Falls back to raw fetch only if the auth layer isn't mounted yet (e.g.
+    // during the very first bootstrap tick).
+    _authFetch(path, init = {}) {
+        if (window.amorAuth && typeof window.amorAuth.fetch === 'function') {
+            return window.amorAuth.fetch(path, init);
+        }
+        const headers = Object.assign(
+            {},
+            init.headers || {},
+            window.getChatHeaders ? window.getChatHeaders() : {}
+        );
+        return fetch(path, { credentials: 'include', ...init, headers });
+    }
+
     async persistChatMessage(msg) {
         if (!this.chatSessionId) return;
         try {
-            const headers = {
-                'Content-Type': 'application/json',
-                ...(window.getChatHeaders ? window.getChatHeaders() : {})
-            };
-            const response = await fetch(`/api/sessions/${encodeURIComponent(this.chatSessionId)}/messages`, {
+            const response = await this._authFetch(`/api/sessions/${encodeURIComponent(this.chatSessionId)}/messages`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     role: msg.role,
                     content: msg.content,
@@ -441,7 +453,7 @@ class ChatController {
                 requestBody.use_research = true;
             }
 
-            const response = await fetch(endpoint, {
+            const response = await this._authFetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -514,61 +526,146 @@ class ChatController {
     }
 
     async researchWithLocalAI(message, typingId) {
-        try {
-            // Get research settings from UI
-            const depthSelect = document.getElementById('researchDepth');
-            const translationToggle = document.getElementById('useTranslation');
-            const targetLangSelect = document.getElementById('targetLanguage');
-            
-            const depth = depthSelect?.value || 'standard';
-            const useTranslation = translationToggle?.checked ?? true;
-            const targetLanguage = targetLangSelect?.value || 'en';
-            
-            // Start research with user-configured settings
-            const startResponse = await fetch(`${API_ENDPOINTS.research.local}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    topic: message,
-                    depth: depth,
-                    use_translation: useTranslation,
-                    target_language: targetLanguage,
-                    save_to_knowledge: true
-                })
-            });
+        // Get research settings from UI
+        const depthSelect = document.getElementById('researchDepth');
+        const translationToggle = document.getElementById('useTranslation');
+        const targetLangSelect = document.getElementById('targetLanguage');
 
-            if (!startResponse.ok) {
-                let detail = '';
-                try {
-                    const errBody = await startResponse.json();
-                    detail = errBody.detail || '';
-                } catch (_) {
-                    // ignore JSON parse errors
-                }
-                const statusInfo = `${startResponse.status} ${startResponse.statusText}`.trim();
-                const extra = detail ? ` - ${detail}` : '';
-                throw new Error(`Failed to start research (${statusInfo})${extra}`);
-            }
+        const depth = depthSelect?.value || 'standard';
+        const useTranslation = translationToggle?.checked ?? true;
+        const targetLanguage = targetLangSelect?.value || 'en';
 
-            const { session_id } = await startResponse.json();
-            this.currentSessionId = session_id;
+        // Start research
+        const startResponse = await this._authFetch(`${API_ENDPOINTS.research.local}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                topic: message,
+                depth,
+                use_translation: useTranslation,
+                target_language: targetLanguage,
+                save_to_knowledge: true,
+            }),
+        });
 
-            // Show progress modal
-            this.showProgressModal();
-
-            // Poll for status
-            await this.pollResearchStatus(session_id, typingId);
-
-        } finally {
-            this.hideProgressModal();
+        if (!startResponse.ok) {
+            let detail = '';
+            try { detail = (await startResponse.json()).detail || ''; } catch (_) {}
+            const extra = detail ? ` - ${detail}` : '';
+            throw new Error(`Failed to start research (${startResponse.status} ${startResponse.statusText})${extra}`);
         }
+
+        const { session_id } = await startResponse.json();
+        this.currentSessionId = session_id;
+
+        // Remove typing indicator — the research card replaces it
+        this.removeTypingIndicator(typingId);
+
+        // Mount a live research card into the messages area
+        if (typeof ResearchView !== 'function') {
+            throw new Error('ResearchView component is not loaded');
+        }
+        const view = new ResearchView(message, depth);
+        this._mountResearchCard(view);
+
+        // Stream events; fall back to polling if SSE is unavailable.
+        try {
+            await this._streamResearch(session_id, view);
+        } catch (err) {
+            console.warn('SSE stream failed, falling back to polling:', err);
+            await this._pollResearchInto(session_id, view);
+        }
+
+        // Persist final snapshot so chat history can restore it.
+        const snap = view.toSnapshot();
+        const assistantMsg = {
+            role: 'assistant',
+            content: '',
+            aiType: 'local-ai-research',
+            format: 'research',
+            extras: { research: snap },
+        };
+        this.messageHistory.push(assistantMsg);
+        await this.persistChatMessage(assistantMsg);
+    }
+
+    _mountResearchCard(view) {
+        const wrap = document.createElement('div');
+        wrap.className = 'message assistant local-ai-research';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        wrap.innerHTML = `
+            <div class="message-bubble research-bubble">
+                <div class="message-header">
+                    <div class="message-avatar">🔍</div>
+                    <span class="message-name">Research</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-content research-content"></div>
+            </div>
+        `;
+        wrap.querySelector('.research-content').appendChild(view.getElement());
+        this.messagesArea?.appendChild(wrap);
+        this.scrollToBottom();
+    }
+
+    _streamResearch(sessionId, view) {
+        return new Promise((resolve, reject) => {
+            let es;
+            try {
+                // EventSource can't send custom headers, so we piggy-back the
+                // access token on the URL. The backend's get_current_user
+                // dependency accepts an `access_token` query param as a
+                // fallback for exactly this case.
+                const token = window.amorAuth?.accessToken || '';
+                const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
+                es = new EventSource(`/api/local-ai/research/${sessionId}/events${qs}`);
+            } catch (e) {
+                reject(e);
+                return;
+            }
+            let completed = false;
+            const finish = (err) => {
+                if (completed) return;
+                completed = true;
+                try { es.close(); } catch (_) {}
+                if (err) reject(err); else resolve();
+            };
+            es.onmessage = (e) => {
+                if (!e.data) return;
+                let evt;
+                try { evt = JSON.parse(e.data); } catch (_) { return; }
+                view.handleEvent(evt);
+                if (evt.type === 'done') finish();
+                if (evt.type === 'error') finish(new Error(evt.message || 'Research failed'));
+            };
+            es.onerror = () => {
+                // If we've already received a 'done', just swallow the error.
+                if (completed) return;
+                finish(new Error('SSE connection error'));
+            };
+        });
+    }
+
+    async _pollResearchInto(sessionId, view) {
+        const pollInterval = 2000;
+        const maxAttempts = 900;
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+            const resp = await this._authFetch(`/api/local-ai/research/${sessionId}/status`);
+            if (!resp.ok) throw new Error(`Status fetch failed: ${resp.status}`);
+            const s = await resp.json();
+            view.handleEvent({ type: 'snapshot', ...s });
+            if (s.status === 'completed') return;
+            if (s.status === 'failed') throw new Error(s.error || 'Research failed');
+            await new Promise(r => setTimeout(r, pollInterval));
+            attempts++;
+        }
+        throw new Error('Research timed out');
     }
 
     async simpleLocalAIRequest(endpoint, message, typingId) {
         try {
-            const response = await fetch(endpoint, {
+            const response = await this._authFetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -627,7 +724,7 @@ class ChatController {
 
         while (attempts < maxAttempts) {
             try {
-                const response = await fetch(`/api/local-ai/research/${sessionId}/status`);
+                const response = await this._authFetch(`/api/local-ai/research/${sessionId}/status`);
 
                 if (!response.ok) {
                     throw new Error('Failed to fetch status');
@@ -950,6 +1047,15 @@ class ChatController {
     loadMessages(messages) {
         this.clearMessages();
         messages.forEach(msg => {
+            if (msg.format === 'research' && msg.extras?.research && typeof ResearchView === 'function') {
+                try {
+                    const view = ResearchView.fromSnapshot(msg.extras.research);
+                    this._mountResearchCard(view);
+                    return;
+                } catch (e) {
+                    console.warn('Failed to restore research snapshot:', e);
+                }
+            }
             this.addMessage(msg.role, msg.content, msg.aiType, msg.extras || {});
         });
         // Keep full message metadata so history restores properly.

@@ -164,6 +164,22 @@ class Settings(BaseSettings):
     # Health Check Configuration
     health_check_interval: int = 30  # seconds
 
+    # ---------------------------------------------------------------------
+    # Authentication / Security
+    # ---------------------------------------------------------------------
+    auth_jwt_secret: str = "change-me-in-production-set-via-AUTH_JWT_SECRET"
+    auth_jwt_algorithm: str = "HS256"
+    auth_access_token_ttl_minutes: int = 15
+    auth_refresh_token_ttl_days: int = 14
+    auth_cookie_name: str = "amor_refresh"
+    auth_cookie_secure: bool = False  # set True behind HTTPS
+    auth_cookie_samesite: str = "lax"
+    auth_max_failed_logins: int = 8
+    auth_lockout_minutes: int = 15
+    auth_ip_login_per_minute: int = 20
+    auth_register_per_hour_per_ip: int = 10
+    auth_password_min_length: int = 10
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

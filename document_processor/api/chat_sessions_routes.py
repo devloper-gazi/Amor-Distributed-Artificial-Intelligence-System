@@ -10,9 +10,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..auth.dependencies import get_current_user
+from ..auth.models import User
 from ..infrastructure.chat_store import chat_store
 from ..config.logging_config import logger
 
@@ -97,14 +99,14 @@ class SessionDetailResponse(BaseModel):
 async def create_session(
     request: SessionCreateRequest,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     mode = _normalize_mode(request.mode)
 
     session = await chat_store.create_session(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         mode=mode,
         title=request.title,
     )
@@ -130,14 +132,14 @@ async def list_sessions(
     include_archived: bool = Query(True, description="Whether to include archived sessions"),
     folder_id: Optional[str] = Query(None, description="Filter sessions by folder_id"),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     mode = _normalize_mode(mode)
 
     sessions = await chat_store.list_sessions(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         mode=mode,
         limit=limit,
         offset=offset,
@@ -169,13 +171,13 @@ async def list_sessions_all(
     include_archived: bool = Query(False, description="Whether to include archived sessions"),
     folder_id: Optional[str] = Query(None, description="Filter sessions by folder_id"),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
 
     sessions = await chat_store.list_sessions_all(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         limit=limit,
         offset=offset,
         include_archived=include_archived,
@@ -203,13 +205,13 @@ async def list_sessions_all(
 async def get_session(
     session_id: str,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     try:
         session = await chat_store.get_session(
             client_id=client_id,
-            user_id=x_user_id,
+            user_id=user.id,
             session_id=session_id,
             include_messages=True,
         )
@@ -241,7 +243,7 @@ async def append_message(
     session_id: str,
     request: MessageAppendRequest,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
 
@@ -256,7 +258,7 @@ async def append_message(
     try:
         message_id = await chat_store.append_message(
             client_id=client_id,
-            user_id=x_user_id,
+            user_id=user.id,
             session_id=session_id,
             role=role,
             content=request.content,
@@ -278,7 +280,7 @@ async def update_session(
     session_id: str,
     request: SessionUpdateRequest,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     mode = _normalize_mode(request.mode) if request.mode is not None else None
@@ -298,7 +300,7 @@ async def update_session(
 
         await chat_store.update_session(
             client_id=client_id,
-            user_id=x_user_id,
+            user_id=user.id,
             session_id=session_id,
             title=request.title,
             mode=mode,
@@ -314,12 +316,12 @@ async def update_session(
 async def delete_session(
     session_id: str,
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    user: User = Depends(get_current_user),
 ):
     client_id = _require_client_id(x_client_id)
     await chat_store.delete_session(
         client_id=client_id,
-        user_id=x_user_id,
+        user_id=user.id,
         session_id=session_id,
     )
     return {"ok": True}

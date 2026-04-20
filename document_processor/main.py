@@ -44,6 +44,8 @@ except ImportError:
 
 from .api.chat_sessions_routes import router as chat_sessions_router
 from .api.chat_folders_routes import router as chat_folders_router
+from .api.auth_routes import router as auth_router
+from .auth.service import auth_service
 
 # Crawling and Translation API routes
 try:
@@ -76,6 +78,12 @@ async def lifespan(app: FastAPI):
             await chat_store.ensure_indexes()
         except Exception as e:
             logger.warning("chat_store_indexes_failed", error=str(e))
+
+        # Ensure auth tables exist (PostgreSQL)
+        try:
+            await auth_service.bootstrap()
+        except Exception as e:
+            logger.warning("auth_bootstrap_failed", error=str(e))
 
         # Initialize Local AI if available
         if LOCAL_AI_AVAILABLE:
@@ -165,6 +173,10 @@ if CHAT_RESEARCH_AVAILABLE:
 if LOCAL_AI_AVAILABLE:
     app.include_router(local_ai_router)
     logger.info("Local AI routes included")
+
+# Authentication (PostgreSQL-backed users + JWT)
+app.include_router(auth_router)
+logger.info("Auth routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

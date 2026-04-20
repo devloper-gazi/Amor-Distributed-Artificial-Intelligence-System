@@ -31,9 +31,34 @@ const state = {
 window.appState = state;
 
 // ==================== DOM Ready ====================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     console.log('🤖 Initializing AI Research Assistant...');
+    // Wait for authentication before loading any user-specific data.
+    if (window.amorAuth && typeof window.amorAuth.ready === 'function') {
+        try { await window.amorAuth.ready(); } catch (_e) { /* proceed anyway */ }
+    }
     initializeApp();
+});
+
+// Re-initialise user-specific state when the account changes (login / logout).
+document.addEventListener('amor:auth-changed', (e) => {
+    if (!e.detail?.user) {
+        // Cleared — reset cached lists so the next user doesn't see stale data.
+        if (window.appState) {
+            window.appState.sessions = { research: [], thinking: [], coding: [] };
+            window.appState.sessionsAllBase = [];
+            window.appState.sessionsAllView = [];
+            window.appState._historyIndex = new Map();
+            window.appState.folders = [];
+        }
+        return;
+    }
+    // New user: refresh history view and spin up a new server session.
+    try {
+        state.userId = e.detail.user.id;
+        if (typeof loadSessionsForMode === 'function') loadSessionsForMode(state.currentMode);
+        if (typeof ensureCurrentServerSession === 'function') ensureCurrentServerSession();
+    } catch (_e) { /* best-effort */ }
 });
 
 // ==================== Initialization ====================
@@ -51,8 +76,10 @@ function initializeApp() {
     // Load preferences
     loadThemePreference();
     state.clientId = getOrCreateClientId();
-    state.userId = localStorage.getItem(USER_ID_STORAGE_KEY) || null;
-    exposeChatAuthToWindow();
+    state.userId = window.amorAuth?.user?.id || null;
+    // auth.js owns `window.getChatHeaders` so bearer tokens flow through every
+    // API call. We only guarantee the client_id is set in localStorage so the
+    // shared getter can pick it up.
 
     // Load initial history + create a fresh server session for the current mode
     loadSessionsForMode(state.currentMode);
@@ -85,15 +112,22 @@ function getOrCreateClientId() {
     return id;
 }
 
-function exposeChatAuthToWindow() {
-    window.getChatHeaders = () => {
-        const headers = { 'X-Client-Id': state.clientId };
-        if (state.userId) headers['X-User-Id'] = state.userId;
-        return headers;
-    };
-}
+// `window.getChatHeaders` is now owned by auth.js (adds Authorization bearer).
+// We keep this helper so the rest of app.js can call it as a light wrapper.
 
 async function apiFetch(path, options = {}) {
+    // Route through the auth-aware fetch so 401s trigger a silent refresh
+    // before falling back to the login overlay.
+    if (window.amorAuth?.fetch) {
+        const authed = window.amorAuth.fetch(`${API_BASE_URL}${path}`, {
+            ...options,
+            headers: {
+                ...(options.headers || {}),
+                ...(window.getChatHeaders ? window.getChatHeaders() : {}),
+            },
+        });
+        return authed;
+    }
     const headers = {
         ...(options.headers || {}),
         ...(window.getChatHeaders ? window.getChatHeaders() : {}),
