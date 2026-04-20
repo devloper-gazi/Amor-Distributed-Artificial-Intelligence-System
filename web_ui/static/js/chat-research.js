@@ -414,7 +414,11 @@ class ChatController {
         try {
             const useClaudeAPI = this.useClaudeAPI?.checked || false;
 
-            if (useClaudeAPI) {
+            // Thinking mode uses its own multi-phase pipeline regardless of
+            // provider — the backend picks local vs claude from the body.
+            if (this.mode === 'thinking') {
+                await this.thinkingWithLocalAI(message, typingId, useClaudeAPI ? 'claude' : 'local');
+            } else if (useClaudeAPI) {
                 await this.processWithClaude(message, typingId);
             } else {
                 await this.processWithLocalAI(message, typingId);
@@ -514,8 +518,11 @@ class ChatController {
             // For research mode, use the existing workflow with progress modal
             if (this.mode === 'research') {
                 await this.researchWithLocalAI(message, typingId);
+            } else if (this.mode === 'thinking') {
+                // Human-in-the-loop multi-phase reasoning (v2)
+                await this.thinkingWithLocalAI(message, typingId, 'local');
             } else {
-                // For thinking/coding modes, use simple request-response
+                // Coding mode still uses simple request-response for now.
                 await this.simpleLocalAIRequest(endpoint, message, typingId);
             }
 
@@ -606,6 +613,199 @@ class ChatController {
         wrap.querySelector('.research-content').appendChild(view.getElement());
         this.messagesArea?.appendChild(wrap);
         this.scrollToBottom();
+    }
+
+    // ────────────────────────────────────────────────────────── Thinking Mode
+    //
+    // Flow:
+    //   1. POST /api/thinking/analyze  → may return clarifying questions
+    //   2. Mount a ThinkingView card:
+    //        - if questions: show the form, wait for user answers or "Skip"
+    //        - else: skip straight to step 3
+    //   3. POST /api/thinking/think    → returns session_id
+    //   4. Stream SSE → hand events to the ThinkingView
+    //   5. Persist the final snapshot into chat history
+
+    _mountThinkingCard(view) {
+        const wrap = document.createElement('div');
+        wrap.className = 'message assistant local-ai-thinking';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        wrap.innerHTML = `
+            <div class="message-bubble research-bubble">
+                <div class="message-header">
+                    <div class="message-avatar">🧠</div>
+                    <span class="message-name">Thinking</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-content research-content"></div>
+            </div>
+        `;
+        wrap.querySelector('.research-content').appendChild(view.getElement());
+        this.messagesArea?.appendChild(wrap);
+        this.scrollToBottom();
+    }
+
+    async thinkingWithLocalAI(message, typingId, provider = 'local') {
+        if (typeof ThinkingView !== 'function') {
+            throw new Error('ThinkingView component is not loaded');
+        }
+
+        // Effort tier piggy-backs on the research depth selector so users
+        // don't need yet-another control. If the selector is absent or set
+        // to "quick/deep", we map through.
+        const depthSelect = document.getElementById('researchDepth');
+        const effort = depthSelect?.value || 'standard';
+
+        const view = new ThinkingView({ prompt: message, effort, provider });
+
+        // Swap the "typing" dots for the live thinking card early so the
+        // user sees immediate feedback while /analyze runs.
+        this.removeTypingIndicator(typingId);
+        this._mountThinkingCard(view);
+
+        // 1. Analyze
+        let analysis;
+        try {
+            const res = await this._authFetch('/api/thinking/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: message, deliverable: 'auto' }),
+            });
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (_) {}
+                throw new Error(`Analyze failed (${res.status})${detail ? ' - ' + detail : ''}`);
+            }
+            analysis = await res.json();
+        } catch (err) {
+            // Fall back to thinking directly with no clarifications.
+            console.warn('Thinking analyze failed, proceeding directly:', err);
+            analysis = {
+                needs_clarification: false,
+                complexity: 'moderate',
+                rationale: 'Analyzer unavailable — going straight to reasoning.',
+                detected_deliverable: 'explanation',
+                questions: [],
+            };
+        }
+
+        // 2. Gather clarifications (possibly via user input)
+        const clarifications = await this._askClarifications(view, analysis);
+
+        // 3. Start the pipeline
+        let session;
+        try {
+            const res = await this._authFetch('/api/thinking/think', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: message,
+                    clarifications,
+                    detected_deliverable: analysis.detected_deliverable || 'auto',
+                    provider,
+                    effort,
+                }),
+            });
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (_) {}
+                throw new Error(`Failed to start thinking (${res.status} ${res.statusText})${detail ? ' - ' + detail : ''}`);
+            }
+            session = await res.json();
+        } catch (err) {
+            view.handleEvent({ type: 'error', message: err.message });
+            throw err;
+        }
+
+        view.showTimeline({ session_id: session.session_id, phases: [] });
+
+        // 4. Stream events
+        try {
+            await this._streamThinking(session.session_id, view);
+        } catch (err) {
+            console.warn('Thinking SSE failed, polling fallback:', err);
+            await this._pollThinking(session.session_id, view);
+        }
+
+        // 5. Persist final snapshot so history re-mounts it later.
+        const snap = view.toSnapshot();
+        const assistantMsg = {
+            role: 'assistant',
+            content: '',
+            aiType: 'local-ai-thinking',
+            format: 'thinking',
+            extras: { thinking: snap },
+        };
+        this.messageHistory.push(assistantMsg);
+        await this.persistChatMessage(assistantMsg);
+    }
+
+    _askClarifications(view, analysis) {
+        return new Promise((resolve) => {
+            if (!analysis?.needs_clarification || !Array.isArray(analysis.questions) || !analysis.questions.length) {
+                resolve({});
+                return;
+            }
+            view.showQuestions(analysis);
+            view.onSubmitAnswers = (answers) => {
+                view.showTimeline({ phases: [] });
+                resolve(answers || {});
+            };
+            view.onProceedWithoutAnswers = () => {
+                view.showTimeline({ phases: [] });
+                resolve({});
+            };
+        });
+    }
+
+    _streamThinking(sessionId, view) {
+        return new Promise((resolve, reject) => {
+            let es;
+            try {
+                const token = window.amorAuth?.accessToken || '';
+                const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
+                es = new EventSource(`/api/thinking/${sessionId}/events${qs}`);
+            } catch (e) {
+                reject(e);
+                return;
+            }
+            let completed = false;
+            const finish = (err) => {
+                if (completed) return;
+                completed = true;
+                try { es.close(); } catch (_) {}
+                if (err) reject(err); else resolve();
+            };
+            es.onmessage = (e) => {
+                if (!e.data) return;
+                let evt;
+                try { evt = JSON.parse(e.data); } catch (_) { return; }
+                view.handleEvent(evt);
+                if (evt.type === 'done') finish();
+                if (evt.type === 'error') finish(new Error(evt.message || 'Thinking failed'));
+            };
+            es.onerror = () => {
+                if (completed) return;
+                finish(new Error('SSE connection error'));
+            };
+        });
+    }
+
+    async _pollThinking(sessionId, view) {
+        const pollInterval = 2000;
+        const maxAttempts = 600; // 20 min
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+            const resp = await this._authFetch(`/api/thinking/${sessionId}/status`);
+            if (!resp.ok) throw new Error(`Status fetch failed: ${resp.status}`);
+            const s = await resp.json();
+            view.handleEvent({ type: 'snapshot', ...s });
+            if (s.status === 'completed') return;
+            if (s.status === 'failed') throw new Error(s.error || 'Thinking failed');
+            await new Promise(r => setTimeout(r, pollInterval));
+            attempts++;
+        }
+        throw new Error('Thinking timed out');
     }
 
     _streamResearch(sessionId, view) {
@@ -1054,6 +1254,15 @@ class ChatController {
                     return;
                 } catch (e) {
                     console.warn('Failed to restore research snapshot:', e);
+                }
+            }
+            if (msg.format === 'thinking' && msg.extras?.thinking && typeof ThinkingView === 'function') {
+                try {
+                    const view = ThinkingView.fromSnapshot(msg.extras.thinking);
+                    this._mountThinkingCard(view);
+                    return;
+                } catch (e) {
+                    console.warn('Failed to restore thinking snapshot:', e);
                 }
             }
             this.addMessage(msg.role, msg.content, msg.aiType, msg.extras || {});
