@@ -74,6 +74,21 @@ class AnalyzeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Canonical effort tiers = the 5 English names also used by Research.
+# Legacy aliases (quick/standard) are kept so older clients and saved
+# snapshots don't break; the engine normalizes them to canonical names.
+EffortTier = Literal[
+    "basic",
+    "medium",
+    "deep",
+    "expert",
+    "ultra",
+    # legacy — mapped internally: quick→basic, standard→medium
+    "quick",
+    "standard",
+]
+
+
 class ThinkRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     clarifications: Dict[str, str] = Field(
@@ -91,7 +106,8 @@ class ThinkRequest(BaseModel):
     # here so the engine can pick the right LLM backend.
     provider: Literal["local", "claude"] = "local"
     # Let the UI dial the reasoning budget. Drives max-tokens per phase.
-    effort: Literal["quick", "standard", "deep"] = "standard"
+    # Canonical: basic | medium | deep | expert | ultra.
+    effort: EffortTier = "medium"
 
 
 class ThinkResponse(BaseModel):
@@ -120,7 +136,7 @@ class ThinkingSessionSnapshot(BaseModel):
     progress: int
     prompt: str
     deliverable: DeliverableKind
-    effort: Literal["quick", "standard", "deep"]
+    effort: EffortTier
     provider: Literal["local", "claude"]
     current_phase: Optional[str] = None
     current_task: Optional[str] = None
