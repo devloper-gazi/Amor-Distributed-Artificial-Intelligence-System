@@ -100,7 +100,16 @@ async def _load_session(session_id: str) -> Optional[Dict[str, Any]]:
 # Request/Response Models
 class LocalAIResearchRequest(BaseModel):
     topic: str = Field(..., min_length=1, description="Research topic or question")
-    depth: str = Field("standard", description="Research depth: quick, standard, or deep")
+    depth: str = Field(
+        "medium",
+        description=(
+            "Research depth (English canonical names, ordered by budget): "
+            "basic (~5 min, 8 sources), medium (~20 min, 25 sources), "
+            "deep (~75 min, 80 sources), expert (~4 hrs, 250 sources), "
+            "ultra (~10 hrs, up to 1000 sources). Legacy aliases accepted: "
+            "quick→basic, standard→medium."
+        ),
+    )
     use_translation: bool = Field(True, description="Enable automatic translation of non-English sources")
     target_language: str = Field("en", description="Target language for translation (ISO 639-1 code)")
     save_to_knowledge: bool = Field(False, description="Save results to vector store (not implemented)")
@@ -112,137 +121,468 @@ class LocalAIResearchResponse(BaseModel):
     message: str
 
 
-# Web Scraping Functions
+# ─── Web Search & Scraping ────────────────────────────────────────────
+#
+# Multi-engine search with authoritative fallbacks. The goal is high recall
+# (lots of real content pages, not search-result chrome) AND high quality
+# (Wikipedia/arXiv/docs.* hit the top of the stack).
+#
+# Search providers, in priority order:
+#   1. DuckDuckGo HTML (https://html.duckduckgo.com/html/) — richer than Lite
+#   2. DuckDuckGo Lite (fallback)
+#   3. SearXNG, if SEARXNG_URL env var is set (self-hosted meta-search)
+#   4. Wikipedia REST API — always tried; almost always returns a clean page
+#      (the single biggest quality win for factual queries)
+#   5. Hard-coded authoritative starter URLs as a last resort
+#
+# Query expansion: for each sub-question we generate up to 3 variants
+# (keyword-only, original, "X explained") and union+dedupe the results.
+
+_BROWSER_UAS = [
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+# URLs that are *search result pages* — we must never scrape these for "content",
+# otherwise the pipeline feeds UI chrome into the LLM.
+_SEARCH_LIKE_URL_PATTERNS = re.compile(
+    r"(scholar\.google\.com|duckduckgo\.com/?[?/]|bing\.com/search|google\.com/search|"
+    r"yandex\.com/search|baidu\.com/s\?|/search\?|\?q=|\&q=)",
+    re.IGNORECASE,
+)
+
+SEARXNG_URL = os.getenv("SEARXNG_URL", "").rstrip("/") or None
+
+
+def _keywords_for_search(query: str) -> str:
+    """Strip stop-words and question punctuation so the query is search-engine-friendly."""
+    q = re.sub(r"[?\.!,:;\"']", " ", query).strip()
+    tokens = [t for t in q.split() if len(t) > 1]
+    stop = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "of", "to", "in", "on", "for", "with", "by", "at", "as", "from",
+        "what", "which", "who", "whom", "whose", "when", "where", "why", "how",
+        "do", "does", "did", "can", "could", "should", "would", "will",
+        "and", "or", "but", "if", "then", "than", "that", "this", "these", "those",
+        "it", "its", "there", "their", "them", "they",
+    }
+    keep = [t for t in tokens if t.lower() not in stop]
+    # If stop-word removal killed too much, fall back to original
+    return " ".join(keep) if len(keep) >= 2 else q
+
+
+def _expand_query_variants(query: str) -> List[str]:
+    """Generate 1–3 search-query variants to widen recall without duplicating hits."""
+    base = query.strip()
+    kw = _keywords_for_search(base)
+    variants = [base]
+    if kw and kw.lower() != base.lower():
+        variants.append(kw)
+    # Only add "explained" for short queries — prevents polluting specific questions
+    if len(kw.split()) <= 4:
+        variants.append(f"{kw} explained")
+    # Dedupe while preserving order
+    seen = set()
+    out: List[str] = []
+    for v in variants:
+        k = v.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(v)
+    return out[:3]
+
+
+async def _search_duckduckgo_html(
+    client: httpx.AsyncClient, query: str, max_results: int
+) -> List[Dict[str, str]]:
+    """Scrape DuckDuckGo's HTML endpoint (richer than /lite)."""
+    url = "https://html.duckduckgo.com/html/"
+    try:
+        resp = await client.post(
+            url,
+            data={"q": query, "kl": "us-en"},
+            headers={
+                "User-Agent": _BROWSER_UAS[0],
+                "Accept": "text/html,application/xhtml+xml;q=0.9",
+                "Accept-Language": "en-US,en;q=0.8",
+            },
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results: List[Dict[str, str]] = []
+        for a in soup.select("a.result__a"):
+            href = a.get("href") or ""
+            title = a.get_text(strip=True)
+            if not href.startswith("http") or len(title) < 5:
+                continue
+            if _SEARCH_LIKE_URL_PATTERNS.search(href):
+                continue
+            results.append({"url": href, "title": title[:180]})
+            if len(results) >= max_results:
+                break
+        return results
+    except Exception as e:
+        logger.debug("ddg html search failed for %r: %s", query, e)
+        return []
+
+
+async def _search_duckduckgo_lite(
+    client: httpx.AsyncClient, query: str, max_results: int
+) -> List[Dict[str, str]]:
+    """Fallback to DuckDuckGo Lite if the main HTML endpoint is blocked."""
+    url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+    try:
+        resp = await client.get(
+            url,
+            headers={"User-Agent": _BROWSER_UAS[1]},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results: List[Dict[str, str]] = []
+        for link in soup.find_all("a"):
+            href = link.get("href", "")
+            title = link.get_text(strip=True)
+            if not href.startswith("http") or len(title) < 8:
+                continue
+            if "duckduckgo.com" in href or _SEARCH_LIKE_URL_PATTERNS.search(href):
+                continue
+            results.append({"url": href, "title": title[:180]})
+            if len(results) >= max_results:
+                break
+        return results
+    except Exception as e:
+        logger.debug("ddg lite search failed for %r: %s", query, e)
+        return []
+
+
+async def _search_searxng(
+    client: httpx.AsyncClient, query: str, max_results: int
+) -> List[Dict[str, str]]:
+    """Query a self-hosted SearXNG instance if configured."""
+    if not SEARXNG_URL:
+        return []
+    try:
+        resp = await client.get(
+            f"{SEARXNG_URL}/search",
+            params={"q": query, "format": "json"},
+            headers={"User-Agent": _BROWSER_UAS[2]},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        out: List[Dict[str, str]] = []
+        for r in (data.get("results") or [])[: max_results * 2]:
+            u = r.get("url") or ""
+            t = (r.get("title") or "").strip()
+            if not u.startswith("http") or len(t) < 5:
+                continue
+            if _SEARCH_LIKE_URL_PATTERNS.search(u):
+                continue
+            out.append({"url": u, "title": t[:180]})
+            if len(out) >= max_results:
+                break
+        return out
+    except Exception as e:
+        logger.debug("searxng search failed for %r: %s", query, e)
+        return []
+
+
+async def _wikipedia_top_pages(
+    client: httpx.AsyncClient, query: str, max_results: int = 3
+) -> List[Dict[str, str]]:
+    """
+    Return top Wikipedia article URLs for the query via the MediaWiki search API.
+    This is the single highest-signal source for factual queries — always try it.
+    """
+    try:
+        resp = await client.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "srlimit": max_results,
+                "format": "json",
+                "utf8": 1,
+            },
+            headers={"User-Agent": "AmorResearchBot/1.0 (educational use)"},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        hits = (data.get("query") or {}).get("search") or []
+        out: List[Dict[str, str]] = []
+        for h in hits[:max_results]:
+            title = h.get("title") or ""
+            if not title:
+                continue
+            slug = title.replace(" ", "_")
+            out.append({
+                "url": f"https://en.wikipedia.org/wiki/{quote_plus(slug, safe='_()')}",
+                "title": f"Wikipedia — {title}",
+            })
+        return out
+    except Exception as e:
+        logger.debug("wikipedia search failed for %r: %s", query, e)
+        return []
+
+
 async def search_web(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """Search the web and return URLs. Uses multiple strategies."""
-    results = []
+    """
+    Search the web using a stack of engines and return up to ``max_results``
+    deduplicated (url) results. Always includes Wikipedia top hits when found.
+    """
+    async with httpx.AsyncClient(
+        timeout=20.0,
+        follow_redirects=True,
+        headers={"Accept-Encoding": "gzip"},
+    ) as client:
+        # Fan out — 3 engines + Wikipedia in parallel, take whatever comes back.
+        tasks = [
+            _search_duckduckgo_html(client, query, max_results),
+            _search_duckduckgo_lite(client, query, max_results),
+            _search_searxng(client, query, max_results),
+            _wikipedia_top_pages(client, query, max_results=max(2, min(3, max_results))),
+        ]
+        batches = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Strategy 1: Try DuckDuckGo Lite (simpler HTML)
+    # Merge preserving order (DDG HTML first, Wiki last so it appears in the pool
+    # even if other engines returned enough results).
+    seen: set = set()
+    merged: List[Dict[str, str]] = []
+    # Interleave: wiki always has reserved slot up to 2 — pull those first so they
+    # make it through max_results cap.
+    wiki_hits = batches[3] if isinstance(batches[3], list) else []
+    for r in wiki_hits[:2]:
+        if r["url"] in seen:
+            continue
+        seen.add(r["url"])
+        merged.append(r)
+
+    for i in (0, 1, 2):
+        batch = batches[i] if isinstance(batches[i], list) else []
+        for r in batch:
+            if r["url"] in seen:
+                continue
+            seen.add(r["url"])
+            merged.append(r)
+            if len(merged) >= max_results:
+                break
+        if len(merged) >= max_results:
+            break
+
+    if merged:
+        logger.info("search_web: %d results for %r", len(merged), query[:80])
+        return merged[:max_results]
+
+    # Absolute last-resort synthetic starter (likely to resolve): Wikipedia slug.
+    logger.warning("search_web: all engines returned zero for %r, using Wikipedia slug fallback", query[:80])
+    return [{
+        "url": f"https://en.wikipedia.org/wiki/{quote_plus(query.strip().replace(' ', '_'), safe='_()')}",
+        "title": f"Wikipedia: {query}",
+    }][:max_results]
+
+
+async def _fetch_wikipedia_plain(client: httpx.AsyncClient, url: str) -> Optional[Dict[str, str]]:
+    """
+    Fetch a clean plain-text extract directly from the MediaWiki REST API
+    instead of scraping the HTML page. Produces vastly cleaner content.
+    """
+    m = re.match(r"https?://([a-z]{2,3})\.wikipedia\.org/wiki/(.+?)$", url)
+    if not m:
+        return None
+    lang, slug = m.group(1), m.group(2).split("#", 1)[0]
     try:
-        search_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
-
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            }
-            response = await client.get(search_url, headers=headers)
-
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-
-                # Parse DuckDuckGo Lite results
-                for link in soup.find_all('a', limit=max_results * 3):
-                    url = link.get('href', '')
-                    title = link.get_text(strip=True)
-
-                    # Filter valid URLs
-                    if url and title and url.startswith('http') and len(title) > 10:
-                        # Skip DuckDuckGo's own links
-                        if 'duckduckgo.com' not in url:
-                            results.append({
-                                'url': url,
-                                'title': title[:100]
-                            })
-                            if len(results) >= max_results:
-                                break
-
-                if results:
-                    logger.info(f"Found {len(results)} search results using DuckDuckGo Lite for: {query}")
-                    return results
+        r = await client.get(
+            f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{slug}",
+            headers={"User-Agent": "AmorResearchBot/1.0"},
+            timeout=15.0,
+        )
+        summary = ""
+        title = ""
+        if r.status_code == 200:
+            data = r.json()
+            summary = (data.get("extract") or "").strip()
+            title = (data.get("title") or slug.replace("_", " ")).strip()
+        # Fetch the richer plain-text rendering of the whole article too
+        r2 = await client.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "prop": "extracts",
+                "explaintext": 1,
+                "exlimit": 1,
+                "titles": slug.replace("_", " "),
+                "format": "json",
+                "utf8": 1,
+            },
+            headers={"User-Agent": "AmorResearchBot/1.0"},
+            timeout=20.0,
+        )
+        body = ""
+        if r2.status_code == 200:
+            pages = (r2.json().get("query") or {}).get("pages") or {}
+            for _, p in pages.items():
+                body = (p.get("extract") or "").strip()
+                if body:
+                    break
+        content = (summary + "\n\n" + body).strip() or body or summary
+        if not content:
+            return None
+        return {
+            "url": url,
+            "content": content[:8000],
+            "title": title,
+            "method": "wikipedia-api",
+        }
     except Exception as e:
-        logger.warning(f"DuckDuckGo Lite search failed: {e}")
-
-    # Strategy 2: Use pre-defined high-quality sources for common topics
-    fallback_sources = [
-        {"url": "https://en.wikipedia.org/wiki/" + quote_plus(query.replace(" ", "_")), "title": f"Wikipedia: {query}"},
-        {"url": "https://arxiv.org/search/?query=" + quote_plus(query), "title": f"arXiv: {query}"},
-        {"url": "https://scholar.google.com/scholar?q=" + quote_plus(query), "title": f"Google Scholar: {query}"},
-    ]
-
-    # For specific topics, add relevant sources
-    query_lower = query.lower()
-    if any(term in query_lower for term in ['ai', 'artificial intelligence', 'machine learning', 'transformer']):
-        fallback_sources.extend([
-            {"url": "https://paperswithcode.com/search?q=" + quote_plus(query), "title": f"Papers with Code: {query}"},
-            {"url": "https://huggingface.co/search/full-text?q=" + quote_plus(query), "title": f"Hugging Face: {query}"},
-        ])
-
-    logger.info(f"Using {len(fallback_sources[:max_results])} fallback sources for: {query}")
-    return fallback_sources[:max_results]
-
-
-async def scrape_url(url: str) -> Optional[Dict[str, str]]:
-    """Scrape content from a URL."""
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-            response = await client.get(url, headers=headers)
-
-            if response.status_code != 200:
-                logger.warning(f"Failed to scrape {url}: status {response.status_code}")
-                return None
-
-            html_content = response.text
-
-            # Try trafilatura first (better content extraction)
-            if TRAFILATURA_AVAILABLE:
-                extracted_text = trafilatura.extract(html_content, include_comments=False, include_tables=False)
-                if extracted_text:
-                    return {
-                        'url': url,
-                        'content': extracted_text[:5000],  # Limit content length
-                        'method': 'trafilatura'
-                    }
-
-            # Fallback to BeautifulSoup
-            soup = BeautifulSoup(html_content, 'html.parser')
-
-            # Remove script and style elements
-            for script in soup(["script", "style", "nav", "footer", "header"]):
-                script.decompose()
-
-            # Get text
-            text = soup.get_text(separator='\n', strip=True)
-
-            # Clean up text
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
-
-            return {
-                'url': url,
-                'content': text[:5000],  # Limit content length
-                'method': 'beautifulsoup'
-            }
-
-    except Exception as e:
-        logger.error(f"Failed to scrape {url}: {e}")
+        logger.debug("wikipedia api fetch failed for %s: %s", url, e)
         return None
 
 
-async def scrape_multiple_urls(urls: List[str], max_concurrent: int = 3) -> List[Dict[str, str]]:
-    """Scrape multiple URLs concurrently."""
-    results = []
+async def _fetch_arxiv_abstract(client: httpx.AsyncClient, url: str) -> Optional[Dict[str, str]]:
+    """arXiv abstract pages: pull the real abstract via the /abs HTML."""
+    if "arxiv.org/abs/" not in url:
+        return None
+    try:
+        r = await client.get(url, headers={"User-Agent": _BROWSER_UAS[0]}, timeout=20.0)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        abstract_el = soup.find("blockquote", {"class": "abstract"})
+        title_el = soup.find("h1", {"class": "title"})
+        abstract = abstract_el.get_text(" ", strip=True) if abstract_el else ""
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        abstract = re.sub(r"^Abstract:\s*", "", abstract, flags=re.I)
+        if not abstract or len(abstract) < 80:
+            return None
+        return {
+            "url": url,
+            "content": (title + "\n\n" + abstract)[:6000],
+            "title": title or url,
+            "method": "arxiv-html",
+        }
+    except Exception as e:
+        logger.debug("arxiv fetch failed for %s: %s", url, e)
+        return None
 
-    # Process in batches to avoid overwhelming servers
-    for i in range(0, len(urls), max_concurrent):
-        batch = urls[i:i + max_concurrent]
-        tasks = [scrape_url(url) for url in batch]
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for result in batch_results:
-            if isinstance(result, dict) and result:
-                results.append(result)
+async def scrape_url(url: str, attempts: int = 2) -> Optional[Dict[str, str]]:
+    """
+    Fetch a URL's main content. Order of strategies:
+      1. Skip obvious search-result URLs (would poison the analyzer).
+      2. Use dedicated API paths for Wikipedia & arXiv.
+      3. Plain HTTP GET + trafilatura (when available).
+      4. Plain HTTP GET + BeautifulSoup fallback with aggressive noise stripping.
+      5. Retry up to `attempts` times with UA rotation before giving up.
+    """
+    if not url or not url.startswith("http"):
+        return None
+    if _SEARCH_LIKE_URL_PATTERNS.search(url):
+        logger.debug("scrape_url: skipping search-result URL %s", url)
+        return None
 
-        # Small delay between batches
-        if i + max_concurrent < len(urls):
-            await asyncio.sleep(2)
+    async with httpx.AsyncClient(
+        timeout=25.0,
+        follow_redirects=True,
+        headers={"Accept-Encoding": "gzip"},
+    ) as client:
+        # Authoritative shortcut paths first
+        if "wikipedia.org/wiki/" in url:
+            wiki = await _fetch_wikipedia_plain(client, url)
+            if wiki:
+                return wiki
+        if "arxiv.org/abs/" in url:
+            ax = await _fetch_arxiv_abstract(client, url)
+            if ax:
+                return ax
 
-    return results
+        # Generic HTML scrape with retries + UA rotation
+        last_err: Optional[str] = None
+        for attempt in range(max(1, attempts)):
+            try:
+                ua = _BROWSER_UAS[attempt % len(_BROWSER_UAS)]
+                response = await client.get(
+                    url,
+                    headers={
+                        "User-Agent": ua,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.8",
+                    },
+                )
+                if response.status_code in (403, 429, 503):
+                    last_err = f"HTTP {response.status_code}"
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                if response.status_code != 200:
+                    return None
+                html_content = response.text or ""
+
+                # trafilatura usually produces the cleanest text
+                if TRAFILATURA_AVAILABLE:
+                    extracted = trafilatura.extract(
+                        html_content,
+                        include_comments=False,
+                        include_tables=False,
+                        favor_precision=False,
+                        favor_recall=True,
+                    )
+                    if extracted and len(extracted) >= 120:
+                        return {
+                            "url": url,
+                            "content": extracted[:8000],
+                            "method": "trafilatura",
+                        }
+
+                # BS4 fallback — strip chrome, keep <article>/<main>/<section> text when possible
+                soup = BeautifulSoup(html_content, "html.parser")
+                for bad in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript", "svg"]):
+                    bad.decompose()
+                # Prefer the "main content" region if the site provides one
+                main = soup.find("article") or soup.find("main") or soup.find(id="content") or soup
+                text = main.get_text(separator="\n", strip=True)
+                # Collapse whitespace
+                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                text = "\n".join(lines)
+                if len(text) >= 120:
+                    return {
+                        "url": url,
+                        "content": text[:8000],
+                        "method": "beautifulsoup",
+                    }
+                last_err = f"content too short ({len(text)} chars)"
+            except Exception as e:
+                last_err = str(e)
+                await asyncio.sleep(0.4 * (attempt + 1))
+
+        logger.debug("scrape_url gave up on %s: %s", url, last_err)
+        return None
+
+
+async def scrape_multiple_urls(urls: List[str], max_concurrent: int = 8) -> List[Dict[str, str]]:
+    """Scrape URLs with bounded concurrency. Higher concurrency by default (8)."""
+    if not urls:
+        return []
+    sem = asyncio.Semaphore(max(1, max_concurrent))
+
+    async def _one(u: str) -> Optional[Dict[str, str]]:
+        async with sem:
+            return await scrape_url(u)
+
+    results = await asyncio.gather(*(_one(u) for u in urls), return_exceptions=True)
+    out: List[Dict[str, str]] = []
+    for r in results:
+        if isinstance(r, dict) and r.get("content"):
+            out.append(r)
+    return out
 
 
 # Language Detection and Translation Functions
@@ -693,8 +1033,22 @@ async def execute_research(session_id: str, request: LocalAIResearchRequest):
     try:
         session = research_sessions[session_id]
 
-        depth = (request.depth or "standard").strip().lower()
-        if depth not in {"quick", "standard", "deep"}:
+        # Normalize tier name: accept new canonical names, aliases, and
+        # legacy names (quick/standard). AdvancedResearcher resolves aliases
+        # itself, but this endpoint also runs legacy branches keyed on
+        # "quick"/"deep", so we keep those values passing through.
+        depth_raw = (request.depth or "medium").strip().lower()
+        _DEPTH_NORMALIZE = {
+            "basic": "quick",
+            "fast": "quick",
+            "medium": "standard",
+            "balanced": "standard",
+            "thorough": "deep",
+            "comprehensive": "expert",
+            "exhaustive": "ultra",
+        }
+        depth = _DEPTH_NORMALIZE.get(depth_raw, depth_raw)
+        if depth not in {"quick", "standard", "deep", "expert", "ultra"}:
             depth = "standard"
 
         # Update status
@@ -1143,6 +1497,19 @@ async def execute_advanced_research(
             )
         elif event_type == "sub_question":
             session.setdefault("sub_questions", []).append(event.get("question"))
+        elif event_type == "analyzing_source":
+            # Keep progress advancing through the slow analyze loop so the
+            # UI never looks frozen on the 45% mark. Interpolate between
+            # gathering-complete (45) and analyzing-complete (75).
+            idx = event.get("index") or 0
+            total = max(1, event.get("total") or 1)
+            frac = min(1.0, (idx + 1) / total)
+            session["progress"] = int(45 + 30 * frac)
+            session["current_task"] = (
+                f"Analyzing source {idx + 1}/{total}"
+            )
+        elif event_type == "source_refined":
+            session.setdefault("refined_ids", []).append(event.get("id"))
         await _persist_session(session_id, session)
         await _publish(session_id, event)
 

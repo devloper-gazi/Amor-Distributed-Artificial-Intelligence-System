@@ -168,7 +168,7 @@
   class ResearchView {
     constructor(query, depth) {
       this.query = query;
-      this.depth = depth || "standard";
+      this.depth = depth || "medium";
       this.root = document.createElement("div");
       this.root.className = "research-card";
 
@@ -193,10 +193,15 @@
 
     _buildSkeleton() {
       const depthLabel = {
-        quick: "Quick",
-        standard: "Standard",
+        basic: "Basic",
+        medium: "Medium",
         deep: "Deep",
-      }[this.depth] || "Standard";
+        expert: "Expert",
+        ultra: "Ultra",
+        // legacy aliases
+        quick: "Basic",
+        standard: "Medium",
+      }[this.depth] || "Medium";
 
       this.root.innerHTML = `
         <div class="research-header">

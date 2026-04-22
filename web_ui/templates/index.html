@@ -171,9 +171,11 @@
                             <span>Research Depth</span>
                         </label>
                         <select id="researchDepth" class="panel-setting-select">
-                            <option value="quick">Quick (4 sources)</option>
-                            <option value="standard" selected>Standard (8 sources)</option>
-                            <option value="deep">Deep (12 sources)</option>
+                            <option value="basic">Basic — 8 sources (~5 min)</option>
+                            <option value="medium" selected>Medium — 25 sources (~20 min)</option>
+                            <option value="deep">Deep — 80 sources (~75 min)</option>
+                            <option value="expert">Expert — 250 sources (~4 hrs)</option>
+                            <option value="ultra">Ultra — up to 1000 sources (~10 hrs)</option>
                         </select>
                     </div>
                     <div class="panel-setting-row">
@@ -227,7 +229,7 @@
                         <span class="depth-icon" aria-hidden="true">
                             <i class="fas fa-layer-group"></i>
                         </span>
-                        <span class="depth-count" id="researchDepthLabel">8</span>
+                        <span class="depth-count" id="researchDepthLabel">25</span>
                         <span class="depth-caret" aria-hidden="true">
                             <i class="fas fa-chevron-up"></i>
                         </span>
@@ -235,17 +237,25 @@
                     </button>
 
                     <div id="researchDepthMenu" class="depth-menu" role="menu" aria-label="Select research depth" style="display: none;">
-                        <button class="depth-option" type="button" data-depth="quick" role="menuitemradio" aria-checked="false">
-                            <span class="opt-title">Quick</span>
-                            <span class="opt-sub">4 sources</span>
+                        <button class="depth-option" type="button" data-depth="basic" role="menuitemradio" aria-checked="false">
+                            <span class="opt-title">Basic</span>
+                            <span class="opt-sub">8 sources · ~5 min</span>
                         </button>
-                        <button class="depth-option" type="button" data-depth="standard" role="menuitemradio" aria-checked="true">
-                            <span class="opt-title">Standard</span>
-                            <span class="opt-sub">8 sources</span>
+                        <button class="depth-option" type="button" data-depth="medium" role="menuitemradio" aria-checked="true">
+                            <span class="opt-title">Medium</span>
+                            <span class="opt-sub">25 sources · ~20 min</span>
                         </button>
                         <button class="depth-option" type="button" data-depth="deep" role="menuitemradio" aria-checked="false">
                             <span class="opt-title">Deep</span>
-                            <span class="opt-sub">12 sources</span>
+                            <span class="opt-sub">80 sources · ~75 min</span>
+                        </button>
+                        <button class="depth-option" type="button" data-depth="expert" role="menuitemradio" aria-checked="false">
+                            <span class="opt-title">Expert</span>
+                            <span class="opt-sub">250 sources · ~4 hrs</span>
+                        </button>
+                        <button class="depth-option" type="button" data-depth="ultra" role="menuitemradio" aria-checked="false">
+                            <span class="opt-title">Ultra</span>
+                            <span class="opt-sub">up to 1000 · ~10 hrs</span>
                         </button>
 
                         <div class="depth-menu-divider" role="separator" aria-hidden="true"></div>

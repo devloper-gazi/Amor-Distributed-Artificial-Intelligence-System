@@ -60,7 +60,7 @@ class ChatController {
 
         // Research settings panel toggle
         this.initResearchSettingsPanel();
-        // Research depth button (Quick/Standard/Deep)
+        // Research depth button (Basic/Medium/Deep/Expert/Ultra)
         this.initResearchDepthButton();
 
         // Handle page visibility changes
@@ -129,36 +129,45 @@ class ChatController {
 
         // Update summary when settings change
         const updateSummary = () => {
-            const depth = depthSelect?.value || 'standard';
+            const depth = depthSelect?.value || 'medium';
             const useTranslation = translationToggle?.checked ?? true;
             const targetLang = targetLangSelect?.value || 'en';
-            
-            const depthLabels = { quick: 'Quick', standard: 'Standard', deep: 'Deep' };
-            const langLabels = { 
-                en: 'English', es: 'Spanish', fr: 'French', de: 'German', 
-                zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic', 
-                ru: 'Russian', pt: 'Portuguese' 
+
+            const depthLabels = {
+                basic: 'Basic',
+                medium: 'Medium',
+                deep: 'Deep',
+                expert: 'Expert',
+                ultra: 'Ultra',
+                // legacy aliases
+                quick: 'Basic',
+                standard: 'Medium',
             };
-            
+            const langLabels = {
+                en: 'English', es: 'Spanish', fr: 'French', de: 'German',
+                zh: 'Chinese', ja: 'Japanese', ko: 'Korean', ar: 'Arabic',
+                ru: 'Russian', pt: 'Portuguese'
+            };
+
             const summary = document.getElementById('settingsSummary');
             if (summary) {
-                const translationStatus = useTranslation 
-                    ? `Translation → ${langLabels[targetLang] || targetLang}` 
+                const translationStatus = useTranslation
+                    ? `Translation → ${langLabels[targetLang] || targetLang}`
                     : 'Translation OFF';
-                summary.textContent = `${depthLabels[depth]} depth, ${translationStatus}`;
+                summary.textContent = `${depthLabels[depth] || 'Medium'} depth, ${translationStatus}`;
             }
 
-            // Show badge if non-default settings
+            // Show badge if non-default settings (default = medium)
             const badge = document.getElementById('settingsBadge');
             if (badge) {
-                const isNonDefault = depth !== 'standard' || !useTranslation || targetLang !== 'en';
+                const isNonDefault = depth !== 'medium' || !useTranslation || targetLang !== 'en';
                 badge.style.display = isNonDefault ? 'flex' : 'none';
             }
 
             // Also show a subtle dot badge on the depth button when non-default depth
             const depthBadge = document.getElementById('depthBadge');
             if (depthBadge) {
-                depthBadge.style.display = depth !== 'standard' ? 'flex' : 'none';
+                depthBadge.style.display = depth !== 'medium' ? 'flex' : 'none';
             }
         };
 
@@ -180,8 +189,26 @@ class ChatController {
 
         if (!btn || !menu || !depthSelect) return;
 
-        const depthToCount = { quick: '4', standard: '8', deep: '12' };
-        const depthToLabel = { quick: 'Quick (4 sources)', standard: 'Standard (8 sources)', deep: 'Deep (12 sources)' };
+        // Canonical tier names are basic/medium/deep/expert/ultra.
+        // Legacy aliases kept for backward compat (quick→basic, standard→medium).
+        const depthToCount = {
+            basic: '8',
+            medium: '25',
+            deep: '80',
+            expert: '250',
+            ultra: '1k',
+            quick: '8',
+            standard: '25',
+        };
+        const depthToLabel = {
+            basic: 'Basic (8 sources · ~5 min)',
+            medium: 'Medium (25 sources · ~20 min)',
+            deep: 'Deep (80 sources · ~75 min)',
+            expert: 'Expert (250 sources · ~4 hrs)',
+            ultra: 'Ultra (up to 1000 sources · ~10 hrs)',
+            quick: 'Basic (8 sources · ~5 min)',
+            standard: 'Medium (25 sources · ~20 min)',
+        };
 
         const setMenuVisible = (visible) => {
             menu.style.display = visible ? 'block' : 'none';
@@ -190,8 +217,8 @@ class ChatController {
         };
 
         const updateUI = () => {
-            const depth = depthSelect.value || 'standard';
-            if (label) label.textContent = depthToCount[depth] || '8';
+            const depth = depthSelect.value || 'medium';
+            if (label) label.textContent = depthToCount[depth] || '25';
 
             // Update aria states for menuitemradio options
             menu.querySelectorAll('.depth-option[data-depth]').forEach((opt) => {
@@ -199,7 +226,7 @@ class ChatController {
                 opt.setAttribute('aria-checked', optDepth === depth ? 'true' : 'false');
             });
 
-            btn.setAttribute('aria-label', `Research depth: ${depthToLabel[depth] || 'Standard (8 sources)'}`);
+            btn.setAttribute('aria-label', `Research depth: ${depthToLabel[depth] || depthToLabel.medium}`);
         };
 
         // Toggle menu on button click
@@ -213,7 +240,7 @@ class ChatController {
         menu.querySelectorAll('.depth-option[data-depth]').forEach((opt) => {
             opt.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const nextDepth = opt.getAttribute('data-depth') || 'standard';
+                const nextDepth = opt.getAttribute('data-depth') || 'medium';
                 depthSelect.value = nextDepth;
                 depthSelect.dispatchEvent(new Event('change', { bubbles: true }));
                 updateUI();
@@ -366,7 +393,7 @@ class ChatController {
                 return `Local AI research could not be started. Details from server: ${raw}`;
             }
             if (lower.includes('research timeout')) {
-                return 'Local AI research timed out. Try again with Quick depth or a narrower topic.';
+                return 'Local AI research timed out. Try again with Basic depth or a narrower topic.';
             }
         }
 
@@ -469,7 +496,7 @@ class ChatController {
                 const translationToggle = document.getElementById('useTranslation');
                 const targetLangSelect = document.getElementById('targetLanguage');
                 
-                requestBody.depth = depthSelect?.value || 'standard';
+                requestBody.depth = depthSelect?.value || 'medium';
                 requestBody.use_translation = translationToggle?.checked ?? true;
                 requestBody.target_language = targetLangSelect?.value || 'en';
                 requestBody.use_research = true;
@@ -550,7 +577,7 @@ class ChatController {
         const translationToggle = document.getElementById('useTranslation');
         const targetLangSelect = document.getElementById('targetLanguage');
 
-        const depth = depthSelect?.value || 'standard';
+        const depth = depthSelect?.value || 'medium';
         const useTranslation = translationToggle?.checked ?? true;
         const targetLanguage = targetLangSelect?.value || 'en';
 
@@ -678,9 +705,9 @@ class ChatController {
 
         // Effort tier piggy-backs on the research depth selector so users
         // don't need yet-another control. If the selector is absent or set
-        // to "quick/deep", we map through.
+        // to "basic/medium/deep/expert/ultra", we map through.
         const depthSelect = document.getElementById('researchDepth');
-        const effort = depthSelect?.value || 'standard';
+        const effort = depthSelect?.value || 'medium';
 
         const view = new ThinkingView({ prompt: message, effort, provider });
 
@@ -1065,10 +1092,15 @@ class ChatController {
         // Research metadata header
         const sourceCount = status.sources?.length || 0;
         const depthLabel = {
-            'quick': 'Quick',
-            'standard': 'Standard', 
-            'deep': 'Deep'
-        }[status.depth] || 'Standard';
+            'basic': 'Basic',
+            'medium': 'Medium',
+            'deep': 'Deep',
+            'expert': 'Expert',
+            'ultra': 'Ultra',
+            // legacy aliases
+            'quick': 'Basic',
+            'standard': 'Medium',
+        }[status.depth] || 'Medium';
         
         html += `
             <div class="research-meta">

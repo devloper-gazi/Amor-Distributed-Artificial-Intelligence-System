@@ -81,7 +81,22 @@ class AdvancedResearcher:
         on_event: Optional[EventCallback] = None,
     ) -> None:
         self.query = (query or "").strip()
-        self.depth = depth if depth in {"quick", "standard", "deep"} else "standard"
+        # Canonical tier names are English + ordered by budget:
+        #   basic < medium < deep < expert < ultra
+        # Backward-compat aliases: quick→basic, standard→medium.
+        _DEPTH_ALIASES = {
+            "quick": "basic",
+            "standard": "medium",
+            "fast": "basic",
+            "balanced": "medium",
+            "thorough": "deep",
+            "comprehensive": "expert",
+            "exhaustive": "ultra",
+        }
+        d = (depth or "").strip().lower()
+        d = _DEPTH_ALIASES.get(d, d)
+        valid_depths = {"basic", "medium", "deep", "expert", "ultra"}
+        self.depth = d if d in valid_depths else "medium"
         self.llm_call = llm_call
         self.web_search = web_search
         self.web_scrape = web_scrape
@@ -89,22 +104,59 @@ class AdvancedResearcher:
         self.target_language = target_language
         self.on_event: EventCallback = on_event or _noop_event
 
-        # Depth configuration
-        if self.depth == "quick":
+        # Depth configuration — each tier sets a self-consistent budget across
+        # sub-questions × variants × sources, plus LLM token limits per call.
+        # The analyze_tokens knob is the dominant CPU-time lever: halving it
+        # roughly halves the analyze-phase wall time. Budgets below are tuned
+        # for CPU-only qwen2.5:7b inference (~20 tokens/sec).
+        #
+        # Tier        subq var  per  cap  conc  rep_tok an_tok  ~CPU time
+        # --------    ---- --- ----  ---  ----  ------- ------  ----------
+        # basic          3  1    3    8    8      1400   220    ~4-7 min
+        # medium         5  2    5   25   12      2200   320    ~15-25 min
+        # deep           8  3    8   80   16      3400   420    ~60-90 min
+        # expert        10  4   12  250   24      4600   480    ~3-5 hours
+        # ultra         14  5   20 1000   32      6000   560    ~6-12 hours
+        if self.depth == "basic":
             self.num_sub_questions = 3
-            self.sources_per_subquestion = 2
-            self.max_total_sources = 6
-            self.report_tokens = 1600
-        elif self.depth == "deep":
-            self.num_sub_questions = 6
             self.sources_per_subquestion = 3
-            self.max_total_sources = 15
-            self.report_tokens = 3600
-        else:  # standard
-            self.num_sub_questions = 4
-            self.sources_per_subquestion = 2
-            self.max_total_sources = 10
-            self.report_tokens = 2600
+            self.max_total_sources = 8
+            self.variants_per_subq = 1
+            self.scrape_concurrency = 8
+            self.report_tokens = 1400
+            self.analyze_tokens = 220
+        elif self.depth == "deep":
+            self.num_sub_questions = 8
+            self.sources_per_subquestion = 8
+            self.max_total_sources = 80
+            self.variants_per_subq = 3
+            self.scrape_concurrency = 16
+            self.report_tokens = 3400
+            self.analyze_tokens = 420
+        elif self.depth == "expert":
+            self.num_sub_questions = 10
+            self.sources_per_subquestion = 12
+            self.max_total_sources = 250
+            self.variants_per_subq = 4
+            self.scrape_concurrency = 24
+            self.report_tokens = 4600
+            self.analyze_tokens = 480
+        elif self.depth == "ultra":
+            self.num_sub_questions = 14
+            self.sources_per_subquestion = 20
+            self.max_total_sources = 1000
+            self.variants_per_subq = 5
+            self.scrape_concurrency = 32
+            self.report_tokens = 6000
+            self.analyze_tokens = 560
+        else:  # medium
+            self.num_sub_questions = 5
+            self.sources_per_subquestion = 5
+            self.max_total_sources = 25
+            self.variants_per_subq = 2
+            self.scrape_concurrency = 12
+            self.report_tokens = 2200
+            self.analyze_tokens = 320
 
         self.phases: List[Phase] = [
             Phase("planning", "Planning"),
@@ -226,27 +278,30 @@ class AdvancedResearcher:
         )
 
         all_results: List[Dict[str, Any]] = []
+        per_variant_cap = max(3, self.sources_per_subquestion + 2)
         for i, sub_q in enumerate(self.sub_questions):
             await self._emit(
                 "search_start",
                 {"sub_question_index": i, "sub_question": sub_q},
             )
-            try:
-                results = await self.web_search(
-                    sub_q, self.sources_per_subquestion + 1
-                )
-            except Exception as e:
-                logger.warning("search failed for %r: %s", sub_q, e)
-                results = []
-            for r in results:
-                if r.get("url"):
-                    r["sub_question_index"] = i
-                    all_results.append(r)
+            variants = self._query_variants(sub_q, self.variants_per_subq)
+            found_for_sub = 0
+            for variant in variants:
+                try:
+                    results = await self.web_search(variant, per_variant_cap)
+                except Exception as e:
+                    logger.warning("search failed for %r: %s", variant, e)
+                    results = []
+                for r in results:
+                    if r.get("url"):
+                        r["sub_question_index"] = i
+                        all_results.append(r)
+                found_for_sub += len(results)
+                await asyncio.sleep(0.25)
             await self._emit(
                 "search_done",
-                {"sub_question_index": i, "found": len(results)},
+                {"sub_question_index": i, "found": found_for_sub},
             )
-            await asyncio.sleep(0.4)
 
         # Dedupe while preserving sub-question coverage
         seen_urls: set = set()
@@ -270,7 +325,7 @@ class AdvancedResearcher:
         urls = [r["url"] for r in unique]
         await self._emit("scrape_start", {"total": len(urls)})
         try:
-            scraped = await self.web_scrape(urls, 3)
+            scraped = await self.web_scrape(urls, self.scrape_concurrency)
         except Exception as e:
             logger.warning("scrape batch failed: %s", e)
             scraped = []
@@ -286,7 +341,9 @@ class AdvancedResearcher:
             if not scraped_item:
                 continue
             content = (scraped_item.get("content") or "").strip()
-            if len(content) < 200:
+            # Lowered from 200 → 140 to keep short but useful abstracts
+            # (e.g. arXiv summaries, dictionary-style Wikipedia stubs).
+            if len(content) < 140:
                 continue
             src = Source(
                 id=next_id,
@@ -339,6 +396,66 @@ class AdvancedResearcher:
         return sources
 
     @staticmethod
+    def _query_variants(sub_q: str, max_variants: int) -> List[str]:
+        """
+        Build up to `max_variants` search-engine-friendly variants of the
+        sub-question. The first variant is always the cleaned original; the
+        rest are keyword rephrasings / focus shifts so we get unique hits
+        across engines instead of the same top-5 for every variant.
+        """
+        if max_variants <= 0:
+            return []
+        raw = (sub_q or "").strip()
+        if not raw:
+            return []
+
+        variants: List[str] = [raw]
+
+        # Keyword-only variant (drop question words + stopwords)
+        stop = {
+            "what", "who", "why", "how", "when", "where", "which", "is",
+            "are", "the", "a", "an", "of", "to", "and", "or", "in", "on",
+            "for", "with", "does", "do", "did", "can", "could", "should",
+            "would", "this", "that", "these", "those",
+        }
+        tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]+", raw.lower())
+        keywords = [t for t in tokens if t not in stop and len(t) > 2]
+        if keywords:
+            variants.append(" ".join(keywords[:8]))
+
+        # Site-biased variant pointing at high-trust sources
+        if keywords and max_variants >= 3:
+            variants.append(
+                " ".join(keywords[:6])
+                + " (site:wikipedia.org OR site:arxiv.org OR site:docs.python.org"
+                + " OR site:developer.mozilla.org OR site:stackoverflow.com)"
+            )
+
+        # "overview" framing — better for Wikipedia / encyclopedic hits
+        if max_variants >= 4:
+            variants.append(f"{' '.join(keywords[:6]) or raw} overview explanation")
+
+        # "technical deep dive" framing — better for academic / docs hits
+        if max_variants >= 5:
+            variants.append(f"{' '.join(keywords[:6]) or raw} technical details architecture")
+
+        # Dedupe preserving order
+        seen: set = set()
+        deduped: List[str] = []
+        for v in variants:
+            v_norm = v.strip()
+            if not v_norm:
+                continue
+            key = v_norm.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(v_norm)
+            if len(deduped) >= max_variants:
+                break
+        return deduped
+
+    @staticmethod
     def _derive_title(url: str) -> str:
         parsed = urlparse(url)
         path = parsed.path.strip("/")
@@ -364,14 +481,53 @@ class AdvancedResearcher:
             await self._complete_phase("analyzing", kept=0)
             return []
 
+        # Strict-mode prompt: only use when the excerpt is clearly off-topic
+        # (we deliberately bias toward extracting SOMETHING, because the
+        # caller already filtered URLs to the sub-question.)
         system = (
             "You are a careful research analyst. Given a source excerpt and a "
-            "research sub-question, extract only the 2–4 most relevant factual "
-            "findings that directly answer the sub-question. Preserve the source's "
-            "own phrasing when it adds precision. Each finding must stand alone. "
-            "If the source does not meaningfully address the sub-question, reply "
-            "with exactly: NOT_RELEVANT"
+            "research sub-question, extract 2-5 relevant factual findings that "
+            "help answer the sub-question — even if the source only addresses it "
+            "indirectly, pull the closest adjacent facts (definitions, context, "
+            "examples, related mechanisms) that a report author could cite. "
+            "Preserve the source's own phrasing when it adds precision. "
+            "Each finding must stand alone and be verifiable from the excerpt. "
+            "Only reply exactly 'NOT_RELEVANT' when the excerpt is a login wall, "
+            "a 404 page, or on a completely unrelated topic."
         )
+
+        # Retry prompt used when the first pass returns NOT_RELEVANT — we
+        # pressure the model to find *any* adjacent fact before giving up.
+        retry_system = (
+            "You are extracting background facts for a research report. The "
+            "excerpt below was retrieved because a search engine judged it "
+            "relevant to the sub-question. Extract 1-3 standalone factual "
+            "statements from the excerpt that a report author could cite when "
+            "writing about this sub-question — even tangentially related context "
+            "counts. Only reply 'NOT_RELEVANT' if the excerpt is pure navigation, "
+            "a login prompt, or truly unrelated content (e.g. an ad page)."
+        )
+
+        async def _extract(src: Source, sub_q: str, system_prompt: str) -> List[str]:
+            prompt = (
+                f"Sub-question: {sub_q}\n\n"
+                f"Source title: {src.title}\n"
+                f"Source URL: {src.url}\n\n"
+                f"Source excerpt:\n{src.content[:3800]}\n\n"
+                "Extract concise, self-contained findings. One finding per line, "
+                "no numbering, no preamble. If the excerpt is genuinely unusable, "
+                "reply only: NOT_RELEVANT"
+            )
+            try:
+                raw = await self.llm_call(prompt, system_prompt, self.analyze_tokens)
+            except Exception as e:
+                logger.debug("analyze failed for source %s: %s", src.id, e)
+                return []
+            cleaned = (raw or "").strip()
+            if not cleaned or cleaned.upper().startswith("NOT_RELEVANT"):
+                return []
+            lines = [ln.strip("-•* \t") for ln in cleaned.split("\n") if ln.strip()]
+            return [ln for ln in lines if len(ln) > 12][:6]
 
         for i, src in enumerate(self.sources):
             sub_q = (
@@ -388,39 +544,27 @@ class AdvancedResearcher:
                     "title": src.title,
                 },
             )
-            prompt = (
-                f"Sub-question: {sub_q}\n\n"
-                f"Source title: {src.title}\n"
-                f"Source URL: {src.url}\n\n"
-                f"Source excerpt:\n{src.content[:3800]}\n\n"
-                f"Extract 2–4 concise, self-contained findings that directly answer "
-                f"the sub-question. One finding per line, no numbering, no preamble. "
-                f"If nothing relevant, reply only: NOT_RELEVANT"
-            )
-            try:
-                raw = await self.llm_call(prompt, system, 420)
-            except Exception as e:
-                logger.debug("analyze failed for source %s: %s", src.id, e)
-                raw = ""
 
-            cleaned = (raw or "").strip()
-            if not cleaned or cleaned.upper().startswith("NOT_RELEVANT"):
-                src.relevance = 0.05
-                src.findings = ""
-                continue
+            lines = await _extract(src, sub_q, system)
+            # Second pass if the first rejected — the retry prompt is looser.
+            # Skip retry for speed-critical tiers (basic/medium) where the
+            # extra CPU cost isn't worth it against an already-small corpus.
+            if not lines and src.content and self.depth not in {"basic", "medium"}:
+                lines = await _extract(src, sub_q, retry_system)
 
-            # Keep only bullet-like lines
-            lines = [ln.strip("-•* \t") for ln in cleaned.split("\n") if ln.strip()]
-            lines = [ln for ln in lines if len(ln) > 12][:5]
             if not lines:
                 src.relevance = 0.1
                 src.findings = ""
                 continue
-            src.findings = "\n".join(f"- {ln}" for ln in lines)
-            src.relevance = min(1.0, 0.4 + 0.12 * len(lines))
 
-        # Filter to relevant sources and renumber citation IDs
-        kept = [s for s in self.sources if s.relevance >= 0.35 and s.findings]
+            src.findings = "\n".join(f"- {ln}" for ln in lines)
+            # Higher base so threshold filter doesn't drop marginal-but-usable
+            # sources. A source with only 1 finding still scores 0.48.
+            src.relevance = min(1.0, 0.36 + 0.12 * len(lines))
+
+        # Filter to relevant sources and renumber citation IDs.
+        # Threshold relaxed from 0.35 → 0.22 so 1-finding sources survive.
+        kept = [s for s in self.sources if s.relevance >= 0.22 and s.findings]
         for new_id, s in enumerate(kept, start=1):
             s.id = new_id
         self.sources = kept
@@ -535,14 +679,46 @@ RULES
         report = self._postprocess_report(report, self.query)
         self.report_markdown = report
 
-        # Confidence heuristic from citation coverage
+        # Multi-factor confidence formula. Each factor contributes a weighted
+        # percentage; total is capped at 99 (never 100 — we don't certify truth).
+        #   coverage      : fraction of gathered sources actually cited
+        #   source_count  : count of gathered sources vs depth target
+        #   avg_relevance : mean LLM-assessed relevance of retained sources
+        #   report_length : report substance (short reports lose points)
+        #   subq_coverage : how many sub-questions got at least one citation
         cited_ids = {int(m) for m in re.findall(r"\[(\d+)\]", report) if m.isdigit()}
         valid_ids = {s.id for s in self.sources}
         used_valid = cited_ids & valid_ids
-        coverage = len(used_valid) / len(self.sources) if self.sources else 0
-        self.confidence = int(55 + 40 * coverage)
-        if self.confidence > 95:
-            self.confidence = 95
+        coverage = len(used_valid) / len(self.sources) if self.sources else 0.0
+        source_count_norm = min(1.0, len(self.sources) / max(1, self.max_total_sources))
+        avg_relevance = (
+            sum(s.relevance for s in self.sources) / len(self.sources)
+            if self.sources else 0.0
+        )
+        report_words = len(report.split())
+        # 900 words ≈ full credit for the length factor
+        report_length_norm = min(1.0, report_words / 900.0)
+
+        # Per-sub-question citation coverage
+        cited_subqs = set()
+        if self.sources:
+            for s in self.sources:
+                if s.id in used_valid:
+                    cited_subqs.add(s.sub_question_index)
+        subq_coverage = (
+            len(cited_subqs) / max(1, len(self.sub_questions))
+            if self.sub_questions else 0.0
+        )
+
+        score = (
+            35.0 * coverage
+            + 25.0 * source_count_norm
+            + 20.0 * avg_relevance
+            + 10.0 * report_length_norm
+            + 9.0 * subq_coverage
+        )
+        # Floor at 20 (we always have the query itself), cap at 99
+        self.confidence = max(20, min(99, int(round(score))))
 
         await self._emit(
             "report_ready",
