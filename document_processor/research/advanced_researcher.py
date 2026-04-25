@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -690,7 +691,21 @@ RULES
         valid_ids = {s.id for s in self.sources}
         used_valid = cited_ids & valid_ids
         coverage = len(used_valid) / len(self.sources) if self.sources else 0.0
-        source_count_norm = min(1.0, len(self.sources) / max(1, self.max_total_sources))
+        # P1.4: Logarithmic source-count curve. The previous formula
+        # (`len(self.sources) / max_total_sources`) was punitively
+        # linear: an ultra-mode run that filtered down to 11 high-
+        # quality sources scored 11/1000 = 0.011, losing ~24 of 25
+        # weight points and capping confidence around 46 even on
+        # otherwise-perfect runs. The aggressive analyze filter is
+        # intentional (quality gate), so we credit a small-but-quality
+        # corpus appropriately:
+        #   1 src → 0.15 |  11 src → 0.52 |  50 src → 0.85 |  100+ src → 1.00
+        # (max_total_sources is no longer in the denominator — depth
+        # tier still controls the gather/analyze ceiling.)
+        source_count_norm = (
+            min(1.0, math.log10(1 + len(self.sources)) / 2.0)
+            if self.sources else 0.0
+        )
         avg_relevance = (
             sum(s.relevance for s in self.sources) / len(self.sources)
             if self.sources else 0.0
