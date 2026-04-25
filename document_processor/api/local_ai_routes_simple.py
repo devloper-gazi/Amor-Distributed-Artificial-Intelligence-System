@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 import re
 from urllib.parse import quote_plus, urlparse
@@ -1480,10 +1480,36 @@ async def execute_advanced_research(
             phase = event.get("phase")
             session["current_task"] = f"Phase: {phase}"
             session["current_phase"] = phase
+            # P0.1: Mirror phase status into the persistent phases array
+            # so /status snapshot reflects in-flight progress (the UI's
+            # `phases[].status` was permanently "pending" before this).
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for p in session.get("phases", []):
+                if p.get("name") == phase:
+                    p["status"] = "in_progress"
+                    p["started_at"] = now_iso
         elif event_type == "phase_complete":
             phase = event.get("phase")
             session["progress"] = phase_progress.get(phase, session.get("progress", 0))
             session["last_completed_phase"] = phase
+            # P0.1: flip the matching phase entry to completed in-place.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            detail = event.get("detail") or {}
+            for p in session.get("phases", []):
+                if p.get("name") == phase:
+                    p["status"] = "completed"
+                    p["completed_at"] = now_iso
+                    if detail:
+                        p["detail"] = detail
+        elif event_type == "phase_failed":
+            # P0.1: mark the failing phase so UI can show it in red.
+            phase = event.get("phase")
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for p in session.get("phases", []):
+                if p.get("name") == phase:
+                    p["status"] = "failed"
+                    p["completed_at"] = now_iso
+                    p["detail"] = {"error": event.get("error")}
         elif event_type == "source_added":
             session.setdefault("live_sources", []).append(
                 {

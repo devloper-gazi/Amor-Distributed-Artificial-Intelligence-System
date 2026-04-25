@@ -297,6 +297,116 @@ class ChatController {
         this.chatSessionId = sessionId;
     }
 
+    // ── P0.2: Active research persistence ──────────────────────────────────
+    //
+    // We stash the in-progress research session_id in localStorage so that a
+    // page reload (F5, browser crash, navigation) can re-attach to the live
+    // run instead of showing a permanent "Waiting for research…" spinner.
+    //
+    // Key shape: { sessionId, mode, ts }   ts = Date.now() at start.
+    // Entries older than 4 hours are dropped on resume — runs that long are
+    // either done or genuinely abandoned.
+
+    _persistActiveResearch(sessionId, mode = this.mode) {
+        try {
+            localStorage.setItem('amor.activeResearch', JSON.stringify({
+                sessionId,
+                mode,
+                ts: Date.now(),
+            }));
+        } catch (_) { /* private mode / quota — non-fatal */ }
+    }
+
+    _clearActiveResearch() {
+        try { localStorage.removeItem('amor.activeResearch'); } catch (_) {}
+    }
+
+    _readActiveResearch() {
+        try {
+            const raw = localStorage.getItem('amor.activeResearch');
+            if (!raw) return null;
+            const saved = JSON.parse(raw);
+            if (!saved?.sessionId) return null;
+            // 4h staleness window: anything older was definitely abandoned.
+            if (Date.now() - (saved.ts || 0) > 4 * 3600 * 1000) {
+                this._clearActiveResearch();
+                return null;
+            }
+            return saved;
+        } catch (_) { return null; }
+    }
+
+    /**
+     * P0.2: Resume an in-flight research session after page reload.
+     *
+     * Called once from DOMContentLoaded. If localStorage has a recent
+     * `amor.activeResearch` entry, fetch its /status:
+     *   - completed → render the report (no re-run); clear localStorage.
+     *   - failed   → leave a brief error trace (best effort); clear.
+     *   - running  → mount the card, snapshot it, re-attach SSE.
+     */
+    async _resumeActiveResearchIfAny() {
+        const saved = this._readActiveResearch();
+        if (!saved) return;
+
+        try {
+            const resp = await this._authFetch(
+                `/api/local-ai/research/${encodeURIComponent(saved.sessionId)}/status`
+            );
+            if (resp.status === 404) {
+                // Session evicted (Redis flushed, etc.) — nothing to resume.
+                this._clearActiveResearch();
+                return;
+            }
+            if (!resp.ok) {
+                console.warn('resume-research: /status returned', resp.status);
+                return; // keep entry; user may retry
+            }
+            const status = await resp.json();
+
+            if (status.status === 'completed') {
+                // Render the persisted final result; no SSE needed.
+                try { await this.displayResearchResults(status); } catch (e) {
+                    console.warn('resume-research: displayResearchResults failed', e);
+                }
+                this._clearActiveResearch();
+                return;
+            }
+            if (status.status === 'failed') {
+                console.info('resume-research: prior run failed —', status.error);
+                this._clearActiveResearch();
+                return;
+            }
+
+            // Still running: mount the live card, hydrate from snapshot, re-attach.
+            if (typeof ResearchView !== 'function') {
+                console.warn('resume-research: ResearchView not loaded yet');
+                return;
+            }
+            const view = new ResearchView(status.topic || '(restored)', status.depth || 'medium');
+            this._mountResearchCard(view);
+            // Seed from snapshot before live events kick in.
+            try { view.handleEvent({ type: 'snapshot', ...status }); } catch (_) {}
+
+            // Re-attach the live stream. Same fallback to polling as the
+            // primary flow.
+            try {
+                try {
+                    await this._streamResearch(saved.sessionId, view);
+                } catch (sseErr) {
+                    console.warn('resume-research: SSE failed, polling…', sseErr);
+                    await this._pollResearchInto(saved.sessionId, view);
+                }
+            } catch (err) {
+                try { view.handleEvent({ type: 'error', message: err.message || 'Research failed' }); } catch (_) {}
+            } finally {
+                this._clearActiveResearch();
+            }
+        } catch (e) {
+            console.warn('resume-research: unexpected error', e);
+        }
+    }
+
     // Auth-aware fetch — routes through window.amorAuth.fetch so the JWT is
     // included on every request, with automatic refresh+retry on 401.
     // Falls back to raw fetch only if the auth layer isn't mounted yet (e.g.
@@ -604,6 +714,10 @@ class ChatController {
         const { session_id } = await startResponse.json();
         this.currentSessionId = session_id;
 
+        // P0.2: stash the active session_id so a page reload can re-attach
+        // and avoid the "stuck on spinner" symptom.
+        this._persistActiveResearch(session_id);
+
         // Remove typing indicator — the research card replaces it
         this.removeTypingIndicator(typingId);
 
@@ -630,6 +744,11 @@ class ChatController {
             runError = err;
             // Tell the view so the card stops spinning and shows the error.
             try { view.handleEvent({ type: 'error', message: err.message || 'Research failed' }); } catch (_) {}
+        } finally {
+            // P0.2: regardless of outcome, this run is no longer "active" —
+            // clear the localStorage marker so reloads don't try to resume
+            // a session that's already terminal.
+            this._clearActiveResearch();
         }
 
         // Persist final snapshot (success OR partial/error) so chat history can restore it.
@@ -823,35 +942,109 @@ class ChatController {
     }
 
     _streamThinking(sessionId, view) {
+        // P0.3: same self-healing SSE wrapper as _streamResearch.
+        return this._sseLoop({
+            url: (token) => `/api/thinking/${sessionId}/events${
+                token ? `?access_token=${encodeURIComponent(token)}` : ''
+            }`,
+            view,
+            failureMessage: 'Thinking failed',
+        });
+    }
+
+    /**
+     * P0.3: Self-healing SSE loop.
+     *
+     * EventSource doesn't support custom headers, so we encode the JWT in
+     * the query string. The server validates it once at connection open;
+     * after that the token is irrelevant — but if the connection drops we
+     * need a *fresh* token to reopen, otherwise we get caught in a loop
+     * of 401s after the 15-minute access-token expiry.
+     *
+     * Strategy:
+     *   1. Open EventSource with current token.
+     *   2. On message → forward to view; on terminal events finish().
+     *   3. On error (and not yet completed):
+     *        a. close ES
+     *        b. attempt window.amorAuth.refresh()
+     *        c. wait `min(reconnects, 5)` seconds (linear backoff)
+     *        d. reopen with the fresh token
+     *      Cap at 5 retries to avoid hammering a dead server.
+     *   4. amor:auth-changed listener → proactively close+reopen so we
+     *      don't race a near-expired token against an in-flight read.
+     *
+     * Returns a Promise that resolves on `done` or rejects on terminal
+     * error (5 reconnect failures, or `error` event with a message).
+     */
+    _sseLoop({ url, view, failureMessage = 'Stream failed' }) {
         return new Promise((resolve, reject) => {
-            let es;
-            try {
-                const token = window.amorAuth?.accessToken || '';
-                const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
-                es = new EventSource(`/api/thinking/${sessionId}/events${qs}`);
-            } catch (e) {
-                reject(e);
-                return;
-            }
+            let es = null;
             let completed = false;
+            let reconnects = 0;
+            const MAX_RECONNECTS = 5;
+
             const finish = (err) => {
                 if (completed) return;
                 completed = true;
-                try { es.close(); } catch (_) {}
+                document.removeEventListener('amor:auth-changed', onAuthChanged);
+                try { es?.close(); } catch (_) {}
                 if (err) reject(err); else resolve();
             };
-            es.onmessage = (e) => {
-                if (!e.data) return;
-                let evt;
-                try { evt = JSON.parse(e.data); } catch (_) { return; }
-                view.handleEvent(evt);
-                if (evt.type === 'done') finish();
-                if (evt.type === 'error') finish(new Error(evt.message || 'Thinking failed'));
-            };
-            es.onerror = () => {
+
+            const open = () => {
                 if (completed) return;
-                finish(new Error('SSE connection error'));
+                const token = window.amorAuth?.accessToken || '';
+                try {
+                    es = new EventSource(url(token));
+                } catch (e) {
+                    return finish(e);
+                }
+                es.onmessage = (e) => {
+                    if (!e.data) return;
+                    let evt;
+                    try { evt = JSON.parse(e.data); } catch (_) { return; }
+                    // Reset retry counter on any successful message — we're alive.
+                    reconnects = 0;
+                    try { view.handleEvent(evt); } catch (handlerErr) {
+                        console.warn('view.handleEvent threw:', handlerErr);
+                    }
+                    if (evt.type === 'done') finish();
+                    if (evt.type === 'error') finish(new Error(evt.message || failureMessage));
+                };
+                es.onerror = async () => {
+                    if (completed) return;
+                    try { es.close(); } catch (_) {}
+                    if (reconnects >= MAX_RECONNECTS) {
+                        return finish(new Error('SSE connection error (max reconnects reached)'));
+                    }
+                    reconnects += 1;
+                    // Refresh the token before re-opening — covers JWT expiry,
+                    // which is the dominant cause of long-lived SSE failures.
+                    try {
+                        if (typeof window.amorAuth?.refresh === 'function') {
+                            await window.amorAuth.refresh();
+                        }
+                    } catch (refreshErr) {
+                        console.warn('SSE: token refresh failed', refreshErr);
+                        // continue anyway — maybe the server is just slow
+                    }
+                    const backoffMs = Math.min(reconnects, 5) * 1000;
+                    setTimeout(open, backoffMs);
+                };
             };
+
+            // Proactive reconnect: when auth refreshes mid-stream we want
+            // to swap the connection over to the new token *before* the old
+            // one is rejected by the server.
+            const onAuthChanged = () => {
+                if (completed || !es) return;
+                try { es.close(); } catch (_) {}
+                // Don't bump reconnects here — this isn't a failure path.
+                open();
+            };
+            document.addEventListener('amor:auth-changed', onAuthChanged);
+
+            open();
         });
     }
 
@@ -873,40 +1066,18 @@ class ChatController {
     }
 
     _streamResearch(sessionId, view) {
-        return new Promise((resolve, reject) => {
-            let es;
-            try {
-                // EventSource can't send custom headers, so we piggy-back the
-                // access token on the URL. The backend's get_current_user
-                // dependency accepts an `access_token` query param as a
-                // fallback for exactly this case.
-                const token = window.amorAuth?.accessToken || '';
-                const qs = token ? `?access_token=${encodeURIComponent(token)}` : '';
-                es = new EventSource(`/api/local-ai/research/${sessionId}/events${qs}`);
-            } catch (e) {
-                reject(e);
-                return;
-            }
-            let completed = false;
-            const finish = (err) => {
-                if (completed) return;
-                completed = true;
-                try { es.close(); } catch (_) {}
-                if (err) reject(err); else resolve();
-            };
-            es.onmessage = (e) => {
-                if (!e.data) return;
-                let evt;
-                try { evt = JSON.parse(e.data); } catch (_) { return; }
-                view.handleEvent(evt);
-                if (evt.type === 'done') finish();
-                if (evt.type === 'error') finish(new Error(evt.message || 'Research failed'));
-            };
-            es.onerror = () => {
-                // If we've already received a 'done', just swallow the error.
-                if (completed) return;
-                finish(new Error('SSE connection error'));
-            };
+        // P0.3: Long-running research can outlive a 15-min JWT. EventSource
+        // can't refresh credentials mid-stream, so we wrap the stream in a
+        // self-healing loop:
+        //   • on transient error → refresh token, reopen with backoff
+        //   • on `amor:auth-changed` → proactively reopen with fresh token
+        //   • cap reconnects to avoid tight loops if the server is down
+        return this._sseLoop({
+            url: (token) => `/api/local-ai/research/${sessionId}/events${
+                token ? `?access_token=${encodeURIComponent(token)}` : ''
+            }`,
+            view,
+            failureMessage: 'Research failed',
         });
     }
 
@@ -1369,5 +1540,27 @@ document.addEventListener('DOMContentLoaded', () => {
             window.chatController.setChatSessionId(window.appState.currentSessionId);
         }
         console.log(`✅ Chat Controller initialized - Mode: ${initialMode}`);
+
+        // P0.2: After auth has had a chance to settle, try to re-attach to
+        // any in-flight research session. We wait for the auth layer to
+        // boot (it dispatches 'amor:auth-changed' on the initial silent
+        // refresh) so the /status fetch goes out with a valid token.
+        const tryResume = () => {
+            try { window.chatController?._resumeActiveResearchIfAny?.(); }
+            catch (e) { console.warn('resume-research bootstrap failed:', e); }
+        };
+        if (window.amorAuth?.isAuthenticated?.()) {
+            tryResume();
+        } else {
+            // Wait once for the next auth-state change, then try.
+            const onAuth = () => {
+                document.removeEventListener('amor:auth-changed', onAuth);
+                tryResume();
+            };
+            document.addEventListener('amor:auth-changed', onAuth);
+            // Safety net: if no auth event fires within 4s, bail out — a
+            // logged-out reload should not keep listening forever.
+            setTimeout(() => document.removeEventListener('amor:auth-changed', onAuth), 4000);
+        }
     }
 });
