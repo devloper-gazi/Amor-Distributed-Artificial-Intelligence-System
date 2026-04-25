@@ -114,6 +114,18 @@ services:
       - ./web_ui:/app/web_ui
       - ./requirements.txt:/app/requirements.txt:ro
 
+    # P2.3: Healthcheck so a frozen worker (e.g. Ollama hang, deadlocked
+    # event loop) is detected and restarted by Docker rather than
+    # silently swallowing requests forever. The /health endpoint already
+    # exists in main.py; this just wires Docker's liveness probe to it.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
     networks:
       - docprocessor-network
 

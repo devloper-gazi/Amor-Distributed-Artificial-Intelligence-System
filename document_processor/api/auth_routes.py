@@ -32,6 +32,7 @@ from ..auth.service import (
     InvalidCredentials,
     InvalidToken,
     RateLimited,
+    WeakPassword,  # P2.4
     auth_service,
     public_user,
 )
@@ -82,6 +83,11 @@ async def register(
             display_name=payload.display_name,
             ip=ip,
         )
+    except WeakPassword as exc:
+        # P2.4: Backend-side password rule — frontend already hints at the
+        # rule but it can be bypassed. 400 keeps the rule-violation
+        # distinct from a 422 schema-validation error.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except DuplicateUser as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except RateLimited as exc:

@@ -85,6 +85,33 @@ class InvalidToken(AuthError):
     code = "invalid_token"
 
 
+class WeakPassword(AuthError):
+    """P2.4: Raised when a registration password fails the entropy check."""
+    code = "weak_password"
+
+
+_PASSWORD_MIN_LEN = 10
+
+
+def _validate_password(pw: str) -> None:
+    """
+    P2.4: Enforce minimum password complexity at the service layer so the
+    backend is the source of truth, not the (easily bypassed) frontend
+    form. Rules: at least 10 chars, with at least one uppercase, one
+    lowercase, and one digit.
+    """
+    if not isinstance(pw, str) or len(pw) < _PASSWORD_MIN_LEN:
+        raise WeakPassword(
+            f"Password must be at least {_PASSWORD_MIN_LEN} characters."
+        )
+    if not any(c.isupper() for c in pw):
+        raise WeakPassword("Password must contain an uppercase letter.")
+    if not any(c.islower() for c in pw):
+        raise WeakPassword("Password must contain a lowercase letter.")
+    if not any(c.isdigit() for c in pw):
+        raise WeakPassword("Password must contain a digit.")
+
+
 class AuthService:
     """High-level authentication operations."""
 
@@ -141,6 +168,9 @@ class AuthService:
         ip: Optional[str] = None,
     ) -> User:
         await self.bootstrap()
+        # P2.4: validate BEFORE hashing — no point spending Argon2 cost
+        # on a password we'll reject anyway.
+        _validate_password(password)
         password_hash = self.hash_password(password)
         email = (email or "").strip() or None
 

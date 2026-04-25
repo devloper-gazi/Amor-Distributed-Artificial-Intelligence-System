@@ -133,9 +133,25 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+#
+# P2.1: `allow_origins=["*"]` combined with `allow_credentials=True` is
+# a CSRF foot-gun — any third-party site could make authenticated
+# requests using the user's cookies. Replaced the wildcard with an
+# environment-driven allowlist (defaults to localhost so dev works out
+# of the box). Set CORS_ALLOWED_ORIGINS to a comma-separated list of
+# origins in production.
+import os as _os
+_cors_origins = [
+    o.strip()
+    for o in _os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000",
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
