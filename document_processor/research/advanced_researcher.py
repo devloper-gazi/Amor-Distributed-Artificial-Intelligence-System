@@ -23,6 +23,48 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+# ─── Phase 1 optimization helpers (fancy-swinging-karp) ────────────────────
+#
+# Lazy imports keep startup cheap and let the relevance module be optional
+# (if the file is missing or broken at import time the research pipeline
+# silently falls back to its previous behaviour).
+
+def _load_settings():
+    """Return the pydantic settings singleton or None if config layer
+    is unavailable for some reason. Never raises."""
+    try:
+        from ..config.settings import settings  # noqa: WPS433
+        return settings
+    except Exception as exc:                            # pragma: no cover
+        logger.debug("settings unavailable for relevance filter: %s", exc)
+        return None
+
+
+def _analyze_concurrency_for(depth: str, settings_obj: Any) -> int:
+    """Resolve per-tier analyze concurrency from settings, with a sane
+    fallback if the field is missing (e.g. partial config rollout)."""
+    if settings_obj is None:
+        return 1
+    name = f"analyze_concurrency_{depth}"
+    val = getattr(settings_obj, name, None)
+    try:
+        n = int(val) if val is not None else 1
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(8, n))   # hard ceiling so a typo can't blow up Ollama
+
+
+def _relevance_cap_for(depth: str, settings_obj: Any) -> int:
+    if settings_obj is None:
+        return 60
+    name = f"relevance_prefilter_max_sources_{depth}"
+    val = getattr(settings_obj, name, None)
+    try:
+        return max(1, int(val))
+    except (TypeError, ValueError):
+        return 60
+
+
 EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 LLMCall = Callable[[str, Optional[str], int], Awaitable[str]]
 WebSearch = Callable[[str, int], Awaitable[List[Dict[str, str]]]]
@@ -530,38 +572,77 @@ class AdvancedResearcher:
             lines = [ln.strip("-•* \t") for ln in cleaned.split("\n") if ln.strip()]
             return [ln for ln in lines if len(ln) > 12][:6]
 
-        for i, src in enumerate(self.sources):
-            sub_q = (
-                self.sub_questions[src.sub_question_index]
-                if 0 <= src.sub_question_index < len(self.sub_questions)
-                else self.query
-            )
+        # Phase 1 optimization: bounded concurrency.
+        #
+        # Local Ollama can serve a few generates in parallel before
+        # KV-cache contention kills throughput, so we use a per-tier
+        # Semaphore (default 1–3). Per-source exceptions are caught
+        # below so one bad source can't abort the whole analyze pass.
+        # The progress event still fires once per source — its "index"
+        # is now a "completed counter" rather than a strict iteration
+        # index, which matches what the UI uses it for (progress %).
+        settings_obj = _load_settings()
+        concurrency = _analyze_concurrency_for(self.depth, settings_obj)
+        sem = asyncio.Semaphore(concurrency)
+        total = len(self.sources)
+        done_counter = 0
+
+        async def _process_one(src: Source) -> None:
+            nonlocal done_counter
+            async with sem:
+                sub_q = (
+                    self.sub_questions[src.sub_question_index]
+                    if 0 <= src.sub_question_index < len(self.sub_questions)
+                    else self.query
+                )
+                try:
+                    lines = await _extract(src, sub_q, system)
+                    # Second pass if the first rejected — the retry prompt is
+                    # looser. Skip retry for speed-critical tiers (basic /
+                    # medium) where the extra CPU cost isn't worth it
+                    # against an already-small corpus.
+                    if (
+                        not lines
+                        and src.content
+                        and self.depth not in {"basic", "medium"}
+                    ):
+                        lines = await _extract(src, sub_q, retry_system)
+
+                    if not lines:
+                        src.relevance = 0.1
+                        src.findings = ""
+                    else:
+                        src.findings = "\n".join(f"- {ln}" for ln in lines)
+                        # Higher base so threshold filter doesn't drop marginal-
+                        # but-usable sources. A source with only 1 finding still
+                        # scores 0.48.
+                        src.relevance = min(1.0, 0.36 + 0.12 * len(lines))
+                except Exception as exc:
+                    # Per-source failure: log, mark unusable, do NOT abort.
+                    logger.warning(
+                        "analyze source %s failed: %s", getattr(src, "id", "?"), exc
+                    )
+                    src.relevance = 0.0
+                    src.findings = ""
+            # Emit AFTER releasing the semaphore so progress events
+            # don't pile up at the back of the LLM queue. done_counter
+            # is safe to increment without a lock — single-threaded
+            # asyncio guarantees atomicity of `+=`.
+            done_counter += 1
             await self._emit(
                 "analyzing_source",
                 {
-                    "source_id": src.id,
-                    "index": i,
-                    "total": len(self.sources),
-                    "title": src.title,
+                    "source_id": getattr(src, "id", None),
+                    "index": done_counter,
+                    "total": total,
+                    "title": getattr(src, "title", ""),
                 },
             )
 
-            lines = await _extract(src, sub_q, system)
-            # Second pass if the first rejected — the retry prompt is looser.
-            # Skip retry for speed-critical tiers (basic/medium) where the
-            # extra CPU cost isn't worth it against an already-small corpus.
-            if not lines and src.content and self.depth not in {"basic", "medium"}:
-                lines = await _extract(src, sub_q, retry_system)
-
-            if not lines:
-                src.relevance = 0.1
-                src.findings = ""
-                continue
-
-            src.findings = "\n".join(f"- {ln}" for ln in lines)
-            # Higher base so threshold filter doesn't drop marginal-but-usable
-            # sources. A source with only 1 finding still scores 0.48.
-            src.relevance = min(1.0, 0.36 + 0.12 * len(lines))
+        await asyncio.gather(
+            *(_process_one(s) for s in self.sources),
+            return_exceptions=False,  # _process_one swallows its own exceptions
+        )
 
         # Filter to relevant sources and renumber citation IDs.
         # Threshold relaxed from 0.35 → 0.22 so 1-finding sources survive.
@@ -762,6 +843,10 @@ RULES
         try:
             await self.plan()
             await self.gather()
+            # Phase 1 optimization: deterministic pre-LLM filter. Always
+            # fail-open — on any error self.sources is left untouched and
+            # analyze() runs over the full gathered set as before.
+            await self._apply_relevance_filter()
             await self.analyze()
             await self.synthesize()
             await self._emit("done", {})
@@ -770,6 +855,82 @@ RULES
             logger.exception("research orchestrator failed: %s", e)
             await self._emit("error", {"message": str(e)})
             raise
+
+    # ─── Phase 1 optimization · pre-LLM relevance gate ───────────────
+    async def _apply_relevance_filter(self) -> None:
+        """
+        Drop sources that would obviously waste an LLM call before
+        analyze() runs over them. No-op if settings disable the
+        feature. ALWAYS fail-open: if anything below raises we log
+        a warning and leave self.sources unchanged.
+        """
+        settings_obj = _load_settings()
+        if settings_obj is None or not getattr(
+            settings_obj, "enable_relevance_prefilter", False
+        ):
+            return
+        if not self.sources:
+            return
+
+        try:
+            from .relevance import RelevanceConfig, RelevanceFilter
+        except Exception as exc:                # pragma: no cover
+            logger.warning("relevance module import failed: %s", exc)
+            return
+
+        try:
+            cfg = RelevanceConfig(
+                enabled=True,
+                fail_open=bool(getattr(settings_obj, "relevance_prefilter_fail_open", True)),
+                debug=bool(getattr(settings_obj, "relevance_prefilter_debug", False)),
+                min_score=float(getattr(settings_obj, "relevance_prefilter_min_score", 0.15)),
+                max_sources=_relevance_cap_for(self.depth, settings_obj),
+                tier=self.depth,
+            )
+            rfilter = RelevanceFilter(config=cfg, logger=logger)
+            result = await rfilter.filter_sources(
+                query=self.query,
+                sub_questions=list(self.sub_questions or []),
+                sources=list(self.sources),
+                tier=self.depth,
+            )
+            # Logged at WARNING because the project's default root logger
+            # is WARNING in production containers. Phase 1 observability
+            # is the headline feature — losing it to a level mismatch is
+            # worse than the slight verbosity bump.
+            logger.warning(
+                "research.relevance_filter tier=%s original=%d selected=%d "
+                "rejected=%d fallback=%s method=%s",
+                self.depth,
+                result.original_count,
+                result.selected_count,
+                result.rejected_count,
+                result.fallback_used,
+                result.method_summary,
+            )
+            await self._emit(
+                "relevance_filter",
+                {
+                    "tier": self.depth,
+                    "original": result.original_count,
+                    "selected": result.selected_count,
+                    "rejected": result.rejected_count,
+                    "method": result.method_summary,
+                    "fallback_used": result.fallback_used,
+                },
+            )
+            # Replace the source list with the filter's selection. Because
+            # the filter never copies or mutates Source instances, the
+            # citation IDs / dataclass identity downstream code relies on
+            # are preserved.
+            if result.selected_sources is not None:
+                self.sources = list(result.selected_sources)
+        except Exception as exc:                # belt-and-braces fail-open
+            logger.warning(
+                "research.relevance_filter outer failure (tier=%s): %s — "
+                "continuing with %d unfiltered sources",
+                self.depth, exc, len(self.sources),
+            )
 
     # ─── Serialization ───────────────────────────────────────────────
 

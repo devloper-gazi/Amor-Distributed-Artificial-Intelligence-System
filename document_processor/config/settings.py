@@ -180,6 +180,43 @@ class Settings(BaseSettings):
     auth_register_per_hour_per_ip: int = 10
     auth_password_min_length: int = 10
 
+    # ─── Phase 1 optimization (fancy-swinging-karp) ─────────────
+    # Pre-LLM relevance gate. Conservative defaults — the cap per tier
+    # is intentionally HIGHER than today's effective LLM-survival count
+    # so the filter never gets blamed for losing good content. The
+    # existing post-LLM keep-filter (`relevance >= 0.22 and findings`)
+    # in advanced_researcher.analyze() stays as a second-line gate.
+    enable_relevance_prefilter: bool = True
+    relevance_prefilter_fail_open: bool = True
+    relevance_prefilter_debug: bool = False
+    relevance_prefilter_min_score: float = 0.15
+
+    # Per-tier hard caps. basic short-circuits to passthrough inside
+    # the filter regardless of this number; medium uses cap == today's
+    # max_total_sources (light effect); deep/expert/ultra prune.
+    relevance_prefilter_max_sources_basic: int = 8
+    relevance_prefilter_max_sources_medium: int = 25
+    relevance_prefilter_max_sources_deep: int = 60
+    relevance_prefilter_max_sources_expert: int = 100
+    relevance_prefilter_max_sources_ultra: int = 120
+
+    # Per-tier analyze() concurrency. Local Ollama tolerates ~2–3
+    # concurrent generates before throughput collapses (KV-cache
+    # contention on a single qwen2.5:7b instance). Numbers here are
+    # safe defaults; bump via env if Ollama runs on faster hardware.
+    analyze_concurrency_basic: int = 1
+    analyze_concurrency_medium: int = 2
+    analyze_concurrency_deep: int = 2
+    analyze_concurrency_expert: int = 3
+    analyze_concurrency_ultra: int = 3
+
+    # Optional LLM response cache (opt-in). When enabled, identical
+    # (model, system, prompt, max_tokens, temp) tuples skip Ollama and
+    # serve from Redis. Default OFF to keep behaviour identical to
+    # pre-Phase-1 until a user explicitly opts in.
+    llm_response_cache_enabled: bool = False
+    llm_response_cache_ttl_seconds: int = 7 * 24 * 3600
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
