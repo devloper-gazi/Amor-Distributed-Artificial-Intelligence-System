@@ -185,9 +185,10 @@ function setupSidebarToggle() {
         closeSidebar();
     });
 
-    // Mode radio buttons in sidebar
-    const modeRadios = document.querySelectorAll('.mode-option input[type="radio"]');
-    modeRadios.forEach(radio => {
+    // Note: the sidebar's mode-radio block was removed in favour of the
+    // welcome-screen capability cards. Selector below is kept defensively
+    // — if the markup ever returns the listener will pick it up again.
+    document.querySelectorAll('.mode-option input[type="radio"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
             if (e.target.checked) {
                 switchMode(e.target.value).catch(console.error);
@@ -383,9 +384,10 @@ function applyMode(newMode) {
     // Update UI
     updateModeDisplay(newMode);
 
-    // Update radio buttons in sidebar
-    const modeRadios = document.querySelectorAll('.mode-option input[type="radio"]');
-    modeRadios.forEach(radio => {
+    // Sidebar mode radios were removed in favour of the welcome cards;
+    // keep this sync for defensive compat — querySelectorAll just
+    // returns an empty NodeList when the markup is gone.
+    document.querySelectorAll('.mode-option input[type="radio"]').forEach(radio => {
         radio.checked = (radio.value === newMode);
     });
 

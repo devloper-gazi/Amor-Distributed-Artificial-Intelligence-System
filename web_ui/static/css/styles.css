@@ -832,44 +832,11 @@ body {
     line-height: var(--line-height-relaxed);
 }
 
-/* Mode Section */
-.mode-section {
-    margin-bottom: var(--space-6);
-}
-
-.mode-options {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.mode-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    border-radius: var(--border-radius-sm);
-    cursor: pointer;
-    transition: background-color var(--transition-fast);
-}
-
-.mode-option:hover {
-    background-color: var(--mono-bg-hover);
-}
-
-.mode-option input[type="radio"] {
-    margin: 0;
-}
-
-.mode-icon {
-    font-size: 20px;
-}
-
-.mode-label {
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--mono-text-primary);
-}
+/* Sidebar mode-radio selector was removed — see index.html. The
+   selectors below ($.mode-section / .mode-option / etc.) are no longer
+   produced by any template. Block kept out of the bundle to keep the
+   stylesheet lean; if the radio UI is reintroduced, restore from git
+   history before commit 80c7829. */
 
 .sidebar-footer {
     padding: var(--space-4);
