@@ -1233,6 +1233,103 @@ body.dark-mode .panel-setting-select {
     }
 }
 
+/* ==================== Depth selector — responsive ==================== */
+/*
+ * The depth chip lives inside the input bar, so it has to stay readable
+ * and not steal horizontal space from the textarea on small screens.
+ * Tweaks per breakpoint:
+ *   ≤768px tablet   : compact button (smaller paddings, shorter caret),
+ *                     dropdown stretches to fit visible content rather
+ *                     than overrunning a narrow viewport.
+ *   ≤480px phone    : icon-priority chip (count stays, caret hides);
+ *                     dropdown anchors to the left edge of the input
+ *                     area instead of the button so it never clips off-
+ *                     screen on small devices.
+ *   ≤360px tiny    : tighter still — ensures Send button is reachable.
+ *
+ * The is-hidden transition collapses max-width — keep the same property
+ * on every breakpoint so research→thinking→research animates cleanly
+ * regardless of viewport.
+ */
+
+@media (max-width: 768px) {
+    .research-depth-control {
+        max-width: 200px;
+    }
+    .research-depth-control.is-hidden {
+        max-width: 0;
+    }
+    .depth-toggle-btn {
+        height: 40px;
+        min-width: 50px;
+        padding: 0 10px;
+        gap: 6px;
+    }
+    .depth-count { font-size: 13px; }
+    .depth-menu {
+        /* Don't overflow tablet width; pin to viewport edge if needed. */
+        width: min(260px, calc(100vw - 32px));
+        left: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .research-depth-control {
+        max-width: 90px;
+    }
+    .research-depth-control.is-hidden {
+        max-width: 0;
+    }
+    .depth-toggle-btn {
+        height: 38px;
+        min-width: 44px;
+        padding: 0 8px;
+        gap: 4px;
+    }
+    .depth-icon i { font-size: 13px; }
+    .depth-count { font-size: 12px; font-weight: 600; }
+    .depth-caret { display: none; }      /* save space; tap to open is enough */
+    .depth-badge { width: 6px; height: 6px; right: -2px; top: -2px; }
+
+    .depth-menu {
+        /* Anchor to input area edge so the menu never extends past the
+           right edge of the screen on phones. */
+        width: min(260px, calc(100vw - 24px));
+        left: -8px;
+        bottom: calc(100% + 14px);
+    }
+    .depth-menu::after {
+        left: 22px; /* keep arrow pointing roughly at the toggle button */
+    }
+    .depth-option {
+        padding: 14px 14px;  /* slightly bigger tap target */
+    }
+    .depth-option .opt-title { font-size: 14px; }
+    .depth-option .opt-sub { font-size: 11px; }
+}
+
+@media (max-width: 360px) {
+    .research-depth-control {
+        max-width: 64px;
+    }
+    .depth-toggle-btn {
+        min-width: 40px;
+        padding: 0 6px;
+    }
+    .depth-count { font-size: 11px; }
+}
+
+/* Touch-only refinements: removes hover lift that can stick after tap on
+   touchscreens, and gives the active-press state a clearer feedback. */
+@media (hover: none) and (pointer: coarse) {
+    .depth-toggle-btn:hover {
+        transform: none;
+    }
+    .depth-toggle-btn:active {
+        transform: scale(0.97);
+    }
+}
+
 .depth-toggle-btn {
     display: inline-flex;
     align-items: center;

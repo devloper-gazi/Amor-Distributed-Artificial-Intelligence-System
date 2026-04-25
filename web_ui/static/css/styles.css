@@ -1122,6 +1122,22 @@ body {
     box-shadow: var(--shadow-md);
 }
 
+/* Touch-only: skip the lift on hover (it sticks after tap on touch
+   devices) and give the press state a slight scale-down for feedback. */
+@media (hover: none) and (pointer: coarse) {
+    .capability-card:hover {
+        transform: none;
+        box-shadow: none;
+        background-color: var(--mono-bg-secondary);
+        border-color: var(--mono-border-light);
+    }
+    .capability-card:active {
+        transform: scale(0.98);
+        background-color: var(--mono-bg-hover);
+        border-color: var(--mono-border-dark);
+    }
+}
+
 .capability-card .card-icon {
     font-size: 40px;
     margin-bottom: var(--space-3);
@@ -1630,8 +1646,32 @@ body {
         max-width: 320px;
     }
 
+    /* Welcome cards: stack vertically and give them comfortable touch
+       targets. Reduce icon size so each card stays compact on phones. */
     .capability-cards {
         grid-template-columns: 1fr;
+        gap: var(--space-3);
+    }
+    .capability-card {
+        padding: var(--space-4);
+        min-height: 96px;       /* generous touch target */
+        text-align: left;
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+    }
+    .capability-card .card-icon {
+        font-size: 32px;
+        margin-bottom: 0;
+        flex-shrink: 0;
+    }
+    .capability-card h3 {
+        font-size: var(--font-size-base);
+        margin-bottom: 2px;
+    }
+    .capability-card p {
+        font-size: var(--font-size-xs);
+        line-height: 1.35;
     }
 
     .input-container {
