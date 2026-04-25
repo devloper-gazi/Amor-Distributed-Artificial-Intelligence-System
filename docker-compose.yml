@@ -146,9 +146,20 @@ services:
   # Redis
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    # P2.2: AOF + periodic RDB snapshot so sessions/tokens survive
+    # `docker compose down`. Without these flags + the named volume
+    # below, every restart wiped all auth tokens, research sessions,
+    # and translation cache.
+    command: >
+      redis-server
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --save 60 1
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     networks:
       - docprocessor-network
 
@@ -248,6 +259,7 @@ volumes:
   grafana-data:
   ollama-data:
   lancedb-data:
+  redis-data:  # P2.2 — durable Redis state across `docker compose down`
 
 networks:
   docprocessor-network:

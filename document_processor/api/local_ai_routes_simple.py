@@ -54,14 +54,26 @@ except ValueError:
 
 _ollama_pull_lock = asyncio.Lock()
 
-# Active research sessions
-research_sessions: Dict[str, Dict[str, Any]] = {}
-
 SESSION_CACHE_PREFIX = "local_ai_research_session:"
 try:
     SESSION_CACHE_TTL_SECONDS = int(os.getenv("LOCAL_AI_SESSION_TTL_SECONDS", "7200"))  # 2 hours
 except ValueError:
     SESSION_CACHE_TTL_SECONDS = 7200
+
+# P1.2: Bounded in-memory session cache. The previous plain `dict`
+# accumulated entries forever (sessions were only ever inserted, never
+# pruned), causing slow memory growth in long-lived processes. Redis
+# remains the durable store; this cache is only a hot path. Cache
+# capacity matches the in-flight session count we'd realistically see;
+# TTL slightly exceeds the Redis TTL so we never evict an entry that's
+# still valid in Redis.
+try:
+    from cachetools import TTLCache
+    research_sessions: Dict[str, Dict[str, Any]] = TTLCache(
+        maxsize=512, ttl=SESSION_CACHE_TTL_SECONDS + 300
+    )
+except ImportError:  # pragma: no cover — keeps the import optional in dev
+    research_sessions = {}
 
 
 def _session_cache_key(session_id: str) -> str:
@@ -1420,7 +1432,14 @@ The summary should be clear, informative, and suitable for a general audience.""
 # ───────────────────────────────────────────────────────────────────
 
 # Per-session event queues for SSE streaming.
+# IMPORTANT: this dict is per-replica. P1.1 fans out events to a Redis
+# pub/sub channel as well so SSE clients connected to a different replica
+# than the one running the background task can still receive events.
 _event_queues: Dict[str, asyncio.Queue] = {}
+
+# Channel name format. Keep both replicas in sync — the SSE endpoint and
+# the publisher must use identical strings.
+_RESEARCH_EVENT_CHANNEL = "amor:research:events:{session_id}"
 
 
 def _event_queue(session_id: str) -> asyncio.Queue:
@@ -1432,7 +1451,26 @@ def _event_queue(session_id: str) -> asyncio.Queue:
 
 
 async def _publish(session_id: str, event: Dict[str, Any]) -> None:
+    """
+    Fan an event out to:
+      1. The local in-process queue (for SSE clients on this replica).
+      2. A Redis pub/sub channel (so SSE clients on the OTHER replica
+         can receive it too).
+
+    Each event gets a UUID `event_id` for the SSE side to deduplicate
+    when both deliveries arrive.
+    """
+    if "event_id" not in event:
+        event = {**event, "event_id": uuid4().hex}
+    # Local fan-out is best-effort — never let a Redis hiccup block it.
     await _event_queue(session_id).put(event)
+    try:
+        await cache_manager.publish_event(
+            _RESEARCH_EVENT_CHANNEL.format(session_id=session_id),
+            event,
+        )
+    except Exception as exc:  # pragma: no cover — pub/sub is best-effort
+        logger.debug("research _publish redis fanout failed: %s", exc)
 
 
 async def _translate_batch_for_research(
@@ -1562,8 +1600,33 @@ async def execute_advanced_research(
     ]
     await _persist_session(session_id, session)
 
+    # P1.3: Hard ceilings per depth tier so a hung Ollama can't wedge the
+    # background task forever. The depth-specific limits roughly match the
+    # nominal time budget (basic ~5min) plus a wide safety margin (×4–6).
+    DEPTH_TIMEOUT = {
+        "basic": 1800,    # 30 min ceiling for ~5 min work
+        "medium": 3600,   # 1 h ceiling for ~15 min work
+        "deep": 7200,     # 2 h ceiling for ~45 min work
+        "expert": 10800,  # 3 h ceiling for ~90 min work
+        "ultra": 18000,   # 5 h ceiling for ~3 h work
+    }
+    timeout_seconds = DEPTH_TIMEOUT.get(request.depth, DEPTH_TIMEOUT["medium"])
     try:
-        result = await researcher.run()
+        result = await asyncio.wait_for(researcher.run(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        logger.error(
+            "Advanced research exceeded depth timeout for %s (depth=%s, limit=%ds)",
+            session_id, request.depth, timeout_seconds,
+        )
+        msg = (
+            f"Research exceeded the {request.depth} depth time budget "
+            f"({timeout_seconds // 60} min). The pipeline was stopped."
+        )
+        session["status"] = "failed"
+        session["error"] = msg
+        await _persist_session(session_id, session)
+        await _publish(session_id, {"type": "error", "message": msg})
+        return
     except Exception as e:
         logger.exception("Advanced research failed for %s: %s", session_id, e)
         session["status"] = "failed"
@@ -1641,6 +1704,28 @@ async def stream_research_events(
 
     async def event_stream():
         queue = _event_queue(session_id)
+        # P1.1: Race the local queue against a Redis pub/sub subscription
+        # so events published on the OTHER replica reach this SSE client.
+        # Track recently-seen event_ids to dedupe identical events that
+        # might arrive on both channels (the publisher fans out to both).
+        from collections import deque
+        seen_ids: deque = deque(maxlen=200)
+
+        channel = _RESEARCH_EVENT_CHANNEL.format(session_id=session_id)
+        sub_iter = cache_manager.subscribe_events(channel).__aiter__()
+
+        # Background task that pumps Redis events into the local queue.
+        async def _redis_pump():
+            try:
+                async for event in sub_iter:
+                    await queue.put(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+        pump_task = asyncio.create_task(_redis_pump())
+
         try:
             # Initial snapshot for late subscribers
             snapshot = await _load_session(session_id)
@@ -1669,10 +1754,21 @@ async def stream_research_events(
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
+                # Dedupe across local + Redis paths.
+                eid = event.get("event_id")
+                if eid:
+                    if eid in seen_ids:
+                        continue
+                    seen_ids.append(eid)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") in {"done", "error"}:
                     break
         finally:
+            pump_task.cancel()
+            try:
+                await pump_task
+            except (asyncio.CancelledError, Exception):
+                pass
             # Drop the queue once the stream ends — it will be recreated if
             # the client reconnects to a still-running session.
             _event_queues.pop(session_id, None)
