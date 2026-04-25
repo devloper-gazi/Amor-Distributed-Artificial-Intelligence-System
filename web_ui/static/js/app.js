@@ -93,9 +93,22 @@ function initializeApp() {
     // Check system health
     checkSystemHealth();
 
-    // Initialize current mode
-    updateModeDisplay(state.currentMode);
-    updateWelcomeScreen(state.currentMode);
+    // Initialize current mode (incl. research-only control visibility).
+    // Suppress the entry transition on first paint so the depth selector
+    // doesn't visually slide in/out during load — the user only sees
+    // animations when *they* trigger a mode switch.
+    const _depthCtl = document.getElementById('researchDepthControl');
+    if (_depthCtl) {
+        _depthCtl.style.transition = 'none';
+        applyMode(state.currentMode);
+        // Force a style flush, then restore the transition for subsequent
+        // mode switches.
+        // eslint-disable-next-line no-unused-expressions
+        _depthCtl.offsetHeight;
+        _depthCtl.style.transition = '';
+    } else {
+        applyMode(state.currentMode);
+    }
 
     console.log('✅ UI initialized successfully');
 }
@@ -378,6 +391,25 @@ function applyMode(newMode) {
 
     // Update welcome screen
     updateWelcomeScreen(newMode);
+
+    // Mode-aware visibility for research-only controls (e.g. the depth
+    // selector). The CSS handles the actual animation — we just toggle
+    // the class. Add other research-only chips here as they appear.
+    const depthCtl = document.getElementById('researchDepthControl');
+    if (depthCtl) {
+        depthCtl.classList.toggle('is-hidden', newMode !== 'research');
+        // Also collapse the depth dropdown menu if the user was mid-pick
+        // when switching modes, so nothing dangles.
+        if (newMode !== 'research') {
+            const menu = document.getElementById('researchDepthMenu');
+            if (menu) menu.style.display = 'none';
+            const btn = document.getElementById('researchDepthBtn');
+            if (btn) {
+                btn.setAttribute('aria-expanded', 'false');
+                btn.classList.remove('active');
+            }
+        }
+    }
 }
 
 function updateModeDisplay(mode) {
