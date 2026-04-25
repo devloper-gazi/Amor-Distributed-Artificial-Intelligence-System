@@ -1205,8 +1205,18 @@ body.dark-mode .panel-setting-select {
        slides+fades back in when they return to Research. We animate
        max-width so the surrounding flex layout reclaims the space cleanly
        (display:none would skip the animation; visibility:hidden would leave
-       a gap). */
-    overflow: hidden;
+       a gap).
+
+       OVERFLOW NOTE: while the chip is visible we MUST keep overflow:visible
+       so the absolutely-positioned dropdown menu (which sits above the
+       button) can render. We only clip during the collapse animation.
+       Achieved with `transition-delay` on the `overflow` property:
+         • visible → hidden: clip immediately (delay 0ms) so the shrinking
+           button doesn't overrun the parent.
+         • hidden → visible: wait for the slide-in to finish (delay 220ms)
+           before un-clipping, so the dropdown is only allowed to extend
+           past the parent once the chip itself is fully laid out. */
+    overflow: visible;
     max-width: 240px;
     opacity: 1;
     transform: scale(1);
@@ -1214,7 +1224,8 @@ body.dark-mode .panel-setting-select {
         max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
         opacity 180ms ease-out,
         transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
-        margin 180ms ease-out;
+        margin 180ms ease-out,
+        overflow 0ms linear 220ms;
 }
 
 /* Hidden state — applied by app.js when mode != 'research'. Toggling the
@@ -1225,6 +1236,15 @@ body.dark-mode .panel-setting-select {
     transform: scale(0.85);
     margin-right: 0;
     pointer-events: none;
+    overflow: hidden;
+    /* Apply overflow change immediately so the collapsing button is
+       clipped during the animation. */
+    transition:
+        max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 180ms ease-out,
+        transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+        margin 180ms ease-out,
+        overflow 0ms linear 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
