@@ -788,8 +788,73 @@ async def _ensure_ollama_ready() -> Dict[str, Any]:
     }
 
 
+_LLM_CACHE_KEY_PREFIX = "llm:"
+_LLM_CACHE_TEMPERATURE = 0.7  # mirror the hardcoded value below
+
+
+async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) -> Optional[str]:
+    """Phase 5 (opt-in) — read a cached Ollama response if any. Returns None
+    on miss or any error. Never raises."""
+    try:
+        import hashlib
+        from ..config.settings import settings as _settings
+
+        if not getattr(_settings, "llm_response_cache_enabled", False):
+            return None
+        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_LLM_CACHE_TEMPERATURE}"
+        key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
+        payload = await cache_manager.get_json(key)
+        if isinstance(payload, dict) and isinstance(payload.get("response"), str):
+            return payload["response"]
+    except Exception as exc:                            # fail-open
+        logger.debug("llm cache read failed: %s", exc)
+    return None
+
+
+async def _llm_cache_set(prompt: str, system: Optional[str], max_tokens: int, response: str) -> None:
+    """Phase 5 (opt-in) — store an Ollama response. Never raises."""
+    try:
+        import hashlib
+        from ..config.settings import settings as _settings
+
+        if not getattr(_settings, "llm_response_cache_enabled", False) or not response:
+            return
+        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_LLM_CACHE_TEMPERATURE}"
+        key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
+        ttl = int(getattr(_settings, "llm_response_cache_ttl_seconds", 7 * 24 * 3600))
+        await cache_manager.set_json(
+            key,
+            {"response": response, "model": OLLAMA_MODEL},
+            ttl=ttl,
+        )
+    except Exception as exc:                            # fail-open
+        logger.debug("llm cache write failed: %s", exc)
+
+
 async def call_ollama(prompt: str, system: Optional[str] = None, max_tokens: int = 2048) -> str:
-    """Make direct HTTP call to Ollama API."""
+    """
+    Make direct HTTP call to Ollama API.
+
+    Phase 5 hook: when ``settings.llm_response_cache_enabled`` is True
+    (default OFF), identical (model, system, prompt, max_tokens, temp)
+    tuples short-circuit to a cached Redis entry. Cache failures
+    silently fall through to the real call.
+    """
+    cached = await _llm_cache_get(prompt, system, max_tokens)
+    if cached is not None:
+        logger.debug("llm cache hit (len=%d)", len(cached))
+        return cached
+    response = await _call_ollama_uncached(prompt, system, max_tokens)
+    await _llm_cache_set(prompt, system, max_tokens, response)
+    return response
+
+
+async def _call_ollama_uncached(
+    prompt: str, system: Optional[str] = None, max_tokens: int = 2048
+) -> str:
+    """The original, un-cached HTTP path. Kept as a separate symbol so
+    callers that explicitly want to bypass the cache (e.g. test suites)
+    can still hit Ollama directly."""
     try:
         # Ensure model is available (and optionally auto-pull it).
         await _ensure_ollama_ready()
