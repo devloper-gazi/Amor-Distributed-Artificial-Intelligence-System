@@ -53,11 +53,12 @@ document.addEventListener('amor:auth-changed', (e) => {
         }
         return;
     }
-    // New user: refresh history view and spin up a new server session.
+    // New user: refresh history view. Don't pre-create a session — it
+    // would just become an empty "Untitled Chat" until the user actually
+    // sent a message. Lazy creation happens in sendMessage() instead.
     try {
         state.userId = e.detail.user.id;
         if (typeof loadSessionsForMode === 'function') loadSessionsForMode(state.currentMode);
-        if (typeof ensureCurrentServerSession === 'function') ensureCurrentServerSession();
     } catch (_e) { /* best-effort */ }
 });
 
@@ -81,9 +82,10 @@ function initializeApp() {
     // API call. We only guarantee the client_id is set in localStorage so the
     // shared getter can pick it up.
 
-    // Load initial history + create a fresh server session for the current mode
+    // Load initial history. Session creation is lazy — postponed until
+    // the user actually submits a prompt — so opening the app does NOT
+    // litter chat history with empty "Untitled Chat" entries.
     loadSessionsForMode(state.currentMode);
-    ensureCurrentServerSession();
 
     // Optional legacy migration (localStorage -> MongoDB) runs in background.
     migrateLegacyLocalStorageSessions().finally(() => loadSessionsForMode(state.currentMode));
@@ -336,8 +338,24 @@ async function switchMode(newMode) {
     console.log(`🔄 Switching mode: ${state.currentMode} → ${newMode}`);
 
     applyMode(newMode);
-    // Start a fresh server-backed conversation for the selected mode.
-    await createNewChat();
+
+    // UX fix: a mode click is *not* "start a new conversation" — it just
+    // changes which assistant pipeline the next message will use. Creating
+    // a fresh session here flooded chat history with empty "Untitled Chat"
+    // entries every time the user toggled modes. Instead:
+    //   • Clear any rendered messages (we're entering a fresh canvas).
+    //   • Drop the active session id so sendMessage triggers lazy creation
+    //     under the new mode when (and only when) the user actually
+    //     submits a prompt.
+    state.currentSessionId = null;
+    if (window.chatController) {
+        if (typeof window.chatController.clearMessages === 'function') {
+            window.chatController.clearMessages();
+        }
+        if (typeof window.chatController.setChatSessionId === 'function') {
+            window.chatController.setChatSessionId(null);
+        }
+    }
 }
 
 function applyMode(newMode) {
@@ -422,6 +440,13 @@ async function ensureCurrentServerSession() {
         console.error('Failed to create initial server session:', e);
     }
 }
+
+// Expose globally so ChatController.sendMessage can trigger lazy session
+// creation right before persisting the user's first message. Keeping the
+// implementation in app.js (it owns `state.currentSessionId` + the chat
+// store helpers) and exposing a thin reference here avoids duplicating
+// the create-or-skip logic in every controller.
+window.ensureCurrentServerSession = ensureCurrentServerSession;
 
 function loadSessionForMode(mode) {
     console.log(`📂 Loading session for mode: ${mode}`);

@@ -534,6 +534,16 @@ class ChatController {
         this.isProcessing = true;
         if (this.sendButton) this.sendButton.disabled = true;
 
+        // Lazy session creation: page load and mode-card clicks no longer
+        // pre-create a chat session (that flooded history with empty
+        // "Untitled Chat" entries). Create one now — first real message —
+        // so persistChatMessage has somewhere to write.
+        if (!this.chatSessionId &&
+            typeof window.ensureCurrentServerSession === 'function') {
+            try { await window.ensureCurrentServerSession(); }
+            catch (e) { console.warn('lazy session-create failed:', e); }
+        }
+
         // Add user message
         this.addMessage('user', message);
         const userMsg = { role: 'user', content: message, format: 'text' };
