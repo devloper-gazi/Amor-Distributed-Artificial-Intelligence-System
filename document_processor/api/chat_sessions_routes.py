@@ -61,7 +61,10 @@ class SessionCreateRequest(BaseModel):
 
 
 class SessionUpdateRequest(BaseModel):
-    title: Optional[str] = None
+    # Hard cap on title length — matches the frontend rename modal's
+    # maxlength=120 so paste-bombing a megabyte title gets rejected at
+    # the edge instead of crashing PyMongo's BSON serializer.
+    title: Optional[str] = Field(None, max_length=120)
     mode: Optional[str] = None
     archived: Optional[bool] = None
     folder_id: Optional[str] = None

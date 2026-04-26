@@ -486,6 +486,43 @@
         </div>
     </div>
 
+    <!-- Rename Chat Modal -->
+    <div class="modal" id="renameChatModal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Rename Chat</h2>
+                <button class="modal-close" data-modal="renameChatModal" aria-label="Close rename chat">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="rename-chat-current" id="renameChatCurrent"></p>
+                <div class="folder-modal-row">
+                    <label class="folder-modal-label" for="renameChatInput">New name</label>
+                    <input
+                        class="folder-modal-input"
+                        id="renameChatInput"
+                        type="text"
+                        placeholder="Give this chat a memorable name"
+                        maxlength="120"
+                        autocomplete="off"
+                        spellcheck="false" />
+                    <div class="rename-chat-hint">
+                        <span id="renameChatCount">0</span> / 120
+                        <span class="rename-chat-tip">·  Enter to save  ·  Esc to cancel</span>
+                    </div>
+                </div>
+
+                <div class="folder-modal-actions">
+                    <button class="modal-action secondary" id="renameChatCancelBtn" type="button">Cancel</button>
+                    <button class="modal-action ghost" id="renameChatResetBtn" type="button" title="Restore the auto-generated title from your first message">Reset to auto</button>
+                    <button class="modal-action primary" id="renameChatSaveBtn" type="button">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Confirm Delete Modal -->
     <div class="modal" id="confirmDeleteModal" style="display: none;">
         <div class="modal-backdrop"></div>

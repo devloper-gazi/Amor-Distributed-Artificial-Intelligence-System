@@ -1791,3 +1791,131 @@ body {
     background-color: var(--mono-bg-hover, rgba(255,255,255,0.06));
 }
 .history-item-actions:hover { opacity: 1 !important; transform: none; }
+
+/* ==================== Rename Chat — context menu icons + modal ==================== */
+
+/* Inline icon inside the chat-history context menu items. */
+.context-menu-item {
+    gap: 10px;
+}
+.context-menu-icon {
+    width: 14px;
+    text-align: center;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: color 0.12s ease;
+}
+.context-menu-item:hover .context-menu-icon {
+    color: var(--mono-text-primary);
+}
+
+/* Danger-tinted item (Delete) */
+.context-menu-item.is-danger {
+    color: rgba(255, 130, 130, 0.95);
+}
+.context-menu-item.is-danger .context-menu-icon {
+    color: rgba(255, 130, 130, 0.7);
+}
+.context-menu-item.is-danger:hover {
+    background-color: rgba(220, 100, 100, 0.08);
+    color: rgba(255, 130, 130, 1);
+}
+.context-menu-item.is-danger:hover .context-menu-icon {
+    color: rgba(255, 130, 130, 1);
+}
+
+/* Subtle separator above the danger group */
+.context-menu-item.is-danger {
+    margin-top: 4px;
+    padding-top: calc(var(--space-2) + 4px);
+    border-top: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+    border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm);
+}
+
+/* --- Rename Chat modal ---------------------------------------------- */
+#renameChatModal .modal-container {
+    max-width: 440px;
+}
+.rename-chat-current {
+    font-size: 13px;
+    color: var(--mono-text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+.rename-chat-current strong {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+}
+.rename-chat-current-ghost {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+}
+.rename-chat-hint {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rename-chat-hint #renameChatCount {
+    font-variant-numeric: tabular-nums;
+    color: var(--mono-text-secondary);
+}
+.rename-chat-tip {
+    opacity: 0.9;
+}
+
+/* Larger, more prominent text input — main interaction surface */
+#renameChatInput {
+    font-size: 15px;
+    padding: 10px 14px;
+    background: var(--mono-bg-primary);
+    border: 1px solid var(--mono-border-medium);
+    border-radius: 8px;
+    color: var(--mono-text-primary);
+    transition: border-color 0.15s ease, background 0.15s ease;
+    font-family: inherit;
+    width: 100%;
+}
+#renameChatInput:focus {
+    outline: none;
+    border-color: rgba(125, 207, 255, 0.7);
+    background: var(--mono-bg-secondary);
+    box-shadow: 0 0 0 3px rgba(125, 207, 255, 0.12);
+}
+
+/* Ghost/secondary action button (Reset to auto) */
+.modal-action.ghost {
+    background: transparent;
+    color: var(--mono-text-secondary);
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.08));
+}
+.modal-action.ghost:hover {
+    background: var(--mono-bg-hover);
+    color: var(--mono-text-primary);
+    border-color: var(--mono-border-medium);
+}
+.modal-action.ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Three-button action row spacing — Reset on the left, Cancel + Save on the right */
+#renameChatModal .folder-modal-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+}
+#renameChatModal #renameChatResetBtn {
+    margin-right: auto; /* push to the left */
+}
+
+/* Inline-rename hint on hover — subtle pen icon next to title */
+.history-item-title {
+    cursor: text; /* hint that double-click does something */
+}
