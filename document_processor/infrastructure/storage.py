@@ -3,6 +3,7 @@ Storage layer for persisting processed documents.
 Supports PostgreSQL for metadata and MongoDB for document content.
 """
 
+import asyncio
 import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -96,33 +97,89 @@ class StorageManager:
             logger.error("postgres_connection_failed", error=str(e))
             raise StorageError(f"Failed to connect to PostgreSQL: {e}")
 
-    async def connect_mongo(self):
-        """Connect to MongoDB."""
-        if self._mongo_connected:
-            return
+    async def connect_mongo(self, max_retries: int = 5) -> None:
+        """
+        Connect to MongoDB with exponential-backoff retry and live
+        connection validation.
 
-        try:
-            self.mongo_client = AsyncIOMotorClient(
-                settings.mongo_url,
-                maxPoolSize=settings.mongo_max_pool_size,
-            )
+        The previous implementation set ``_mongo_connected = True`` once
+        and never re-validated. If MongoDB briefly went away, every
+        subsequent ``_db()`` short-circuited on the stale flag and threw
+        ``RuntimeError("MongoDB not initialized")``. This version:
 
-            self.mongo_db = self.mongo_client[settings.mongo_database]
+        * Pings on entry when the flag is set; if the ping fails we clear
+          the flag and reconnect (so callers get a healthy client even
+          after a transient outage).
+        * Retries connect with exponential backoff (2^attempt seconds,
+          capped at 30s) up to ``max_retries`` times.
+        * Sets durable write concern (``w="majority"``, ``journal=True``)
+          and ``retryWrites=True`` so individual operations survive a
+          single-replica blip without bubbling up to callers.
+        """
+        # Fast-path: already connected and the connection is still alive.
+        if self._mongo_connected and self.mongo_db is not None:
+            try:
+                await asyncio.wait_for(
+                    self.mongo_db.command("ping"), timeout=2.0
+                )
+                return
+            except Exception as exc:
+                # Connection went stale — drop the flag and reconnect below.
+                logger.warning(
+                    "mongodb_ping_failed reconnecting=true error=%s", exc
+                )
+                self._mongo_connected = False
+                self.mongo_client = None
+                self.mongo_db = None
 
-            # Test connection
-            await self.mongo_db.command("ping")
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                self.mongo_client = AsyncIOMotorClient(
+                    settings.mongo_url,
+                    maxPoolSize=settings.mongo_max_pool_size,
+                    minPoolSize=5,
+                    serverSelectionTimeoutMS=5000,
+                    connectTimeoutMS=5000,
+                    socketTimeoutMS=30000,
+                    retryWrites=True,
+                    w="majority",   # acknowledged writes only after replication
+                    journal=True,   # fsync to journal before ack
+                )
+                self.mongo_db = self.mongo_client[settings.mongo_database]
+                await self.mongo_db.command("ping")
+                self._mongo_connected = True
+                logger.info(
+                    "mongodb_connected",
+                    host=settings.mongo_host,
+                    database=settings.mongo_database,
+                    attempt=attempt + 1,
+                )
+                return
+            except Exception as exc:
+                last_exc = exc
+                wait = min(2 ** attempt, 30)
+                logger.warning(
+                    "mongodb_connect_failed",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    error=str(exc),
+                    retry_in=wait,
+                )
+                # Clean up the partially-initialised client before retrying.
+                if self.mongo_client is not None:
+                    try:
+                        self.mongo_client.close()
+                    except Exception:
+                        pass
+                self.mongo_client = None
+                self.mongo_db = None
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(wait)
 
-            self._mongo_connected = True
-
-            logger.info(
-                "mongodb_connected",
-                host=settings.mongo_host,
-                database=settings.mongo_database,
-            )
-
-        except Exception as e:
-            logger.error("mongodb_connection_failed", error=str(e))
-            raise StorageError(f"Failed to connect to MongoDB: {e}")
+        logger.error("mongodb_connection_failed_final", error=str(last_exc))
+        raise StorageError(f"Failed to connect to MongoDB after "
+                           f"{max_retries} attempts: {last_exc}")
 
     async def disconnect(self):
         """Disconnect from databases."""

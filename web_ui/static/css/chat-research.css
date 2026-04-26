@@ -1581,3 +1581,312 @@ body.dark-mode .depth-toggle-btn:hover {
 body.dark-mode .depth-menu {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(0, 0, 0, 0.3);
 }
+
+/* ====================================================================
+   Phase C2/D3/E — Stop button, resume banner, progress card.
+   All variables resolve via tokens.css (no new tokens introduced).
+   ==================================================================== */
+
+/* ── Stop button (next to Send) ────────────────────────────────────── */
+.stop-btn {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid var(--mono-border-medium, #5a3a3a);
+    background: transparent;
+    color: var(--mono-text-primary, #e8e8e8);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    flex-shrink: 0;
+}
+.stop-btn.is-active {
+    display: inline-flex;
+    animation: stopBtnSlideIn 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.stop-btn:hover {
+    background: rgba(255, 100, 100, 0.08);
+    border-color: rgba(255, 100, 100, 0.6);
+    color: rgba(255, 130, 130, 1);
+}
+.stop-btn:active { transform: scale(0.97); }
+.stop-btn svg { display: block; }
+@keyframes stopBtnSlideIn {
+    from { opacity: 0; transform: translateX(8px) scale(0.9); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@media (max-width: 480px) {
+    .stop-btn { padding: 0 10px; }
+    .stop-btn-label { display: none; }
+}
+
+/* ── Resume banner (Phase D3) ─────────────────────────────────────── */
+.query-resume-banner {
+    background: var(--mono-bg-secondary, #1f2433);
+    border: 1px solid var(--mono-border-medium, #4a4a6a);
+    border-left-width: 3px;
+    border-left-color: rgba(125, 207, 255, 0.7);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    animation: resumeBannerFadeIn 220ms ease-out;
+}
+@keyframes resumeBannerFadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.query-resume-banner .banner-text {
+    flex: 1;
+    min-width: 220px;
+}
+.query-resume-banner .banner-text strong {
+    display: block;
+    font-size: 13px;
+    color: rgba(125, 207, 255, 1);
+    margin-bottom: 2px;
+}
+.query-resume-text {
+    font-size: 14px;
+    color: var(--mono-text-primary, #e8e8e8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+.query-resume-meta {
+    font-size: 11px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-top: 2px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.query-resume-pct {
+    color: rgba(125, 207, 255, 0.95);
+    font-weight: 600;
+}
+.query-resume-btn,
+.query-cancel-btn {
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.query-resume-btn {
+    background: rgba(125, 207, 255, 0.08);
+    border-color: rgba(125, 207, 255, 0.5);
+    color: rgba(125, 207, 255, 1);
+}
+.query-resume-btn:hover {
+    background: rgba(125, 207, 255, 0.15);
+    border-color: rgba(125, 207, 255, 0.9);
+}
+.query-cancel-btn {
+    background: transparent;
+    border-color: rgba(220, 100, 100, 0.5);
+    color: rgba(255, 130, 130, 1);
+}
+.query-cancel-btn:hover {
+    background: rgba(220, 100, 100, 0.08);
+    border-color: rgba(220, 100, 100, 0.9);
+}
+
+/* ── Inline progress card (Phase E) ────────────────────────────────
+   Style placeholders for the card the resume / sendMessage flows can
+   mount inline. The actual mount sites are in chat-research.js's
+   research/thinking views — these styles cover both variants. */
+.query-progress-card {
+    background: var(--mono-bg-secondary, #1f2433);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    transition: border-color 250ms ease, background 250ms ease;
+}
+.query-progress-card.completed {
+    border-color: rgba(120, 200, 130, 0.5);
+    background: rgba(40, 60, 45, 0.45);
+}
+.query-progress-card.failed {
+    border-color: rgba(220, 110, 110, 0.55);
+    background: rgba(70, 40, 40, 0.45);
+}
+.query-progress-card.cancelled {
+    border-color: rgba(160, 160, 180, 0.4);
+}
+.query-progress-bar-wrapper {
+    background: var(--mono-bg-tertiary, #2a2a3e);
+    border-radius: 6px;
+    height: 6px;
+    margin: 8px 0;
+    overflow: hidden;
+}
+.query-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, rgba(125, 207, 255, 0.95), rgba(187, 154, 247, 0.85));
+    border-radius: 6px;
+    transition: width 0.4s ease;
+    position: relative;
+}
+.query-progress-bar-fill.pulsing::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 60px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent);
+    animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+    0%   { transform: translateX(-60px); }
+    100% { transform: translateX(60px); }
+}
+.query-phase-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    margin-right: 4px;
+}
+.query-phase-pill.pending   { color: var(--mono-text-tertiary, #8a8aa0); border-color: var(--mono-border-light, #3a3a55); }
+.query-phase-pill.running   { color: rgba(125, 207, 255, 1); border-color: rgba(125, 207, 255, 0.6); animation: pulseBorder 1.5s infinite; }
+.query-phase-pill.completed { color: rgba(120, 200, 130, 1); border-color: rgba(120, 200, 130, 0.5); background: rgba(40, 60, 45, 0.3); }
+.query-phase-pill.failed    { color: rgba(255, 130, 130, 1); border-color: rgba(220, 100, 100, 0.5); }
+.query-phase-pill.cancelled { color: var(--mono-text-tertiary, #8a8aa0); text-decoration: line-through; }
+@keyframes pulseBorder {
+    0%, 100% { border-color: rgba(125, 207, 255, 0.7); }
+    50%      { border-color: rgba(125, 207, 255, 0.25); }
+}
+
+/* ====================================================================
+   Restored markdown rendering — when chat history loads an older
+   research/thinking message that only persisted raw markdown (no
+   snapshot), loadMessages() runs it through __renderResearchMarkdown
+   and wraps the output in this container so it inherits the same
+   typography as a live result card.
+   ==================================================================== */
+.research-markdown-restored {
+    color: var(--mono-text-primary);
+    font-size: 14px;
+    line-height: 1.65;
+    word-break: break-word;
+}
+.research-markdown-restored h1,
+.research-markdown-restored h2,
+.research-markdown-restored h3,
+.research-markdown-restored h4,
+.research-markdown-restored h5,
+.research-markdown-restored h6 {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 24px 0 10px;
+    letter-spacing: -0.005em;
+}
+.research-markdown-restored h1 { font-size: 22px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--mono-border-light, rgba(255,255,255,0.08)); }
+.research-markdown-restored h2 { font-size: 18px; }
+.research-markdown-restored h3 { font-size: 15.5px;
+    color: rgba(125, 207, 255, 0.95); }
+.research-markdown-restored h4 { font-size: 14px;
+    color: var(--mono-text-secondary); }
+.research-markdown-restored p {
+    margin: 8px 0;
+}
+.research-markdown-restored strong {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+}
+.research-markdown-restored em { color: var(--mono-text-secondary); }
+.research-markdown-restored ul,
+.research-markdown-restored ol {
+    margin: 8px 0 12px 22px;
+    padding: 0;
+}
+.research-markdown-restored li {
+    margin: 4px 0;
+    line-height: 1.55;
+}
+.research-markdown-restored ul li::marker { color: rgba(125, 207, 255, 0.7); }
+.research-markdown-restored ol li::marker {
+    color: rgba(187, 154, 247, 0.85);
+    font-weight: 600;
+}
+.research-markdown-restored blockquote {
+    border-left: 3px solid var(--mono-border-medium, rgba(125,207,255,0.3));
+    padding: 4px 14px;
+    margin: 12px 0;
+    color: var(--mono-text-secondary);
+    background: rgba(255,255,255,0.02);
+    border-radius: 0 6px 6px 0;
+}
+.research-markdown-restored code {
+    background: var(--mono-bg-tertiary, rgba(255,255,255,0.06));
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    color: rgba(187, 154, 247, 0.95);
+}
+.research-markdown-restored pre {
+    background: var(--mono-bg-tertiary, rgba(0,0,0,0.25));
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 10px 0;
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+}
+.research-markdown-restored pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--mono-text-primary);
+    font-size: 12.5px;
+}
+.research-markdown-restored a {
+    color: rgba(125, 207, 255, 1);
+    text-decoration: none;
+    border-bottom: 1px dashed rgba(125, 207, 255, 0.4);
+    transition: border-color 0.12s ease;
+}
+.research-markdown-restored a:hover {
+    border-bottom-color: rgba(125, 207, 255, 1);
+}
+/* Inline citation chips — match the live research card */
+.research-markdown-restored sup,
+.research-markdown-restored .citation,
+.research-markdown-restored a[href^="#cite-"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    margin: 0 1px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    background: rgba(125, 207, 255, 0.12);
+    color: rgba(125, 207, 255, 1);
+    border: 1px solid rgba(125, 207, 255, 0.35);
+    vertical-align: super;
+    text-decoration: none;
+}
+.research-markdown-restored hr {
+    border: none;
+    height: 1px;
+    background: var(--mono-border-light, rgba(255,255,255,0.08));
+    margin: 18px 0;
+}

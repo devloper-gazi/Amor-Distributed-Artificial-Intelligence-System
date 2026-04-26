@@ -1640,3 +1640,368 @@ body {
     white-space: nowrap;
     border-width: 0;
 }
+
+/* ==================== UX Polish — Sidebar + Topbar (2026-04) ==================== */
+
+/* --- Topbar current-chat indicator ----------------------------------- */
+.top-bar-current {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--mono-bg-secondary, rgba(255,255,255,0.04));
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+    font-size: 12.5px;
+    color: var(--mono-text-secondary);
+    max-width: min(60vw, 480px);
+    pointer-events: none; /* purely informational */
+}
+.top-bar-current[hidden] { display: none; }
+.top-bar-chat-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    color: var(--mono-text-primary);
+    font-weight: 500;
+    letter-spacing: 0.005em;
+}
+.top-bar-mode-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--mono-text-tertiary);
+    box-shadow: 0 0 0 0 currentColor;
+}
+.top-bar-mode-dot.mode-research  { background: #7dcfff; box-shadow: 0 0 6px rgba(125,207,255,0.5); }
+.top-bar-mode-dot.mode-thinking  { background: #bb9af7; box-shadow: 0 0 6px rgba(187,154,247,0.5); }
+.top-bar-mode-dot.mode-coding    { background: #9ece6a; box-shadow: 0 0 6px rgba(158,206,106,0.45); }
+@media (max-width: 720px) { .top-bar-current { display: none; } }
+
+/* --- Sidebar history-item polish ------------------------------------- */
+.history-item {
+    position: relative;
+    padding-left: calc(var(--space-3) + 4px);
+}
+/* Mode-tinted accent rail on the left edge */
+.history-item-rail {
+    position: absolute;
+    left: 6px;
+    top: 25%;
+    bottom: 25%;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 0.18s ease;
+}
+.history-item.mode-research  .history-item-rail { background: rgba(125, 207, 255, 0.5); }
+.history-item.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 0.5); }
+.history-item.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 0.45); }
+.history-item.active .history-item-rail { top: 12%; bottom: 12%; }
+.history-item.active.mode-research  .history-item-rail { background: rgba(125, 207, 255, 1); }
+.history-item.active.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 1); }
+.history-item.active.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 1); }
+
+/* Color-coded mode pill */
+.mode-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    line-height: 1;
+}
+.mode-pill-research {
+    color: #7dcfff;
+    background: rgba(125, 207, 255, 0.1);
+    border-color: rgba(125, 207, 255, 0.35);
+}
+.mode-pill-thinking {
+    color: #bb9af7;
+    background: rgba(187, 154, 247, 0.1);
+    border-color: rgba(187, 154, 247, 0.35);
+}
+.mode-pill-coding {
+    color: #9ece6a;
+    background: rgba(158, 206, 106, 0.1);
+    border-color: rgba(158, 206, 106, 0.35);
+}
+
+/* Ghost / placeholder title — replaces the loud "Untitled Chat" string */
+.history-item-title-ghost {
+    display: inline-block;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+    font-weight: 400;
+    opacity: 0.85;
+    position: relative;
+    overflow: hidden;
+}
+.history-item-title-ghost::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(255,255,255,0.06),
+        transparent);
+    transform: translateX(-100%);
+    animation: ghostShimmer 2.4s ease-in-out infinite;
+}
+@keyframes ghostShimmer {
+    0%   { transform: translateX(-100%); }
+    60%  { transform: translateX(100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Cleaner sub-meta layout: pill first, date second */
+.history-item-sub {
+    gap: 8px;
+    align-items: center;
+}
+.history-item-date {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Tighter actions button — less visual weight when not hovered */
+.history-item-actions {
+    background-color: transparent;
+    color: var(--mono-text-tertiary);
+    opacity: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.history-item:hover .history-item-actions,
+.history-item.active .history-item-actions {
+    opacity: 0.8;
+    background-color: var(--mono-bg-hover, rgba(255,255,255,0.06));
+}
+.history-item-actions:hover { opacity: 1 !important; transform: none; }
+
+/* ==================== Rename Chat — context menu icons + modal ==================== */
+
+/* Inline icon inside the chat-history context menu items. */
+.context-menu-item {
+    gap: 10px;
+}
+.context-menu-icon {
+    width: 14px;
+    text-align: center;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: color 0.12s ease;
+}
+.context-menu-item:hover .context-menu-icon {
+    color: var(--mono-text-primary);
+}
+
+/* Danger-tinted item (Delete) */
+.context-menu-item.is-danger {
+    color: rgba(255, 130, 130, 0.95);
+}
+.context-menu-item.is-danger .context-menu-icon {
+    color: rgba(255, 130, 130, 0.7);
+}
+.context-menu-item.is-danger:hover {
+    background-color: rgba(220, 100, 100, 0.08);
+    color: rgba(255, 130, 130, 1);
+}
+.context-menu-item.is-danger:hover .context-menu-icon {
+    color: rgba(255, 130, 130, 1);
+}
+
+/* Subtle separator above the danger group */
+.context-menu-item.is-danger {
+    margin-top: 4px;
+    padding-top: calc(var(--space-2) + 4px);
+    border-top: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+    border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm);
+}
+
+/* --- Rename Chat modal ----------------------------------------------
+   Layout philosophy: the input is the primary interaction surface, so
+   it gets a generous 50px-tall full-width field. Label + hint stack
+   ABOVE/BELOW the input in their own rows (the inherited
+   .folder-modal-row default is a horizontal flex which squished the
+   input down to ~80px wide — fixed by overriding to column). */
+
+#renameChatModal .modal-container {
+    max-width: 480px;
+    width: min(95vw, 480px);
+}
+#renameChatModal .modal-body {
+    padding: 20px 24px 22px;
+}
+
+/* Override the inherited horizontal row — stack label / input / hint */
+#renameChatModal .folder-modal-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 0;
+}
+
+/* Label is now a top-aligned mini-heading rather than a 90px-wide cell. */
+#renameChatModal .folder-modal-label {
+    width: auto;
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-bottom: 0;
+}
+
+.rename-chat-current {
+    font-size: 13px;
+    color: var(--mono-text-secondary);
+    margin-bottom: 14px;
+    line-height: 1.45;
+    word-break: break-word;
+}
+.rename-chat-current strong {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+}
+.rename-chat-current-ghost {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+}
+.rename-chat-hint {
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rename-chat-hint #renameChatCount {
+    font-variant-numeric: tabular-nums;
+    color: var(--mono-text-secondary);
+}
+.rename-chat-tip {
+    opacity: 0.9;
+}
+
+/* Primary text input — full width of the modal body, comfortably tall.
+   Important: explicit `display: block` + `box-sizing: border-box` so the
+   inherited `.folder-modal-input { flex: 1 }` rule can't collapse it
+   if any ancestor reverts to row layout. */
+#renameChatInput {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 46px;
+    font-size: 15px;
+    line-height: 1.4;
+    padding: 12px 14px;
+    background: var(--mono-bg-primary);
+    border: 1px solid var(--mono-border-medium);
+    border-radius: 10px;
+    color: var(--mono-text-primary);
+    transition: border-color 0.15s ease, background 0.15s ease,
+                box-shadow 0.15s ease;
+    font-family: inherit;
+}
+#renameChatInput:focus {
+    outline: none;
+    border-color: rgba(125, 207, 255, 0.7);
+    background: var(--mono-bg-secondary);
+    box-shadow: 0 0 0 3px rgba(125, 207, 255, 0.18);
+}
+#renameChatInput::placeholder {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    opacity: 0.6;
+}
+
+/* Ghost/secondary action button (Reset to auto) */
+.modal-action.ghost {
+    background: transparent;
+    color: var(--mono-text-secondary);
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.08));
+}
+.modal-action.ghost:hover {
+    background: var(--mono-bg-hover);
+    color: var(--mono-text-primary);
+    border-color: var(--mono-border-medium);
+}
+.modal-action.ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Three-button action row spacing — Reset on the left, Cancel + Save on the right */
+#renameChatModal .folder-modal-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-end;
+    margin-top: 22px;
+    flex-wrap: wrap;
+}
+#renameChatModal #renameChatResetBtn {
+    margin-right: auto; /* push to the left of the row */
+}
+
+/* --- Responsive (≤ 560px tablets, ≤ 420px phones) ------------------- */
+
+@media (max-width: 560px) {
+    #renameChatModal .modal-container {
+        width: 95vw;
+        max-width: 95vw;
+    }
+    #renameChatModal .modal-body {
+        padding: 16px 18px 18px;
+    }
+    #renameChatInput {
+        font-size: 16px; /* ≥16px prevents iOS zoom-on-focus */
+        min-height: 48px;
+    }
+}
+
+@media (max-width: 420px) {
+    /* Stack action buttons vertically; Reset takes its own row at the
+       top so the primary Save button always sits at the bottom-right
+       within thumb reach. */
+    #renameChatModal .folder-modal-actions {
+        flex-direction: column-reverse;
+        align-items: stretch;
+        gap: 8px;
+    }
+    #renameChatModal .folder-modal-actions .modal-action {
+        width: 100%;
+    }
+    #renameChatModal #renameChatResetBtn {
+        margin-right: 0; /* no longer auto-pushed in column layout */
+    }
+    .rename-chat-hint {
+        font-size: 11px;
+        gap: 6px;
+    }
+    .rename-chat-tip {
+        flex-basis: 100%; /* hint tip wraps onto its own line */
+    }
+}
+
+/* Inline-rename hint on hover — subtle text cursor on the title */
+.history-item-title {
+    cursor: text; /* hint that double-click does something */
+}

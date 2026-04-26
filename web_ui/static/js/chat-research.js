@@ -33,6 +33,21 @@ class ChatController {
         this.isProcessing = false;
         this.messageHistory = [];
 
+        // Phase C2/E — visible Stop button + per-query state used by
+        // cancel + persistence helpers.
+        this.stopButton = document.getElementById('stopButton');
+        this._currentAbortController = null;
+        this._currentQueryRecordId = null;
+        this._currentUserMsgKey = null;
+        this._currentAssistantMsgKey = null;
+        // Backend pipeline session ids — distinct from `chatSessionId`
+        // (Mongo) and from `query_record_id` (cross-replica logical id).
+        // The mode-specific cancel routes need these to actually halt
+        // the worker; the resume banner uses the matching id from the
+        // query_record itself.
+        this._currentThinkingBackendId = null;
+        this._currentResearchBackendId = null;
+
         // Expose open/close handlers for settings panel (wired during init)
         this.openResearchSettingsPanel = null;
         this.closeResearchSettingsPanel = null;
@@ -43,6 +58,8 @@ class ChatController {
     init() {
         // Event listeners
         this.sendButton?.addEventListener('click', () => this.sendMessage());
+        // Phase C2/E — Stop button cancels the in-flight query end-to-end.
+        this.stopButton?.addEventListener('click', () => this.cancelCurrentQuery());
         this.chatInput?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -295,6 +312,12 @@ class ChatController {
 
     setChatSessionId(sessionId) {
         this.chatSessionId = sessionId;
+        // Phase D3 — when the user navigates into a chat session,
+        // check whether it has an in-progress query and surface a
+        // resume banner. Fire-and-forget; failure is non-fatal.
+        if (sessionId) {
+            this._checkAndResumeActiveQuery(sessionId).catch(() => {});
+        }
     }
 
     // ── P0.2: Active research persistence ──────────────────────────────────
@@ -383,7 +406,10 @@ class ChatController {
                 console.warn('resume-research: ResearchView not loaded yet');
                 return;
             }
-            const view = new ResearchView(status.topic || '(restored)', status.depth || 'medium');
+            // Real query text from the running session, with a graceful
+            // fallback that no longer shows the awkward "(restored)" tag.
+            const restoredTopic = status.topic || status.query || 'Resumed research';
+            const view = new ResearchView(restoredTopic, status.depth || 'medium');
             this._mountResearchCard(view);
             // Seed from snapshot before live events kick in.
             try { view.handleEvent({ type: 'snapshot', ...status }); } catch (_) {}
@@ -434,7 +460,12 @@ class ChatController {
                     content: msg.content,
                     format: msg.format || 'text',
                     aiType: msg.aiType || null,
-                    extras: msg.extras || {}
+                    extras: msg.extras || {},
+                    // Phase C — defense-in-depth dedupe. The backend AI
+                    // handler also writes this same message with the
+                    // same key; the unique sparse index on
+                    // chat_messages.idempotency_key collapses to one row.
+                    idempotency_key: msg.idempotency_key || null,
                 })
             });
             if (!response.ok) {
@@ -442,6 +473,312 @@ class ChatController {
             }
         } catch (e) {
             console.warn('Failed to persist message:', e);
+        }
+    }
+
+    // ─── Phase C/D/E/F shared helpers ──────────────────────────────────
+
+    /**
+     * Generate a fresh UUID4 string. Uses crypto.randomUUID() when
+     * available (modern browsers + secure contexts) and falls back
+     * to a short Math.random hex otherwise so older / non-HTTPS
+     * setups still work.
+     */
+    _newUuid() {
+        try {
+            if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+        } catch (_) {}
+        // Fallback — not RFC4122 but unique-enough for idempotency keys.
+        return 'fb-' + Date.now().toString(36) + '-' +
+               Math.random().toString(36).slice(2, 10);
+    }
+
+    /**
+     * Phase F — structured error classification.
+     * Maps a raw exception to {type, userMsg, recoverable} so the
+     * caller can render a meaningful bubble (and queue an automatic
+     * retry on rate-limit).
+     */
+    _classifyError(err) {
+        const msg = ((err?.message) || String(err || '')).toLowerCase();
+        if (err?.name === 'AbortError')
+            return { type: 'cancelled',   userMsg: 'Query cancelled.',                                       recoverable: false };
+        if (msg.includes(' 401') || msg.includes('unauthorized'))
+            return { type: 'auth',        userMsg: 'Session expired. Please log in again.',                  recoverable: false };
+        if (msg.includes(' 503') || msg.includes('unavailable'))
+            return { type: 'unavailable', userMsg: 'AI service is temporarily unavailable. Try again shortly.', recoverable: true };
+        if (msg.includes(' 429') || msg.includes('rate limit'))
+            return { type: 'rate_limit',  userMsg: 'Rate limit reached. Auto-retrying in 30s…',              recoverable: true };
+        if (msg.includes('network') || msg.includes('failed to fetch'))
+            return { type: 'network',     userMsg: 'Network error. Check your connection.',                   recoverable: true };
+        if (msg.includes('timeout') || msg.includes('timed out'))
+            return { type: 'timeout',     userMsg: 'The query timed out. Try a shorter prompt or lower effort.', recoverable: false };
+        return { type: 'unknown',         userMsg: `Error: ${err?.message || 'unknown'}`,                    recoverable: false };
+    }
+
+    /**
+     * Phase B/C — create a query record on the server. Returns the
+     * record id (or null on failure — caller proceeds without
+     * persistence linkage). Idempotency key prevents duplicate
+     * records on retries.
+     */
+    async _createQueryRecord({ prompt, mode, provider, effort, idempotencyKey }) {
+        if (!this.chatSessionId) return null;
+        try {
+            const resp = await this._authFetch('/api/query-records', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_session_id: this.chatSessionId,
+                    mode,
+                    query_text: prompt.slice(0, 8000),
+                    provider,
+                    effort: effort || null,
+                    idempotency_key: idempotencyKey,
+                }),
+            });
+            if (!resp.ok) {
+                console.warn('Query record create failed:', resp.status);
+                return null;
+            }
+            const data = await resp.json();
+            return data.id;
+        } catch (e) {
+            console.warn('Query record create failed:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Predict the title the server will pick. Mirrors the Python helper
+     * `_generate_title_from_query` so the optimistic update lines up with
+     * what eventually persists in Mongo.
+     */
+    _predictTitle(query, maxChars = 60) {
+        let text = String(query || '').replace(/<[^>]+>/g, '');
+        text = text.replace(/[*_`#~>\[\]]+/g, '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'New Chat';
+        if (text.length <= maxChars) return text[0].toUpperCase() + text.slice(1);
+        let cut = text.slice(0, maxChars);
+        const lastSpace = cut.lastIndexOf(' ');
+        if (lastSpace > maxChars * 0.66) cut = cut.slice(0, lastSpace);
+        return (cut[0].toUpperCase() + cut.slice(1)).replace(/[.,;:]+$/, '') + '…';
+    }
+
+    /**
+     * Phase B + UX polish — auto-title with OPTIMISTIC client-side update.
+     *
+     * We immediately render a predicted title in the sidebar (matching the
+     * server's algorithm) so the user sees their query reflected the moment
+     * they hit Send — no waiting on a round-trip. The server response then
+     * confirms / corrects the prediction; if the server skipped the update
+     * (user already renamed) the cached state still wins.
+     */
+    _autoTitleSession(sessionId, prompt) {
+        if (!sessionId || !prompt) return;
+        const predicted = this._predictTitle(prompt);
+
+        // Optimistic local update — patch the in-memory session list so the
+        // next render shows the new title. Falls back to a full re-render
+        // when the in-memory index isn't there yet.
+        try {
+            const idx = window.appState?._historyIndex;
+            const session = idx?.get?.(sessionId);
+            if (session && (!session.title ||
+                session.title === 'Untitled Chat' ||
+                session.title === 'New Chat')) {
+                session.title = predicted;
+            }
+            if (typeof window.renderChatHistory === 'function') {
+                window.renderChatHistory().catch(() => {});
+            }
+            // Topbar title (current chat name shown above the chat area).
+            const topTitle = document.getElementById('chatTitle')
+                || document.querySelector('[data-chat-title]');
+            if (topTitle) topTitle.textContent = predicted;
+            // Browser tab title — secondary signal that something useful
+            // is in flight.
+            try { document.title = `${predicted} — Amor`; } catch (_) {}
+        } catch (_) {}
+
+        this._authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-title`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: prompt.slice(0, 4000) }),
+        }).then(async (resp) => {
+            if (!resp.ok) return;
+            const data = await resp.json();
+            // Reconcile with the server's chosen title. If the server
+            // skipped (user-renamed), our optimistic update is wrong —
+            // the next renderChatHistory() will pull the canonical value.
+            if (typeof window.renderChatHistory === 'function') {
+                try { window.renderChatHistory(); } catch (_) {}
+            }
+            if (data.title) {
+                const topTitle = document.getElementById('chatTitle')
+                    || document.querySelector('[data-chat-title]');
+                if (topTitle) topTitle.textContent = data.title;
+                try { document.title = `${data.title} — Amor`; } catch (_) {}
+            }
+        }).catch(() => { /* best-effort */ });
+    }
+
+    /**
+     * Phase D3 — on session reload, surface a banner if the session
+     * has an in-progress query, with options to resume watching SSE
+     * or cancel outright.
+     */
+    async _checkAndResumeActiveQuery(chatSessionId) {
+        if (!chatSessionId) return;
+        try {
+            const resp = await this._authFetch(
+                `/api/sessions/${encodeURIComponent(chatSessionId)}/active-query`
+            );
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data.active || !data.record) return;
+            this._renderResumeBanner(data.record);
+        } catch (e) {
+            console.warn('active-query check failed:', e);
+        }
+    }
+
+    /**
+     * Build the resume banner DOM and insert it at the top of the
+     * messages area. Wires Resume + Cancel buttons.
+     */
+    _renderResumeBanner(record) {
+        if (!this.messagesArea) return;
+        // De-dupe: if a banner for this record already exists, refresh
+        // instead of stacking.
+        const existing = this.messagesArea.querySelector(
+            `.query-resume-banner[data-record-id="${CSS.escape(record.id)}"]`
+        );
+        if (existing) { existing.remove(); }
+
+        const elapsedMs = Date.now() - (new Date(record.started_at).getTime() || Date.now());
+        const elapsed = this._formatDuration(Math.max(0, elapsedMs / 1000));
+        const banner = document.createElement('div');
+        banner.className = 'query-resume-banner';
+        banner.dataset.recordId = record.id;
+        const safeQuery = (record.query_text || '').slice(0, 80);
+        banner.innerHTML = `
+            <div class="banner-text">
+              <strong>Query in progress</strong>
+              <div class="query-resume-text"></div>
+              <div class="query-resume-meta">
+                <span>${this.escapeHtml(record.current_phase || 'starting')}</span>
+                ·
+                <span class="query-resume-pct">${Math.max(0, Math.min(100, Math.round(record.progress || 0)))}%</span>
+                ·
+                <span>${this.escapeHtml(elapsed)} elapsed</span>
+              </div>
+            </div>
+            <button class="query-resume-btn" type="button">Resume watching</button>
+            <button class="query-cancel-btn" type="button">Cancel</button>
+        `;
+        // Use textContent for the query text so we don't HTML-inject.
+        banner.querySelector('.query-resume-text').textContent = safeQuery;
+        this.messagesArea.prepend(banner);
+
+        banner.querySelector('.query-resume-btn').addEventListener('click', async () => {
+            banner.remove();
+            await this._resumeFromRecord(record);
+        });
+        banner.querySelector('.query-cancel-btn').addEventListener('click', async () => {
+            try {
+                await this._authFetch(
+                    `/api/query-records/${encodeURIComponent(record.id)}/cancel`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ reason: 'Cancelled by user from resume banner' }) }
+                );
+            } catch (_) {}
+            banner.remove();
+        });
+    }
+
+    _formatDuration(seconds) {
+        const s = Math.max(0, Math.floor(seconds));
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${sec}s`;
+        return `${sec}s`;
+    }
+
+    /**
+     * Phase D3 — resume watching an in-progress query. Mounts the
+     * appropriate view + reconnects SSE.
+     */
+    async _resumeFromRecord(record) {
+        // Wire per-query state so the Stop button / cancel routes can
+        // halt the resumed pipeline. Cleared in finally below.
+        this._currentQueryRecordId = record.id;
+        this._currentAbortController = new AbortController();
+        if (record.mode === 'thinking') {
+            this._currentThinkingBackendId = record.thinking_session_id || null;
+        } else if (record.mode === 'research') {
+            this._currentResearchBackendId = record.research_session_id || null;
+        }
+        try {
+            if (record.mode === 'thinking' && record.thinking_session_id) {
+                if (typeof ThinkingView !== 'function') return;
+                const view = new ThinkingView({
+                    prompt: record.query_text,
+                    effort: record.effort || 'medium',
+                    provider: record.provider || 'local',
+                });
+                this._mountThinkingCard(view);
+                view.loadFromSnapshot({
+                    phases: record.phases || [],
+                    current_phase: record.current_phase,
+                    progress: record.progress,
+                    deliverable_markdown: record.result_markdown,
+                });
+                this.isProcessing = true;
+                if (this.sendButton) this.sendButton.disabled = true;
+                if (this.stopButton) this.stopButton.classList.add('is-active');
+                try {
+                    await this._streamThinking(record.thinking_session_id, view);
+                } finally {
+                    this.isProcessing = false;
+                    if (this.sendButton) this.sendButton.disabled = false;
+                    if (this.stopButton) this.stopButton.classList.remove('is-active');
+                }
+            } else if (record.mode === 'research' && record.research_session_id) {
+                if (typeof ResearchView !== 'function') return;
+                const view = new ResearchView(record.query_text, record.effort || 'medium');
+                this._mountResearchCard(view);
+                try { view.handleEvent({ type: 'snapshot',
+                    phases: record.phases || [],
+                    current_phase: record.current_phase,
+                    progress: record.progress,
+                    report_markdown: record.result_markdown,
+                    citations: record.sources || [],
+                }); } catch (_) {}
+                this.isProcessing = true;
+                if (this.sendButton) this.sendButton.disabled = true;
+                if (this.stopButton) this.stopButton.classList.add('is-active');
+                try {
+                    try {
+                        await this._streamResearch(record.research_session_id, view);
+                    } catch (_) {
+                        await this._pollResearchInto(record.research_session_id, view);
+                    }
+                } finally {
+                    this.isProcessing = false;
+                    if (this.sendButton) this.sendButton.disabled = false;
+                    if (this.stopButton) this.stopButton.classList.remove('is-active');
+                }
+            }
+        } catch (e) {
+            console.warn('resume-from-record failed:', e);
+        } finally {
+            this._currentAbortController = null;
+            this._currentQueryRecordId = null;
+            this._currentThinkingBackendId = null;
+            this._currentResearchBackendId = null;
         }
     }
 
@@ -533,6 +870,9 @@ class ChatController {
         // slip past the guard during persistChatMessage / addTypingIndicator.
         this.isProcessing = true;
         if (this.sendButton) this.sendButton.disabled = true;
+        // Phase C2/E — show the Stop button so the user can cancel
+        // mid-flight. CSS handles the slide-in transition.
+        if (this.stopButton) this.stopButton.classList.add('is-active');
 
         // Lazy session creation: page load and mode-card clicks no longer
         // pre-create a chat session (that flooded history with empty
@@ -544,9 +884,42 @@ class ChatController {
             catch (e) { console.warn('lazy session-create failed:', e); }
         }
 
-        // Add user message
+        // Phase C+E — generate per-query idempotency keys + create the
+        // server-side query record so the AI handler can stamp it with
+        // status/progress and the resume banner has something to show
+        // on page reload. All of these are stored on `this` so the
+        // process methods + cancel button can read them.
+        const userMsgKey = this._newUuid();
+        const assistantMsgKey = this._newUuid();
+        const queryRecordIdempotencyKey = this._newUuid();
+        const queryProvider = this.useClaudeAPI?.checked ? 'claude' : 'local-ai';
+        const queryEffort = this.mode === 'thinking'
+            ? (document.getElementById('thinkingEffortHidden')?.value || 'medium')
+            : (document.getElementById('researchDepth')?.value || null);
+        this._currentQueryRecordId = await this._createQueryRecord({
+            prompt: message,
+            mode: this.mode,
+            provider: queryProvider,
+            effort: queryEffort,
+            idempotencyKey: queryRecordIdempotencyKey,
+        });
+        this._currentUserMsgKey = userMsgKey;
+        this._currentAssistantMsgKey = assistantMsgKey;
+        this._currentAbortController = new AbortController();
+
+        // Phase B3 — fire-and-forget auto-title (server skips if user
+        // already renamed). Sidebar updates optimistically when this
+        // returns.
+        if (this.chatSessionId) {
+            this._autoTitleSession(this.chatSessionId, message);
+        }
+
+        // Add user message (with idempotency_key so the persist can dedupe)
         this.addMessage('user', message);
-        const userMsg = { role: 'user', content: message, format: 'text' };
+        const userMsg = {
+            role: 'user', content: message, format: 'text',
+            idempotency_key: userMsgKey,
+        };
         this.messageHistory.push(userMsg);
         await this.persistChatMessage(userMsg);
 
@@ -578,21 +951,92 @@ class ChatController {
         } catch (error) {
             console.error(`${this.mode} processing error:`, error);
             this.removeTypingIndicator(typingId);
-            const friendly = this.formatErrorMessage(error);
+            // Phase F — structured error classification. Prefer the
+            // user-facing message from the classifier; fall back to
+            // existing formatErrorMessage if needed.
+            const cls = this._classifyError(error);
+            const friendly = cls.userMsg || this.formatErrorMessage(error);
             this.addMessage('assistant', friendly, 'error');
-            // Persist error bubble so page reload keeps the context.
             const errMsg = {
                 role: 'assistant',
                 content: friendly,
                 aiType: 'error',
                 format: 'text',
-                extras: { error: error.message || String(error) },
+                extras: { error: error.message || String(error), error_type: cls.type },
             };
             this.messageHistory.push(errMsg);
             try { await this.persistChatMessage(errMsg); } catch (_) {}
         } finally {
             this.isProcessing = false;
             if (this.sendButton) this.sendButton.disabled = false;
+            // Phase C2/E — hide the Stop button when the query terminates
+            // (success, failure, or cancel).
+            if (this.stopButton) this.stopButton.classList.remove('is-active');
+            this._currentAbortController = null;
+            this._currentQueryRecordId = null;
+            this._currentUserMsgKey = null;
+            this._currentAssistantMsgKey = null;
+            this._currentThinkingBackendId = null;
+            this._currentResearchBackendId = null;
+        }
+    }
+
+    /**
+     * Phase C2 — cancel the in-flight query (called by the Stop button).
+     * Aborts the client-side fetch AND tells the backend to halt the
+     * matching pipeline. Both signals are useful: AbortController
+     * frees the network slot immediately; the backend cancel saves
+     * the LLM compute budget.
+     */
+    async cancelCurrentQuery() {
+        // Client-side cancel — fires immediately even if the backend
+        // is unreachable.
+        try { this._currentAbortController?.abort(); } catch (_) {}
+
+        const recordId = this._currentQueryRecordId;
+        const mode = this.mode;
+        const useClaudeAPI = this.useClaudeAPI?.checked || false;
+        const calls = [];
+
+        // Mode-specific pipeline cancel — halts the actual worker on the
+        // backend so we don't burn LLM compute after the user clicked Stop.
+        if (mode === 'thinking' && this._currentThinkingBackendId) {
+            calls.push(this._authFetch(
+                `/api/thinking/${encodeURIComponent(this._currentThinkingBackendId)}/cancel`,
+                { method: 'POST' }
+            ));
+        } else if (mode === 'research' && !useClaudeAPI && this._currentResearchBackendId) {
+            calls.push(this._authFetch(
+                `/api/local-ai/research/${encodeURIComponent(this._currentResearchBackendId)}/cancel`,
+                { method: 'POST' }
+            ));
+        } else if ((mode === 'research' || mode === 'coding') && useClaudeAPI && recordId) {
+            // Claude API tasks are tracked by query_record_id in
+            // chat_research_routes._ACTIVE_TASKS.
+            calls.push(this._authFetch(
+                `/api/chat/cancel/${encodeURIComponent(recordId)}`,
+                { method: 'POST' }
+            ));
+        }
+
+        // Always flip the query_record terminal so other replicas + the
+        // resume banner observe the cancelled state regardless of which
+        // pipeline owned the work.
+        if (recordId) {
+            calls.push(this._authFetch(
+                `/api/query-records/${encodeURIComponent(recordId)}/cancel`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reason: 'Cancelled by user.' }) }
+            ));
+        }
+
+        try {
+            // Run cancels in parallel — order doesn't matter, each is
+            // best-effort and the worker also polls the query_record
+            // status on its next phase boundary.
+            await Promise.allSettled(calls);
+        } catch (e) {
+            console.warn('cancelCurrentQuery server-side failed:', e);
         }
     }
 
@@ -607,15 +1051,20 @@ class ChatController {
             const requestBody = {
                 prompt: message,
                 mode: this.mode,
-                history: this.messageHistory
+                history: this.messageHistory,
+                // Phase C — server-side persistence + cancellation linkage
+                chat_session_id: this.chatSessionId || null,
+                query_record_id: this._currentQueryRecordId || null,
+                user_message_idempotency_key: this._currentUserMsgKey || null,
+                assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
             };
-            
+
             // Add research settings when in research mode
             if (this.mode === 'research') {
                 const depthSelect = document.getElementById('researchDepth');
                 const translationToggle = document.getElementById('useTranslation');
                 const targetLangSelect = document.getElementById('targetLanguage');
-                
+
                 requestBody.depth = depthSelect?.value || 'medium';
                 requestBody.use_translation = translationToggle?.checked ?? true;
                 requestBody.target_language = targetLangSelect?.value || 'en';
@@ -627,7 +1076,10 @@ class ChatController {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(requestBody),
+                // Phase C2 — wire AbortController so the Stop button can
+                // cancel the in-flight HTTP request immediately.
+                signal: this._currentAbortController?.signal,
             });
 
             if (!response.ok) {
@@ -711,7 +1163,13 @@ class ChatController {
                 use_translation: useTranslation,
                 target_language: targetLanguage,
                 save_to_knowledge: true,
+                // Phase C — server-side persistence + cancellation linkage
+                chat_session_id: this.chatSessionId || null,
+                query_record_id: this._currentQueryRecordId || null,
+                user_message_idempotency_key: this._currentUserMsgKey || null,
+                assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
             }),
+            signal: this._currentAbortController?.signal,
         });
 
         if (!startResponse.ok) {
@@ -723,6 +1181,9 @@ class ChatController {
 
         const { session_id } = await startResponse.json();
         this.currentSessionId = session_id;
+        // Phase C2 — let the Stop button reach the mode-specific cancel
+        // endpoint with the right backend session id.
+        this._currentResearchBackendId = session_id;
 
         // P0.2: stash the active session_id so a page reload can re-attach
         // and avoid the "stuck on spinner" symptom.
@@ -886,7 +1347,13 @@ class ChatController {
                     detected_deliverable: analysis.detected_deliverable || 'auto',
                     provider,
                     effort,
+                    // Phase C — server-side persistence + cancellation linkage
+                    chat_session_id: this.chatSessionId || null,
+                    query_record_id: this._currentQueryRecordId || null,
+                    user_message_idempotency_key: this._currentUserMsgKey || null,
+                    assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
                 }),
+                signal: this._currentAbortController?.signal,
             });
             if (!res.ok) {
                 let detail = '';
@@ -898,6 +1365,9 @@ class ChatController {
             view.handleEvent({ type: 'error', message: err.message });
             throw err;
         }
+
+        // Phase C2 — let the Stop button reach /api/thinking/{sid}/cancel.
+        this._currentThinkingBackendId = session.session_id;
 
         view.showTimeline({ session_id: session.session_id, phases: [] });
 
@@ -1020,6 +1490,15 @@ class ChatController {
                     }
                     if (evt.type === 'done') finish();
                     if (evt.type === 'error') finish(new Error(evt.message || failureMessage));
+                    if (evt.type === 'cancelled') {
+                        // Phase C2 — backend signalled the pipeline was
+                        // cancelled (either by /cancel endpoint on this
+                        // replica or via cross-replica pub/sub). Treat
+                        // as a clean terminal state, not an error.
+                        const cancelErr = new Error('Query cancelled.');
+                        cancelErr.name = 'AbortError';
+                        finish(cancelErr);
+                    }
                 };
                 es.onerror = async () => {
                     if (completed) return;
@@ -1497,7 +1976,16 @@ class ChatController {
     loadMessages(messages) {
         this.clearMessages();
         messages.forEach(msg => {
-            if (msg.format === 'research' && msg.extras?.research && typeof ResearchView === 'function') {
+            // Try the rich card paths FIRST — `format` may have been written
+            // either as the canonical "research" / "thinking" or (for older
+            // rows from a previous backend version) as "text" / "html" with
+            // the snapshot still tucked into `extras`. Treat the presence
+            // of `extras.research` / `extras.thinking` as the real signal.
+            const looksLikeResearch =
+                (msg.format === 'research' || (msg.extras?.research?.report_markdown ||
+                    Array.isArray(msg.extras?.research?.phases))) &&
+                msg.extras?.research && typeof ResearchView === 'function';
+            if (looksLikeResearch) {
                 try {
                     const view = ResearchView.fromSnapshot(msg.extras.research);
                     this._mountResearchCard(view);
@@ -1506,7 +1994,12 @@ class ChatController {
                     console.warn('Failed to restore research snapshot:', e);
                 }
             }
-            if (msg.format === 'thinking' && msg.extras?.thinking && typeof ThinkingView === 'function') {
+
+            const looksLikeThinking =
+                (msg.format === 'thinking' || msg.extras?.thinking?.session ||
+                    msg.extras?.thinking?.deliverable_markdown) &&
+                msg.extras?.thinking && typeof ThinkingView === 'function';
+            if (looksLikeThinking) {
                 try {
                     const view = ThinkingView.fromSnapshot(msg.extras.thinking);
                     this._mountThinkingCard(view);
@@ -1515,6 +2008,29 @@ class ChatController {
                     console.warn('Failed to restore thinking snapshot:', e);
                 }
             }
+
+            // Defensive markdown rendering — when the only thing we have is
+            // raw markdown text in `content`, run it through the renderer
+            // exposed by research-view.js so headings / bold / lists / code
+            // come out properly instead of as literal "# ", "**", "[5]"
+            // characters in the chat. Falls back to plain escaped text if
+            // the renderer hasn't loaded yet.
+            const looksLikeMarkdown = (msg.format === 'markdown') ||
+                (typeof msg.content === 'string' &&
+                 /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/.test(msg.content || '')) ||
+                (typeof msg.content === 'string' && /\*\*[^*]+\*\*/.test(msg.content || ''));
+            if (msg.role === 'assistant' && looksLikeMarkdown &&
+                typeof window.__renderResearchMarkdown === 'function') {
+                try {
+                    const html = window.__renderResearchMarkdown(msg.content || '', new Set());
+                    this.addMessage(msg.role, `<div class="research-result"><div class="research-markdown-restored">${html}</div></div>`,
+                        msg.aiType, msg.extras || {});
+                    return;
+                } catch (e) {
+                    console.warn('Failed to render restored markdown:', e);
+                }
+            }
+
             this.addMessage(msg.role, msg.content, msg.aiType, msg.extras || {});
         });
         // Keep full message metadata so history restores properly.

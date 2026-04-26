@@ -286,9 +286,33 @@
             } else if (evt.type === 'error') {
                 this.state = 'failed';
                 this._subtitle.textContent = evt.message || 'Something went wrong.';
+            } else if (evt.type === 'cancelled') {
+                // Phase C2/D3 — backend signalled the pipeline was
+                // cancelled by the user. Mark in-progress phases as
+                // cancelled (grey) so the timeline reflects reality.
+                this.state = 'cancelled';
+                this._subtitle.textContent = 'Cancelled.';
+                if (Array.isArray(this.session?.phases)) {
+                    for (const p of this.session.phases) {
+                        if (p.status === 'in_progress' || p.status === 'pending') {
+                            p.status = 'cancelled';
+                        }
+                    }
+                }
             }
             this._paintPipeline();
             this._paintArtifacts();
+        }
+
+        /**
+         * Phase D3 — rehydrate from a query_records snapshot fetched on
+         * page reload. Compatible shape with the SSE 'snapshot' event;
+         * forwards through the same path so the rendering code stays
+         * a single source of truth.
+         */
+        loadFromSnapshot(snap) {
+            if (!snap) return;
+            this.handleEvent({ type: 'snapshot', ...snap });
         }
 
         _updatePhase(name, patch) {

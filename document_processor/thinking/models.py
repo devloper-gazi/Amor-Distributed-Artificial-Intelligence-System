@@ -109,6 +109,24 @@ class ThinkRequest(BaseModel):
     # Canonical: basic | medium | deep | expert | ultra.
     effort: EffortTier = "medium"
 
+    # ─── Phase C — server-side persistence + cancellation linkage ──
+    chat_session_id: Optional[str] = Field(
+        None, max_length=64,
+        description="MongoDB chat session id this thinking run belongs to",
+    )
+    query_record_id: Optional[str] = Field(
+        None, max_length=64,
+        description="Query record id (created by POST /api/query-records)",
+    )
+    user_message_idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Dedupe key for the user message — same as frontend persist",
+    )
+    assistant_message_idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Dedupe key for the assistant message",
+    )
+
 
 class ThinkResponse(BaseModel):
     success: bool

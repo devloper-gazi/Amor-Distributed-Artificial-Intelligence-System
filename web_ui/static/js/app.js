@@ -323,6 +323,27 @@ function setupHistoryUI() {
     document.getElementById('renameFolderCancelBtn')?.addEventListener('click', () => closeModal('renameFolderModal'));
     document.getElementById('renameFolderSaveBtn')?.addEventListener('click', () => handleRenameFolderSave().catch(console.error));
 
+    // Rename Chat modal — Save / Reset / Cancel + live char count + Enter
+    document.getElementById('renameChatCancelBtn')?.addEventListener('click', () => closeModal('renameChatModal'));
+    document.getElementById('renameChatSaveBtn')?.addEventListener('click', () => handleRenameChat().catch(console.error));
+    document.getElementById('renameChatResetBtn')?.addEventListener('click', () => handleRenameChat({ resetToAuto: true }).catch(console.error));
+    const renameInput = document.getElementById('renameChatInput');
+    const renameCount = document.getElementById('renameChatCount');
+    renameInput?.addEventListener('input', () => {
+        if (renameCount) renameCount.textContent = String(renameInput.value.length);
+    });
+    renameInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleRenameChat().catch(console.error);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeModal('renameChatModal');
+        }
+    });
+    // Double-click on the title in the sidebar opens the rename modal
+    bindInlineRenameAffordance();
+
     document.getElementById('confirmFolderDeleteCancelBtn')?.addEventListener('click', () => closeModal('confirmFolderDeleteModal'));
     document.getElementById('confirmFolderDeleteBtn')?.addEventListener('click', () => handleConfirmFolderDelete().catch(console.error));
 
@@ -335,6 +356,19 @@ function setupHistoryUI() {
         if (e.key === 'Escape') {
             hideHistoryContextMenu();
             hideFolderContextMenu();
+        }
+        // F2 — rename the currently active chat. Skipped if focus is in
+        // an editable field so it doesn't hijack form input.
+        if (e.key === 'F2') {
+            const tag = (e.target?.tagName || '').toUpperCase();
+            const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' ||
+                e.target?.isContentEditable;
+            if (isEditable) return;
+            const sid = state.currentSessionId;
+            if (sid) {
+                e.preventDefault();
+                openRenameChatModal(sid);
+            }
         }
     });
 }
@@ -535,15 +569,27 @@ async function renderChatHistory() {
         items.forEach(session => {
             const isActive = session.id === state.currentSessionId;
             const modeLabel = formatModeShort(session.mode);
+            const modeKey = (session.mode || '').toLowerCase();
             const isPinned = !!session.pinned;
             const pinnedIcon = isPinned ? '<i class="fas fa-thumbtack pinned-icon"></i>' : '';
+            // UX polish — empty/default titles render as a soft skeleton
+            // shimmer + ghost text rather than the loud literal "Untitled
+            // Chat" string. As soon as the first message lands the
+            // optimistic auto-title swaps it out.
+            const rawTitle = session.title || '';
+            const isPlaceholderTitle = !rawTitle ||
+                rawTitle === 'Untitled Chat' || rawTitle === 'New Chat';
+            const titleHtml = isPlaceholderTitle
+                ? `<span class="history-item-title-ghost">New chat…</span>`
+                : escapeHtml(rawTitle);
             html += `
-                <div class="history-item ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''}" data-session-id="${session.id}" data-session-mode="${session.mode}">
+                <div class="history-item mode-${modeKey} ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''}" data-session-id="${session.id}" data-session-mode="${session.mode}">
+                    <span class="history-item-rail" aria-hidden="true"></span>
                     <div class="history-item-content">
-                        <div class="history-item-title">${pinnedIcon}${escapeHtml(session.title || 'Untitled Chat')}</div>
+                        <div class="history-item-title" title="${escapeHtml(rawTitle || 'New chat')}">${pinnedIcon}${titleHtml}</div>
                         <div class="history-item-sub">
+                            <span class="history-item-mode mode-pill mode-pill-${modeKey}" aria-label="${modeKey}">${modeLabel}</span>
                             <span class="history-item-date">${formatTime(session.updatedAt)}</span>
-                            <span class="history-item-mode">${modeLabel}</span>
                         </div>
                     </div>
                     <button class="history-item-actions" type="button" aria-label="Chat actions" data-session-id="${session.id}">
@@ -557,7 +603,38 @@ async function renderChatHistory() {
     historyList.innerHTML = html;
     renderFoldersList();
     renderHistoryControls();
+    // Reflect the active session in the topbar.
+    updateTopBarFromActiveSession();
 }
+
+/**
+ * UX polish — keep the topbar showing the active chat's title + mode
+ * accent dot. Called after every renderChatHistory() and on session
+ * load so it stays in sync with the sidebar.
+ */
+function updateTopBarFromActiveSession() {
+    const wrap = document.getElementById('topBarCurrent');
+    const titleEl = document.getElementById('chatTitle');
+    const dotEl = document.getElementById('topBarModeDot');
+    if (!wrap || !titleEl) return;
+    const sid = state.currentSessionId;
+    if (!sid) {
+        wrap.hidden = true;
+        try { document.title = 'Amor'; } catch (_) {}
+        return;
+    }
+    const session = state._historyIndex?.get?.(sid);
+    const title = session?.title || 'New chat';
+    const mode = (session?.mode || '').toLowerCase();
+    wrap.hidden = false;
+    titleEl.textContent = title;
+    if (dotEl) {
+        dotEl.className = 'top-bar-mode-dot';
+        if (mode) dotEl.classList.add(`mode-${mode}`);
+    }
+    try { document.title = `${title} — Amor`; } catch (_) {}
+}
+window.updateTopBarFromActiveSession = updateTopBarFromActiveSession;
 
 async function loadSession(sessionId) {
     console.log(`📖 Loading session: ${sessionId}`);
@@ -577,6 +654,25 @@ async function loadSession(sessionId) {
 
     if (window.chatController && session.messages) {
         window.chatController.loadMessages(session.messages);
+    }
+
+    // Keep the topbar in sync with the freshly-loaded chat. The session
+    // index may not have this id yet (deep-link), so fall back to the
+    // server payload directly.
+    try {
+        const idx = state._historyIndex;
+        if (idx && !idx.has(sessionId)) {
+            idx.set(sessionId, {
+                id: session.id, mode: session.mode, title: session.title,
+                createdAt: parseServerDate(session.created_at),
+                updatedAt: parseServerDate(session.updated_at),
+                archived: !!session.archived, folderId: session.folder_id || null,
+                pinned: !!session.pinned,
+            });
+        }
+    } catch (_) {}
+    if (typeof updateTopBarFromActiveSession === 'function') {
+        updateTopBarFromActiveSession();
     }
 }
 
@@ -946,17 +1042,21 @@ async function openHistoryContextMenu({ sessionId, x, y }) {
     const canUnpin = !!session.pinned;
 
     const items = [
-        canPin ? { id: 'pin', label: 'Pin' } : null,
-        canUnpin ? { id: 'unpin', label: 'Unpin' } : null,
-        canArchive ? { id: 'archive', label: 'Archive' } : null,
-        canUnarchive ? { id: 'unarchive', label: 'Unarchive' } : null,
-        { id: 'move', label: 'Move to folder…' },
-        hasFolder ? { id: 'remove_folder', label: 'Remove from folder' } : null,
-        { id: 'delete', label: 'Delete' },
+        { id: 'rename', label: 'Rename…', icon: 'fa-pen' },
+        canPin ? { id: 'pin', label: 'Pin', icon: 'fa-thumbtack' } : null,
+        canUnpin ? { id: 'unpin', label: 'Unpin', icon: 'fa-thumbtack' } : null,
+        canArchive ? { id: 'archive', label: 'Archive', icon: 'fa-box-archive' } : null,
+        canUnarchive ? { id: 'unarchive', label: 'Unarchive', icon: 'fa-box-open' } : null,
+        { id: 'move', label: 'Move to folder…', icon: 'fa-folder' },
+        hasFolder ? { id: 'remove_folder', label: 'Remove from folder', icon: 'fa-folder-minus' } : null,
+        { id: 'delete', label: 'Delete', icon: 'fa-trash', danger: true },
     ].filter(Boolean);
 
     menu.innerHTML = items
-        .map(i => `<button class="context-menu-item" type="button" data-action="${i.id}">${i.label}</button>`)
+        .map(i => `<button class="context-menu-item${i.danger ? ' is-danger' : ''}" type="button" data-action="${i.id}">
+            <i class="fas ${i.icon || 'fa-circle'} context-menu-icon" aria-hidden="true"></i>
+            <span>${i.label}</span>
+        </button>`)
         .join('');
 
     menu.style.display = 'block';
@@ -974,6 +1074,12 @@ async function openHistoryContextMenu({ sessionId, x, y }) {
 async function handleHistoryMenuAction(action) {
     const sessionId = state._pendingActionSessionId;
     if (!sessionId) return;
+
+    if (action === 'rename') {
+        hideHistoryContextMenu();
+        openRenameChatModal(sessionId);
+        return;
+    }
 
     if (action === 'pin') {
         await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
@@ -1123,6 +1229,135 @@ function openConfirmDeleteModal(sessionId) {
     const text = document.getElementById('confirmDeleteText');
     if (text) text.textContent = `Delete “${session.title || 'Untitled Chat'}”? This cannot be undone.`;
     openModal('confirmDeleteModal');
+}
+
+// ─────────────────────────────────────────────── Rename Chat Modal
+//
+// Triggered by:
+//   • Sidebar context menu "Rename…" item
+//   • Double-click on the chat title in the sidebar (inline affordance)
+//   • F2 keyboard shortcut while a chat is focused (advanced)
+//
+// The modal pre-fills with the current title (or the predicted auto-title
+// for placeholder names), selects all on focus, and supports:
+//   • Enter to save, Esc to cancel
+//   • "Reset to auto" — wipes the user override so the next first-message
+//      auto-title can run again. Implemented by setting title to "" then
+//      calling /auto-title with the most recent user message; if there's
+//      no message yet the title falls back to "New Chat".
+//   • Live character counter (max 120, server-enforced too)
+function openRenameChatModal(sessionId) {
+    const session = state._historyIndex?.get?.(sessionId);
+    if (!session) return;
+    state._pendingActionSessionId = sessionId;
+
+    const input = document.getElementById('renameChatInput');
+    const current = document.getElementById('renameChatCurrent');
+    const count = document.getElementById('renameChatCount');
+    const isPlaceholder = !session.title ||
+        session.title === 'Untitled Chat' || session.title === 'New Chat';
+    const startValue = isPlaceholder ? '' : session.title;
+
+    if (current) {
+        current.innerHTML = isPlaceholder
+            ? `<span class="rename-chat-current-ghost">No name yet — give this chat a memorable title.</span>`
+            : `Current name: <strong>${escapeHtml(session.title)}</strong>`;
+    }
+    if (input) {
+        input.value = startValue;
+        input.maxLength = 120;
+        if (count) count.textContent = String(startValue.length);
+    }
+
+    openModal('renameChatModal');
+    // Defer focus until the modal is fully visible.
+    setTimeout(() => {
+        input?.focus();
+        input?.select();
+    }, 30);
+}
+
+async function handleRenameChat({ resetToAuto = false } = {}) {
+    const sessionId = state._pendingActionSessionId;
+    if (!sessionId) return;
+    const input = document.getElementById('renameChatInput');
+    const saveBtn = document.getElementById('renameChatSaveBtn');
+    const resetBtn = document.getElementById('renameChatResetBtn');
+    let nextTitle = (input?.value || '').trim();
+
+    // Hard limits — match backend Field(max_length=120) on update_session.
+    if (!resetToAuto) {
+        if (!nextTitle) {
+            showToast('Name cannot be empty', 'info');
+            input?.focus();
+            return;
+        }
+        if (nextTitle.length > 120) {
+            nextTitle = nextTitle.slice(0, 120);
+        }
+    } else {
+        // Reset path — clear to placeholder so future auto-title can run.
+        nextTitle = 'New Chat';
+    }
+
+    // Optimistic UI: patch in-memory state + re-render before the network
+    // round-trip lands. The server response then reconciles; on failure
+    // we restore the prior title and show a toast.
+    const prevTitle = state._historyIndex?.get?.(sessionId)?.title;
+    try {
+        const session = state._historyIndex?.get?.(sessionId);
+        if (session) session.title = nextTitle;
+        if (typeof renderChatHistory === 'function') renderChatHistory().catch(() => {});
+        if (typeof updateTopBarFromActiveSession === 'function') updateTopBarFromActiveSession();
+    } catch (_) {}
+
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    if (resetBtn) resetBtn.disabled = true;
+
+    try {
+        const resp = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: nextTitle }),
+        });
+        if (!resp.ok) throw new Error(`server returned ${resp.status}`);
+
+        closeModal('renameChatModal');
+        showToast(resetToAuto ? 'Chat name reset' : 'Chat renamed', 'success');
+        await renderChatHistory();
+    } catch (e) {
+        console.warn('rename failed:', e);
+        // Roll back optimistic update.
+        try {
+            const session = state._historyIndex?.get?.(sessionId);
+            if (session) session.title = prevTitle;
+            if (typeof renderChatHistory === 'function') renderChatHistory().catch(() => {});
+            if (typeof updateTopBarFromActiveSession === 'function') updateTopBarFromActiveSession();
+        } catch (_) {}
+        showToast('Could not rename chat — please try again', 'info');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+        if (resetBtn) resetBtn.disabled = false;
+    }
+}
+
+// Inline rename — double-click the title in the sidebar to launch the
+// modal. This is faster than navigating the context menu and matches
+// macOS Finder / VS Code conventions.
+function bindInlineRenameAffordance() {
+    const list = document.getElementById('chatHistoryList');
+    if (!list || list._inlineRenameBound) return;
+    list._inlineRenameBound = true;
+    list.addEventListener('dblclick', (e) => {
+        const titleEl = e.target.closest?.('.history-item-title');
+        if (!titleEl) return;
+        const item = titleEl.closest('.history-item');
+        const sid = item?.dataset?.sessionId;
+        if (sid) {
+            e.preventDefault();
+            openRenameChatModal(sid);
+        }
+    });
 }
 
 async function handleConfirmDelete() {
