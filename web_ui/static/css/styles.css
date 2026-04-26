@@ -1833,15 +1833,48 @@ body {
     border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm);
 }
 
-/* --- Rename Chat modal ---------------------------------------------- */
+/* --- Rename Chat modal ----------------------------------------------
+   Layout philosophy: the input is the primary interaction surface, so
+   it gets a generous 50px-tall full-width field. Label + hint stack
+   ABOVE/BELOW the input in their own rows (the inherited
+   .folder-modal-row default is a horizontal flex which squished the
+   input down to ~80px wide — fixed by overriding to column). */
+
 #renameChatModal .modal-container {
-    max-width: 440px;
+    max-width: 480px;
+    width: min(95vw, 480px);
 }
+#renameChatModal .modal-body {
+    padding: 20px 24px 22px;
+}
+
+/* Override the inherited horizontal row — stack label / input / hint */
+#renameChatModal .folder-modal-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 0;
+}
+
+/* Label is now a top-aligned mini-heading rather than a 90px-wide cell. */
+#renameChatModal .folder-modal-label {
+    width: auto;
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-bottom: 0;
+}
+
 .rename-chat-current {
     font-size: 13px;
     color: var(--mono-text-secondary);
-    margin-bottom: 12px;
-    line-height: 1.4;
+    margin-bottom: 14px;
+    line-height: 1.45;
+    word-break: break-word;
 }
 .rename-chat-current strong {
     color: var(--mono-text-primary);
@@ -1852,7 +1885,7 @@ body {
     font-style: italic;
 }
 .rename-chat-hint {
-    margin-top: 8px;
+    margin-top: 4px;
     font-size: 11.5px;
     color: var(--mono-text-tertiary, #8a8aa0);
     display: flex;
@@ -1868,23 +1901,35 @@ body {
     opacity: 0.9;
 }
 
-/* Larger, more prominent text input — main interaction surface */
+/* Primary text input — full width of the modal body, comfortably tall.
+   Important: explicit `display: block` + `box-sizing: border-box` so the
+   inherited `.folder-modal-input { flex: 1 }` rule can't collapse it
+   if any ancestor reverts to row layout. */
 #renameChatInput {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 46px;
     font-size: 15px;
-    padding: 10px 14px;
+    line-height: 1.4;
+    padding: 12px 14px;
     background: var(--mono-bg-primary);
     border: 1px solid var(--mono-border-medium);
-    border-radius: 8px;
+    border-radius: 10px;
     color: var(--mono-text-primary);
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease,
+                box-shadow 0.15s ease;
     font-family: inherit;
-    width: 100%;
 }
 #renameChatInput:focus {
     outline: none;
     border-color: rgba(125, 207, 255, 0.7);
     background: var(--mono-bg-secondary);
-    box-shadow: 0 0 0 3px rgba(125, 207, 255, 0.12);
+    box-shadow: 0 0 0 3px rgba(125, 207, 255, 0.18);
+}
+#renameChatInput::placeholder {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    opacity: 0.6;
 }
 
 /* Ghost/secondary action button (Reset to auto) */
@@ -1906,16 +1951,57 @@ body {
 /* Three-button action row spacing — Reset on the left, Cancel + Save on the right */
 #renameChatModal .folder-modal-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
-    justify-content: space-between;
-    margin-top: 16px;
+    justify-content: flex-end;
+    margin-top: 22px;
+    flex-wrap: wrap;
 }
 #renameChatModal #renameChatResetBtn {
-    margin-right: auto; /* push to the left */
+    margin-right: auto; /* push to the left of the row */
 }
 
-/* Inline-rename hint on hover — subtle pen icon next to title */
+/* --- Responsive (≤ 560px tablets, ≤ 420px phones) ------------------- */
+
+@media (max-width: 560px) {
+    #renameChatModal .modal-container {
+        width: 95vw;
+        max-width: 95vw;
+    }
+    #renameChatModal .modal-body {
+        padding: 16px 18px 18px;
+    }
+    #renameChatInput {
+        font-size: 16px; /* ≥16px prevents iOS zoom-on-focus */
+        min-height: 48px;
+    }
+}
+
+@media (max-width: 420px) {
+    /* Stack action buttons vertically; Reset takes its own row at the
+       top so the primary Save button always sits at the bottom-right
+       within thumb reach. */
+    #renameChatModal .folder-modal-actions {
+        flex-direction: column-reverse;
+        align-items: stretch;
+        gap: 8px;
+    }
+    #renameChatModal .folder-modal-actions .modal-action {
+        width: 100%;
+    }
+    #renameChatModal #renameChatResetBtn {
+        margin-right: 0; /* no longer auto-pushed in column layout */
+    }
+    .rename-chat-hint {
+        font-size: 11px;
+        gap: 6px;
+    }
+    .rename-chat-tip {
+        flex-basis: 100%; /* hint tip wraps onto its own line */
+    }
+}
+
+/* Inline-rename hint on hover — subtle text cursor on the title */
 .history-item-title {
     cursor: text; /* hint that double-click does something */
 }
