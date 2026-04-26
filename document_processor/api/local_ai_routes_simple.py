@@ -126,6 +126,24 @@ class LocalAIResearchRequest(BaseModel):
     target_language: str = Field("en", description="Target language for translation (ISO 639-1 code)")
     save_to_knowledge: bool = Field(False, description="Save results to vector store (not implemented)")
 
+    # ─── Phase C — server-side persistence + cancellation linkage ──
+    chat_session_id: Optional[str] = Field(
+        None, max_length=64,
+        description="MongoDB chat session id this research run belongs to",
+    )
+    query_record_id: Optional[str] = Field(
+        None, max_length=64,
+        description="Query record id (created by POST /api/query-records)",
+    )
+    user_message_idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Dedupe key for the user message — same as frontend persist",
+    )
+    assistant_message_idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Dedupe key for the assistant message",
+    )
+
 
 class LocalAIResearchResponse(BaseModel):
     success: bool
@@ -1106,8 +1124,30 @@ async def start_research(
             "current_agent": None,
             "current_task": "Initializing research",
             "started_at": datetime.utcnow().isoformat(),
+            # Phase C — persistence + cancellation linkage
+            "chat_session_id": request.chat_session_id,
+            "query_record_id": request.query_record_id,
+            "user_message_idempotency_key": request.user_message_idempotency_key,
+            "assistant_message_idempotency_key": request.assistant_message_idempotency_key,
+            "cancel_requested": False,
         }
         await _persist_session(session_id, research_sessions[session_id])
+
+        # Stamp the linked query record with our backend session id and
+        # initial running status so the frontend's resume banner has a
+        # consistent reverse-lookup target.
+        if request.query_record_id:
+            try:
+                from ..infrastructure.chat_store import chat_store
+                await chat_store.update_query_record(
+                    request.query_record_id,
+                    research_session_id=session_id,
+                    status="running",
+                    progress=5,
+                    current_phase="planning",
+                )
+            except Exception as exc:
+                logger.debug("link_research_record_failed: %s", exc)
 
         # Start the advanced (Claude Research-style) pipeline in background.
         # The legacy `execute_research` function is kept for reference but no
@@ -1715,13 +1755,42 @@ async def execute_advanced_research(
         session["error"] = msg
         await _persist_session(session_id, session)
         await _publish(session_id, {"type": "error", "message": msg})
+        try:
+            from ._query_persistence import mark_query_failed
+            await mark_query_failed(
+                query_record_id=session.get("query_record_id"), error=msg
+            )
+        except Exception:
+            pass
         return
+    except asyncio.CancelledError:
+        # Phase C2 — pipeline cancelled via /cancel endpoint.
+        session["status"] = "cancelled"
+        session["error"] = "Cancelled by user."
+        await _persist_session(session_id, session)
+        await _publish(session_id, {"type": "cancelled", "session_id": session_id})
+        try:
+            from ._query_persistence import mark_query_cancelled
+            await mark_query_cancelled(
+                query_record_id=session.get("query_record_id"),
+                reason="Cancelled by user.",
+            )
+        except Exception:
+            pass
+        raise
     except Exception as e:
         logger.exception("Advanced research failed for %s: %s", session_id, e)
         session["status"] = "failed"
         session["error"] = str(e)
         await _persist_session(session_id, session)
         await _publish(session_id, {"type": "error", "message": str(e)})
+        try:
+            from ._query_persistence import mark_query_failed
+            await mark_query_failed(
+                query_record_id=session.get("query_record_id"), error=str(e)
+            )
+        except Exception:
+            pass
         return
 
     # Finalize session payload
@@ -1761,6 +1830,90 @@ async def execute_advanced_research(
 
     await _persist_session(session_id, session)
     await _publish(session_id, {"type": "done", "session_id": session_id})
+
+    # ── Phase C — server-side persistence + query_record completion ──
+    # Frontend persists the same messages with the same idempotency
+    # keys; the unique sparse index on chat_messages.idempotency_key
+    # collapses duplicates. mark_query_completed stamps the record.
+    try:
+        from ._query_persistence import (
+            persist_user_message,
+            persist_assistant_message,
+            mark_query_completed,
+        )
+        await persist_user_message(
+            chat_session_id=session.get("chat_session_id"),
+            user_id=session.get("user_id"),
+            client_id=None,
+            prompt=session.get("topic") or "",
+            idempotency_key=session.get("user_message_idempotency_key"),
+        )
+        await persist_assistant_message(
+            chat_session_id=session.get("chat_session_id"),
+            user_id=session.get("user_id"),
+            client_id=None,
+            content=session.get("report_markdown") or "",
+            ai_type="local-ai-research",
+            format="text",
+            extras={"research": {
+                "citations": session.get("citations", []),
+                "sources": session.get("sources", []),
+                "confidence": session.get("confidence"),
+                "depth": session.get("depth"),
+                "summary": session.get("summary"),
+            }},
+            idempotency_key=session.get("assistant_message_idempotency_key"),
+        )
+        await mark_query_completed(
+            query_record_id=session.get("query_record_id"),
+            result_markdown=session.get("report_markdown") or "",
+            sources=session.get("citations", []),
+        )
+    except Exception as exc:
+        logger.warning("research_persist_failed session=%s error=%s", session_id, exc)
+
+
+# ─── Phase C2 — cancellation ─────────────────────────────────────────
+
+
+@router.post("/research/{session_id}/cancel")
+async def cancel_research(
+    session_id: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    Cancel an in-flight research session.
+
+    The pipeline checks `session["cancel_requested"]` between phases
+    and raises asyncio.CancelledError when set. The cancel route
+    flips the flag, marks the session terminal in Redis, publishes a
+    `cancelled` SSE event, and stamps the matching query_record.
+    """
+    session = await _load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
+
+    if session.get("status") in {"completed", "failed", "cancelled"}:
+        return {"cancelled": False, "reason": "already terminal"}
+
+    session["status"] = "cancelled"
+    session["cancel_requested"] = True
+    session["error"] = "Cancelled by user."
+    session["completed_at"] = datetime.utcnow().isoformat()
+    await _persist_session(session_id, session)
+    await _publish(session_id, {"type": "cancelled", "session_id": session_id})
+
+    try:
+        from ._query_persistence import mark_query_cancelled
+        await mark_query_cancelled(
+            query_record_id=session.get("query_record_id"),
+            reason="Cancelled by user.",
+        )
+    except Exception:
+        pass
+
+    return {"cancelled": True, "session_id": session_id}
 
 
 def _require_owner(session: Dict[str, Any], user: User) -> None:

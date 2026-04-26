@@ -302,9 +302,40 @@ async def start_think(
         "started_at": _now(),
         "completed_at": None,
         "error": None,
+        # Phase C linkage — chat_session_id + query_record_id ride
+        # along the session payload so they survive replica-hops via
+        # Redis and are available to the persistence helpers when the
+        # background pipeline finishes.
+        "chat_session_id": payload.chat_session_id,
+        "query_record_id": payload.query_record_id,
+        "user_message_idempotency_key": payload.user_message_idempotency_key,
+        "assistant_message_idempotency_key": payload.assistant_message_idempotency_key,
+        # Phase C2 cancellation flag — checked by _run_session between
+        # phases so a /cancel call can stop the pipeline without having
+        # to find the asyncio.Task object directly.
+        "cancel_requested": False,
     }
     _sessions[session_id] = session
     await _persist(session_id, session)
+
+    # Stamp the query record with our backend session id so the
+    # frontend can reverse-lookup the SSE stream from a record id.
+    if payload.query_record_id:
+        try:
+            from .._query_persistence_helpers import _link_thinking_record
+            await _link_thinking_record(payload.query_record_id, session_id)
+        except Exception:
+            # Local helper not yet shipped — fall through to direct call.
+            try:
+                from ..infrastructure.chat_store import chat_store
+                await chat_store.update_query_record(
+                    payload.query_record_id,
+                    thinking_session_id=session_id,
+                    status="running",
+                    progress=5,
+                )
+            except Exception as exc:
+                logger.debug("link_thinking_record_failed: %s", exc)
 
     background.add_task(_run_session, session_id)
     return ThinkResponse(success=True, session_id=session_id, message="Thinking started")
@@ -397,6 +428,45 @@ async def _run_session(session_id: str) -> None:
         session["completed_at"] = _now()
         await _persist(session_id, session)
         await _publish(session_id, {"type": "done", "session_id": session_id})
+
+        # ── Phase C — server-side persistence + query_record update ──
+        # Frontend also writes these messages with the same idempotency
+        # keys; the unique sparse index dedupes the parallel writes.
+        try:
+            from ._query_persistence import (
+                persist_user_message,
+                persist_assistant_message,
+                mark_query_completed,
+            )
+            await persist_user_message(
+                chat_session_id=session.get("chat_session_id"),
+                user_id=session.get("user_id"),
+                client_id=None,  # thinking sessions are user-scoped, not client-scoped
+                prompt=session.get("prompt") or "",
+                idempotency_key=session.get("user_message_idempotency_key"),
+            )
+            await persist_assistant_message(
+                chat_session_id=session.get("chat_session_id"),
+                user_id=session.get("user_id"),
+                client_id=None,
+                content=session.get("deliverable_markdown") or "",
+                ai_type="local-thinking" if session.get("provider") == "local" else "claude-thinking",
+                format="text",
+                extras={"thinking": {
+                    "phases": session.get("phases", []),
+                    "sub_questions": session.get("sub_questions", []),
+                    "alternatives": session.get("alternatives", []),
+                    "decision": session.get("decision"),
+                    "critique": session.get("critique"),
+                }},
+                idempotency_key=session.get("assistant_message_idempotency_key"),
+            )
+            await mark_query_completed(
+                query_record_id=session.get("query_record_id"),
+                result_markdown=session.get("deliverable_markdown") or "",
+            )
+        except Exception as exc:
+            logger.warning("thinking_persist_failed session=%s error=%s", session_id, exc)
     except asyncio.TimeoutError:
         logger.error(
             "thinking.run_session exceeded effort timeout session=%s (effort=%s, limit=%ds)",
@@ -411,6 +481,29 @@ async def _run_session(session_id: str) -> None:
         session["completed_at"] = _now()
         await _persist(session_id, session)
         await _publish(session_id, {"type": "error", "message": msg})
+        try:
+            from ._query_persistence import mark_query_failed
+            await mark_query_failed(
+                query_record_id=session.get("query_record_id"), error=msg
+            )
+        except Exception:
+            pass
+    except asyncio.CancelledError:
+        # Phase C2 — pipeline was cancelled via /cancel.
+        session["status"] = "cancelled"
+        session["error"] = "Cancelled by user."
+        session["completed_at"] = _now()
+        await _persist(session_id, session)
+        await _publish(session_id, {"type": "cancelled", "session_id": session_id})
+        try:
+            from ._query_persistence import mark_query_cancelled
+            await mark_query_cancelled(
+                query_record_id=session.get("query_record_id"),
+                reason="Cancelled by user.",
+            )
+        except Exception:
+            pass
+        raise
     except Exception as exc:
         logger.exception("thinking.run_session failed session=%s", session_id)
         session["status"] = "failed"
@@ -418,6 +511,59 @@ async def _run_session(session_id: str) -> None:
         session["completed_at"] = _now()
         await _persist(session_id, session)
         await _publish(session_id, {"type": "error", "message": str(exc)})
+        try:
+            from ._query_persistence import mark_query_failed
+            await mark_query_failed(
+                query_record_id=session.get("query_record_id"), error=str(exc)
+            )
+        except Exception:
+            pass
+
+
+# ─── Phase C2 — cancellation ─────────────────────────────────────────
+
+
+@router.post("/{session_id}/cancel")
+async def cancel_thinking(
+    session_id: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    Cancel an in-flight thinking session.
+
+    Marks the session ``status="cancelled"`` in Redis (so the SSE
+    snapshot reflects it on next read), publishes a ``cancelled``
+    event for any active SSE subscribers, and updates the matching
+    query_record. The actual asyncio.Task is signalled via the
+    ``cancel_requested`` flag in the session payload — the next
+    ``await self._emit(...)`` in the engine raises an asyncio.
+    CancelledError, which our `_run_session` exception path catches.
+    """
+    session = await _load(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
+
+    if session.get("status") in {"completed", "failed", "cancelled"}:
+        return {"cancelled": False, "reason": "already terminal"}
+
+    session["status"] = "cancelled"
+    session["cancel_requested"] = True
+    session["error"] = "Cancelled by user."
+    session["completed_at"] = _now()
+    await _persist(session_id, session)
+    await _publish(session_id, {"type": "cancelled", "session_id": session_id})
+
+    try:
+        from ._query_persistence import mark_query_cancelled
+        await mark_query_cancelled(
+            query_record_id=session.get("query_record_id"),
+            reason="Cancelled by user.",
+        )
+    except Exception:
+        pass
+
+    return {"cancelled": True, "session_id": session_id}
 
 
 def _merge_phase_result(session: Dict[str, Any], phase: str, detail: Dict[str, Any]) -> None:
