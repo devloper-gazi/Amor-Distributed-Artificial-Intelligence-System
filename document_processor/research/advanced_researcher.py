@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,48 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Phase 1 optimization helpers (fancy-swinging-karp) ────────────────────
+#
+# Lazy imports keep startup cheap and let the relevance module be optional
+# (if the file is missing or broken at import time the research pipeline
+# silently falls back to its previous behaviour).
+
+def _load_settings():
+    """Return the pydantic settings singleton or None if config layer
+    is unavailable for some reason. Never raises."""
+    try:
+        from ..config.settings import settings  # noqa: WPS433
+        return settings
+    except Exception as exc:                            # pragma: no cover
+        logger.debug("settings unavailable for relevance filter: %s", exc)
+        return None
+
+
+def _analyze_concurrency_for(depth: str, settings_obj: Any) -> int:
+    """Resolve per-tier analyze concurrency from settings, with a sane
+    fallback if the field is missing (e.g. partial config rollout)."""
+    if settings_obj is None:
+        return 1
+    name = f"analyze_concurrency_{depth}"
+    val = getattr(settings_obj, name, None)
+    try:
+        n = int(val) if val is not None else 1
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(8, n))   # hard ceiling so a typo can't blow up Ollama
+
+
+def _relevance_cap_for(depth: str, settings_obj: Any) -> int:
+    if settings_obj is None:
+        return 60
+    name = f"relevance_prefilter_max_sources_{depth}"
+    val = getattr(settings_obj, name, None)
+    try:
+        return max(1, int(val))
+    except (TypeError, ValueError):
+        return 60
 
 
 EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -81,7 +124,22 @@ class AdvancedResearcher:
         on_event: Optional[EventCallback] = None,
     ) -> None:
         self.query = (query or "").strip()
-        self.depth = depth if depth in {"quick", "standard", "deep"} else "standard"
+        # Canonical tier names are English + ordered by budget:
+        #   basic < medium < deep < expert < ultra
+        # Backward-compat aliases: quick→basic, standard→medium.
+        _DEPTH_ALIASES = {
+            "quick": "basic",
+            "standard": "medium",
+            "fast": "basic",
+            "balanced": "medium",
+            "thorough": "deep",
+            "comprehensive": "expert",
+            "exhaustive": "ultra",
+        }
+        d = (depth or "").strip().lower()
+        d = _DEPTH_ALIASES.get(d, d)
+        valid_depths = {"basic", "medium", "deep", "expert", "ultra"}
+        self.depth = d if d in valid_depths else "medium"
         self.llm_call = llm_call
         self.web_search = web_search
         self.web_scrape = web_scrape
@@ -89,22 +147,59 @@ class AdvancedResearcher:
         self.target_language = target_language
         self.on_event: EventCallback = on_event or _noop_event
 
-        # Depth configuration
-        if self.depth == "quick":
+        # Depth configuration — each tier sets a self-consistent budget across
+        # sub-questions × variants × sources, plus LLM token limits per call.
+        # The analyze_tokens knob is the dominant CPU-time lever: halving it
+        # roughly halves the analyze-phase wall time. Budgets below are tuned
+        # for CPU-only qwen2.5:7b inference (~20 tokens/sec).
+        #
+        # Tier        subq var  per  cap  conc  rep_tok an_tok  ~CPU time
+        # --------    ---- --- ----  ---  ----  ------- ------  ----------
+        # basic          3  1    3    8    8      1400   220    ~4-7 min
+        # medium         5  2    5   25   12      2200   320    ~15-25 min
+        # deep           8  3    8   80   16      3400   420    ~60-90 min
+        # expert        10  4   12  250   24      4600   480    ~3-5 hours
+        # ultra         14  5   20 1000   32      6000   560    ~6-12 hours
+        if self.depth == "basic":
             self.num_sub_questions = 3
-            self.sources_per_subquestion = 2
-            self.max_total_sources = 6
-            self.report_tokens = 1600
-        elif self.depth == "deep":
-            self.num_sub_questions = 6
             self.sources_per_subquestion = 3
-            self.max_total_sources = 15
-            self.report_tokens = 3600
-        else:  # standard
-            self.num_sub_questions = 4
-            self.sources_per_subquestion = 2
-            self.max_total_sources = 10
-            self.report_tokens = 2600
+            self.max_total_sources = 8
+            self.variants_per_subq = 1
+            self.scrape_concurrency = 8
+            self.report_tokens = 1400
+            self.analyze_tokens = 220
+        elif self.depth == "deep":
+            self.num_sub_questions = 8
+            self.sources_per_subquestion = 8
+            self.max_total_sources = 80
+            self.variants_per_subq = 3
+            self.scrape_concurrency = 16
+            self.report_tokens = 3400
+            self.analyze_tokens = 420
+        elif self.depth == "expert":
+            self.num_sub_questions = 10
+            self.sources_per_subquestion = 12
+            self.max_total_sources = 250
+            self.variants_per_subq = 4
+            self.scrape_concurrency = 24
+            self.report_tokens = 4600
+            self.analyze_tokens = 480
+        elif self.depth == "ultra":
+            self.num_sub_questions = 14
+            self.sources_per_subquestion = 20
+            self.max_total_sources = 1000
+            self.variants_per_subq = 5
+            self.scrape_concurrency = 32
+            self.report_tokens = 6000
+            self.analyze_tokens = 560
+        else:  # medium
+            self.num_sub_questions = 5
+            self.sources_per_subquestion = 5
+            self.max_total_sources = 25
+            self.variants_per_subq = 2
+            self.scrape_concurrency = 12
+            self.report_tokens = 2200
+            self.analyze_tokens = 320
 
         self.phases: List[Phase] = [
             Phase("planning", "Planning"),
@@ -226,27 +321,30 @@ class AdvancedResearcher:
         )
 
         all_results: List[Dict[str, Any]] = []
+        per_variant_cap = max(3, self.sources_per_subquestion + 2)
         for i, sub_q in enumerate(self.sub_questions):
             await self._emit(
                 "search_start",
                 {"sub_question_index": i, "sub_question": sub_q},
             )
-            try:
-                results = await self.web_search(
-                    sub_q, self.sources_per_subquestion + 1
-                )
-            except Exception as e:
-                logger.warning("search failed for %r: %s", sub_q, e)
-                results = []
-            for r in results:
-                if r.get("url"):
-                    r["sub_question_index"] = i
-                    all_results.append(r)
+            variants = self._query_variants(sub_q, self.variants_per_subq)
+            found_for_sub = 0
+            for variant in variants:
+                try:
+                    results = await self.web_search(variant, per_variant_cap)
+                except Exception as e:
+                    logger.warning("search failed for %r: %s", variant, e)
+                    results = []
+                for r in results:
+                    if r.get("url"):
+                        r["sub_question_index"] = i
+                        all_results.append(r)
+                found_for_sub += len(results)
+                await asyncio.sleep(0.25)
             await self._emit(
                 "search_done",
-                {"sub_question_index": i, "found": len(results)},
+                {"sub_question_index": i, "found": found_for_sub},
             )
-            await asyncio.sleep(0.4)
 
         # Dedupe while preserving sub-question coverage
         seen_urls: set = set()
@@ -270,7 +368,7 @@ class AdvancedResearcher:
         urls = [r["url"] for r in unique]
         await self._emit("scrape_start", {"total": len(urls)})
         try:
-            scraped = await self.web_scrape(urls, 3)
+            scraped = await self.web_scrape(urls, self.scrape_concurrency)
         except Exception as e:
             logger.warning("scrape batch failed: %s", e)
             scraped = []
@@ -286,7 +384,9 @@ class AdvancedResearcher:
             if not scraped_item:
                 continue
             content = (scraped_item.get("content") or "").strip()
-            if len(content) < 200:
+            # Lowered from 200 → 140 to keep short but useful abstracts
+            # (e.g. arXiv summaries, dictionary-style Wikipedia stubs).
+            if len(content) < 140:
                 continue
             src = Source(
                 id=next_id,
@@ -339,6 +439,66 @@ class AdvancedResearcher:
         return sources
 
     @staticmethod
+    def _query_variants(sub_q: str, max_variants: int) -> List[str]:
+        """
+        Build up to `max_variants` search-engine-friendly variants of the
+        sub-question. The first variant is always the cleaned original; the
+        rest are keyword rephrasings / focus shifts so we get unique hits
+        across engines instead of the same top-5 for every variant.
+        """
+        if max_variants <= 0:
+            return []
+        raw = (sub_q or "").strip()
+        if not raw:
+            return []
+
+        variants: List[str] = [raw]
+
+        # Keyword-only variant (drop question words + stopwords)
+        stop = {
+            "what", "who", "why", "how", "when", "where", "which", "is",
+            "are", "the", "a", "an", "of", "to", "and", "or", "in", "on",
+            "for", "with", "does", "do", "did", "can", "could", "should",
+            "would", "this", "that", "these", "those",
+        }
+        tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]+", raw.lower())
+        keywords = [t for t in tokens if t not in stop and len(t) > 2]
+        if keywords:
+            variants.append(" ".join(keywords[:8]))
+
+        # Site-biased variant pointing at high-trust sources
+        if keywords and max_variants >= 3:
+            variants.append(
+                " ".join(keywords[:6])
+                + " (site:wikipedia.org OR site:arxiv.org OR site:docs.python.org"
+                + " OR site:developer.mozilla.org OR site:stackoverflow.com)"
+            )
+
+        # "overview" framing — better for Wikipedia / encyclopedic hits
+        if max_variants >= 4:
+            variants.append(f"{' '.join(keywords[:6]) or raw} overview explanation")
+
+        # "technical deep dive" framing — better for academic / docs hits
+        if max_variants >= 5:
+            variants.append(f"{' '.join(keywords[:6]) or raw} technical details architecture")
+
+        # Dedupe preserving order
+        seen: set = set()
+        deduped: List[str] = []
+        for v in variants:
+            v_norm = v.strip()
+            if not v_norm:
+                continue
+            key = v_norm.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(v_norm)
+            if len(deduped) >= max_variants:
+                break
+        return deduped
+
+    @staticmethod
     def _derive_title(url: str) -> str:
         parsed = urlparse(url)
         path = parsed.path.strip("/")
@@ -364,63 +524,129 @@ class AdvancedResearcher:
             await self._complete_phase("analyzing", kept=0)
             return []
 
+        # Strict-mode prompt: only use when the excerpt is clearly off-topic
+        # (we deliberately bias toward extracting SOMETHING, because the
+        # caller already filtered URLs to the sub-question.)
         system = (
             "You are a careful research analyst. Given a source excerpt and a "
-            "research sub-question, extract only the 2–4 most relevant factual "
-            "findings that directly answer the sub-question. Preserve the source's "
-            "own phrasing when it adds precision. Each finding must stand alone. "
-            "If the source does not meaningfully address the sub-question, reply "
-            "with exactly: NOT_RELEVANT"
+            "research sub-question, extract 2-5 relevant factual findings that "
+            "help answer the sub-question — even if the source only addresses it "
+            "indirectly, pull the closest adjacent facts (definitions, context, "
+            "examples, related mechanisms) that a report author could cite. "
+            "Preserve the source's own phrasing when it adds precision. "
+            "Each finding must stand alone and be verifiable from the excerpt. "
+            "Only reply exactly 'NOT_RELEVANT' when the excerpt is a login wall, "
+            "a 404 page, or on a completely unrelated topic."
         )
 
-        for i, src in enumerate(self.sources):
-            sub_q = (
-                self.sub_questions[src.sub_question_index]
-                if 0 <= src.sub_question_index < len(self.sub_questions)
-                else self.query
-            )
-            await self._emit(
-                "analyzing_source",
-                {
-                    "source_id": src.id,
-                    "index": i,
-                    "total": len(self.sources),
-                    "title": src.title,
-                },
-            )
+        # Retry prompt used when the first pass returns NOT_RELEVANT — we
+        # pressure the model to find *any* adjacent fact before giving up.
+        retry_system = (
+            "You are extracting background facts for a research report. The "
+            "excerpt below was retrieved because a search engine judged it "
+            "relevant to the sub-question. Extract 1-3 standalone factual "
+            "statements from the excerpt that a report author could cite when "
+            "writing about this sub-question — even tangentially related context "
+            "counts. Only reply 'NOT_RELEVANT' if the excerpt is pure navigation, "
+            "a login prompt, or truly unrelated content (e.g. an ad page)."
+        )
+
+        async def _extract(src: Source, sub_q: str, system_prompt: str) -> List[str]:
             prompt = (
                 f"Sub-question: {sub_q}\n\n"
                 f"Source title: {src.title}\n"
                 f"Source URL: {src.url}\n\n"
                 f"Source excerpt:\n{src.content[:3800]}\n\n"
-                f"Extract 2–4 concise, self-contained findings that directly answer "
-                f"the sub-question. One finding per line, no numbering, no preamble. "
-                f"If nothing relevant, reply only: NOT_RELEVANT"
+                "Extract concise, self-contained findings. One finding per line, "
+                "no numbering, no preamble. If the excerpt is genuinely unusable, "
+                "reply only: NOT_RELEVANT"
             )
             try:
-                raw = await self.llm_call(prompt, system, 420)
+                raw = await self.llm_call(prompt, system_prompt, self.analyze_tokens)
             except Exception as e:
                 logger.debug("analyze failed for source %s: %s", src.id, e)
-                raw = ""
-
+                return []
             cleaned = (raw or "").strip()
             if not cleaned or cleaned.upper().startswith("NOT_RELEVANT"):
-                src.relevance = 0.05
-                src.findings = ""
-                continue
-
-            # Keep only bullet-like lines
+                return []
             lines = [ln.strip("-•* \t") for ln in cleaned.split("\n") if ln.strip()]
-            lines = [ln for ln in lines if len(ln) > 12][:5]
-            if not lines:
-                src.relevance = 0.1
-                src.findings = ""
-                continue
-            src.findings = "\n".join(f"- {ln}" for ln in lines)
-            src.relevance = min(1.0, 0.4 + 0.12 * len(lines))
+            return [ln for ln in lines if len(ln) > 12][:6]
 
-        # Filter to relevant sources and renumber citation IDs
-        kept = [s for s in self.sources if s.relevance >= 0.35 and s.findings]
+        # Phase 1 optimization: bounded concurrency.
+        #
+        # Local Ollama can serve a few generates in parallel before
+        # KV-cache contention kills throughput, so we use a per-tier
+        # Semaphore (default 1–3). Per-source exceptions are caught
+        # below so one bad source can't abort the whole analyze pass.
+        # The progress event still fires once per source — its "index"
+        # is now a "completed counter" rather than a strict iteration
+        # index, which matches what the UI uses it for (progress %).
+        settings_obj = _load_settings()
+        concurrency = _analyze_concurrency_for(self.depth, settings_obj)
+        sem = asyncio.Semaphore(concurrency)
+        total = len(self.sources)
+        done_counter = 0
+
+        async def _process_one(src: Source) -> None:
+            nonlocal done_counter
+            async with sem:
+                sub_q = (
+                    self.sub_questions[src.sub_question_index]
+                    if 0 <= src.sub_question_index < len(self.sub_questions)
+                    else self.query
+                )
+                try:
+                    lines = await _extract(src, sub_q, system)
+                    # Second pass if the first rejected — the retry prompt is
+                    # looser. Skip retry for speed-critical tiers (basic /
+                    # medium) where the extra CPU cost isn't worth it
+                    # against an already-small corpus.
+                    if (
+                        not lines
+                        and src.content
+                        and self.depth not in {"basic", "medium"}
+                    ):
+                        lines = await _extract(src, sub_q, retry_system)
+
+                    if not lines:
+                        src.relevance = 0.1
+                        src.findings = ""
+                    else:
+                        src.findings = "\n".join(f"- {ln}" for ln in lines)
+                        # Higher base so threshold filter doesn't drop marginal-
+                        # but-usable sources. A source with only 1 finding still
+                        # scores 0.48.
+                        src.relevance = min(1.0, 0.36 + 0.12 * len(lines))
+                except Exception as exc:
+                    # Per-source failure: log, mark unusable, do NOT abort.
+                    logger.warning(
+                        "analyze source %s failed: %s", getattr(src, "id", "?"), exc
+                    )
+                    src.relevance = 0.0
+                    src.findings = ""
+            # Emit AFTER releasing the semaphore so progress events
+            # don't pile up at the back of the LLM queue. done_counter
+            # is safe to increment without a lock — single-threaded
+            # asyncio guarantees atomicity of `+=`.
+            done_counter += 1
+            await self._emit(
+                "analyzing_source",
+                {
+                    "source_id": getattr(src, "id", None),
+                    "index": done_counter,
+                    "total": total,
+                    "title": getattr(src, "title", ""),
+                },
+            )
+
+        await asyncio.gather(
+            *(_process_one(s) for s in self.sources),
+            return_exceptions=False,  # _process_one swallows its own exceptions
+        )
+
+        # Filter to relevant sources and renumber citation IDs.
+        # Threshold relaxed from 0.35 → 0.22 so 1-finding sources survive.
+        kept = [s for s in self.sources if s.relevance >= 0.22 and s.findings]
         for new_id, s in enumerate(kept, start=1):
             s.id = new_id
         self.sources = kept
@@ -535,14 +761,60 @@ RULES
         report = self._postprocess_report(report, self.query)
         self.report_markdown = report
 
-        # Confidence heuristic from citation coverage
+        # Multi-factor confidence formula. Each factor contributes a weighted
+        # percentage; total is capped at 99 (never 100 — we don't certify truth).
+        #   coverage      : fraction of gathered sources actually cited
+        #   source_count  : count of gathered sources vs depth target
+        #   avg_relevance : mean LLM-assessed relevance of retained sources
+        #   report_length : report substance (short reports lose points)
+        #   subq_coverage : how many sub-questions got at least one citation
         cited_ids = {int(m) for m in re.findall(r"\[(\d+)\]", report) if m.isdigit()}
         valid_ids = {s.id for s in self.sources}
         used_valid = cited_ids & valid_ids
-        coverage = len(used_valid) / len(self.sources) if self.sources else 0
-        self.confidence = int(55 + 40 * coverage)
-        if self.confidence > 95:
-            self.confidence = 95
+        coverage = len(used_valid) / len(self.sources) if self.sources else 0.0
+        # P1.4: Logarithmic source-count curve. The previous formula
+        # (`len(self.sources) / max_total_sources`) was punitively
+        # linear: an ultra-mode run that filtered down to 11 high-
+        # quality sources scored 11/1000 = 0.011, losing ~24 of 25
+        # weight points and capping confidence around 46 even on
+        # otherwise-perfect runs. The aggressive analyze filter is
+        # intentional (quality gate), so we credit a small-but-quality
+        # corpus appropriately:
+        #   1 src → 0.15 |  11 src → 0.52 |  50 src → 0.85 |  100+ src → 1.00
+        # (max_total_sources is no longer in the denominator — depth
+        # tier still controls the gather/analyze ceiling.)
+        source_count_norm = (
+            min(1.0, math.log10(1 + len(self.sources)) / 2.0)
+            if self.sources else 0.0
+        )
+        avg_relevance = (
+            sum(s.relevance for s in self.sources) / len(self.sources)
+            if self.sources else 0.0
+        )
+        report_words = len(report.split())
+        # 900 words ≈ full credit for the length factor
+        report_length_norm = min(1.0, report_words / 900.0)
+
+        # Per-sub-question citation coverage
+        cited_subqs = set()
+        if self.sources:
+            for s in self.sources:
+                if s.id in used_valid:
+                    cited_subqs.add(s.sub_question_index)
+        subq_coverage = (
+            len(cited_subqs) / max(1, len(self.sub_questions))
+            if self.sub_questions else 0.0
+        )
+
+        score = (
+            35.0 * coverage
+            + 25.0 * source_count_norm
+            + 20.0 * avg_relevance
+            + 10.0 * report_length_norm
+            + 9.0 * subq_coverage
+        )
+        # Floor at 20 (we always have the query itself), cap at 99
+        self.confidence = max(20, min(99, int(round(score))))
 
         await self._emit(
             "report_ready",
@@ -571,6 +843,10 @@ RULES
         try:
             await self.plan()
             await self.gather()
+            # Phase 1 optimization: deterministic pre-LLM filter. Always
+            # fail-open — on any error self.sources is left untouched and
+            # analyze() runs over the full gathered set as before.
+            await self._apply_relevance_filter()
             await self.analyze()
             await self.synthesize()
             await self._emit("done", {})
@@ -579,6 +855,82 @@ RULES
             logger.exception("research orchestrator failed: %s", e)
             await self._emit("error", {"message": str(e)})
             raise
+
+    # ─── Phase 1 optimization · pre-LLM relevance gate ───────────────
+    async def _apply_relevance_filter(self) -> None:
+        """
+        Drop sources that would obviously waste an LLM call before
+        analyze() runs over them. No-op if settings disable the
+        feature. ALWAYS fail-open: if anything below raises we log
+        a warning and leave self.sources unchanged.
+        """
+        settings_obj = _load_settings()
+        if settings_obj is None or not getattr(
+            settings_obj, "enable_relevance_prefilter", False
+        ):
+            return
+        if not self.sources:
+            return
+
+        try:
+            from .relevance import RelevanceConfig, RelevanceFilter
+        except Exception as exc:                # pragma: no cover
+            logger.warning("relevance module import failed: %s", exc)
+            return
+
+        try:
+            cfg = RelevanceConfig(
+                enabled=True,
+                fail_open=bool(getattr(settings_obj, "relevance_prefilter_fail_open", True)),
+                debug=bool(getattr(settings_obj, "relevance_prefilter_debug", False)),
+                min_score=float(getattr(settings_obj, "relevance_prefilter_min_score", 0.15)),
+                max_sources=_relevance_cap_for(self.depth, settings_obj),
+                tier=self.depth,
+            )
+            rfilter = RelevanceFilter(config=cfg, logger=logger)
+            result = await rfilter.filter_sources(
+                query=self.query,
+                sub_questions=list(self.sub_questions or []),
+                sources=list(self.sources),
+                tier=self.depth,
+            )
+            # Logged at WARNING because the project's default root logger
+            # is WARNING in production containers. Phase 1 observability
+            # is the headline feature — losing it to a level mismatch is
+            # worse than the slight verbosity bump.
+            logger.warning(
+                "research.relevance_filter tier=%s original=%d selected=%d "
+                "rejected=%d fallback=%s method=%s",
+                self.depth,
+                result.original_count,
+                result.selected_count,
+                result.rejected_count,
+                result.fallback_used,
+                result.method_summary,
+            )
+            await self._emit(
+                "relevance_filter",
+                {
+                    "tier": self.depth,
+                    "original": result.original_count,
+                    "selected": result.selected_count,
+                    "rejected": result.rejected_count,
+                    "method": result.method_summary,
+                    "fallback_used": result.fallback_used,
+                },
+            )
+            # Replace the source list with the filter's selection. Because
+            # the filter never copies or mutates Source instances, the
+            # citation IDs / dataclass identity downstream code relies on
+            # are preserved.
+            if result.selected_sources is not None:
+                self.sources = list(result.selected_sources)
+        except Exception as exc:                # belt-and-braces fail-open
+            logger.warning(
+                "research.relevance_filter outer failure (tier=%s): %s — "
+                "continuing with %d unfiltered sources",
+                self.depth, exc, len(self.sources),
+            )
 
     # ─── Serialization ───────────────────────────────────────────────
 

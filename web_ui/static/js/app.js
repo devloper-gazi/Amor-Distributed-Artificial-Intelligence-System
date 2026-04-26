@@ -53,11 +53,12 @@ document.addEventListener('amor:auth-changed', (e) => {
         }
         return;
     }
-    // New user: refresh history view and spin up a new server session.
+    // New user: refresh history view. Don't pre-create a session — it
+    // would just become an empty "Untitled Chat" until the user actually
+    // sent a message. Lazy creation happens in sendMessage() instead.
     try {
         state.userId = e.detail.user.id;
         if (typeof loadSessionsForMode === 'function') loadSessionsForMode(state.currentMode);
-        if (typeof ensureCurrentServerSession === 'function') ensureCurrentServerSession();
     } catch (_e) { /* best-effort */ }
 });
 
@@ -81,9 +82,10 @@ function initializeApp() {
     // API call. We only guarantee the client_id is set in localStorage so the
     // shared getter can pick it up.
 
-    // Load initial history + create a fresh server session for the current mode
+    // Load initial history. Session creation is lazy — postponed until
+    // the user actually submits a prompt — so opening the app does NOT
+    // litter chat history with empty "Untitled Chat" entries.
     loadSessionsForMode(state.currentMode);
-    ensureCurrentServerSession();
 
     // Optional legacy migration (localStorage -> MongoDB) runs in background.
     migrateLegacyLocalStorageSessions().finally(() => loadSessionsForMode(state.currentMode));
@@ -91,9 +93,22 @@ function initializeApp() {
     // Check system health
     checkSystemHealth();
 
-    // Initialize current mode
-    updateModeDisplay(state.currentMode);
-    updateWelcomeScreen(state.currentMode);
+    // Initialize current mode (incl. research-only control visibility).
+    // Suppress the entry transition on first paint so the depth selector
+    // doesn't visually slide in/out during load — the user only sees
+    // animations when *they* trigger a mode switch.
+    const _depthCtl = document.getElementById('researchDepthControl');
+    if (_depthCtl) {
+        _depthCtl.style.transition = 'none';
+        applyMode(state.currentMode);
+        // Force a style flush, then restore the transition for subsequent
+        // mode switches.
+        // eslint-disable-next-line no-unused-expressions
+        _depthCtl.offsetHeight;
+        _depthCtl.style.transition = '';
+    } else {
+        applyMode(state.currentMode);
+    }
 
     console.log('✅ UI initialized successfully');
 }
@@ -170,9 +185,10 @@ function setupSidebarToggle() {
         closeSidebar();
     });
 
-    // Mode radio buttons in sidebar
-    const modeRadios = document.querySelectorAll('.mode-option input[type="radio"]');
-    modeRadios.forEach(radio => {
+    // Note: the sidebar's mode-radio block was removed in favour of the
+    // welcome-screen capability cards. Selector below is kept defensively
+    // — if the markup ever returns the listener will pick it up again.
+    document.querySelectorAll('.mode-option input[type="radio"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
             if (e.target.checked) {
                 switchMode(e.target.value).catch(console.error);
@@ -336,8 +352,24 @@ async function switchMode(newMode) {
     console.log(`🔄 Switching mode: ${state.currentMode} → ${newMode}`);
 
     applyMode(newMode);
-    // Start a fresh server-backed conversation for the selected mode.
-    await createNewChat();
+
+    // UX fix: a mode click is *not* "start a new conversation" — it just
+    // changes which assistant pipeline the next message will use. Creating
+    // a fresh session here flooded chat history with empty "Untitled Chat"
+    // entries every time the user toggled modes. Instead:
+    //   • Clear any rendered messages (we're entering a fresh canvas).
+    //   • Drop the active session id so sendMessage triggers lazy creation
+    //     under the new mode when (and only when) the user actually
+    //     submits a prompt.
+    state.currentSessionId = null;
+    if (window.chatController) {
+        if (typeof window.chatController.clearMessages === 'function') {
+            window.chatController.clearMessages();
+        }
+        if (typeof window.chatController.setChatSessionId === 'function') {
+            window.chatController.setChatSessionId(null);
+        }
+    }
 }
 
 function applyMode(newMode) {
@@ -352,14 +384,34 @@ function applyMode(newMode) {
     // Update UI
     updateModeDisplay(newMode);
 
-    // Update radio buttons in sidebar
-    const modeRadios = document.querySelectorAll('.mode-option input[type="radio"]');
-    modeRadios.forEach(radio => {
+    // Sidebar mode radios were removed in favour of the welcome cards;
+    // keep this sync for defensive compat — querySelectorAll just
+    // returns an empty NodeList when the markup is gone.
+    document.querySelectorAll('.mode-option input[type="radio"]').forEach(radio => {
         radio.checked = (radio.value === newMode);
     });
 
     // Update welcome screen
     updateWelcomeScreen(newMode);
+
+    // Mode-aware visibility for research-only controls (e.g. the depth
+    // selector). The CSS handles the actual animation — we just toggle
+    // the class. Add other research-only chips here as they appear.
+    const depthCtl = document.getElementById('researchDepthControl');
+    if (depthCtl) {
+        depthCtl.classList.toggle('is-hidden', newMode !== 'research');
+        // Also collapse the depth dropdown menu if the user was mid-pick
+        // when switching modes, so nothing dangles.
+        if (newMode !== 'research') {
+            const menu = document.getElementById('researchDepthMenu');
+            if (menu) menu.style.display = 'none';
+            const btn = document.getElementById('researchDepthBtn');
+            if (btn) {
+                btn.setAttribute('aria-expanded', 'false');
+                btn.classList.remove('active');
+            }
+        }
+    }
 }
 
 function updateModeDisplay(mode) {
@@ -422,6 +474,13 @@ async function ensureCurrentServerSession() {
         console.error('Failed to create initial server session:', e);
     }
 }
+
+// Expose globally so ChatController.sendMessage can trigger lazy session
+// creation right before persisting the user's first message. Keeping the
+// implementation in app.js (it owns `state.currentSessionId` + the chat
+// store helpers) and exposing a thin reference here avoids duplicating
+// the create-or-skip logic in every controller.
+window.ensureCurrentServerSession = ensureCurrentServerSession;
 
 function loadSessionForMode(mode) {
     console.log(`📂 Loading session for mode: ${mode}`);

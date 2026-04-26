@@ -107,6 +107,18 @@ body {
     font-size: 20px;
 }
 
+/* Brand SVG mark in the header. Sized to the same optical weight as
+   the previous Font Awesome icon (20px line-height ≈ 22px square)
+   so the surrounding flex layout stays untouched. */
+.logo .logo-mark {
+    width: 24px;
+    height: 24px;
+    display: block;
+    flex-shrink: 0;
+    /* The PNG/SVG already carries its own background so we don't
+       need filter() tricks for dark/light theme adaptation. */
+}
+
 /* Mode Selector */
 .mode-selector-container {
     position: relative;
@@ -832,44 +844,11 @@ body {
     line-height: var(--line-height-relaxed);
 }
 
-/* Mode Section */
-.mode-section {
-    margin-bottom: var(--space-6);
-}
-
-.mode-options {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.mode-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    border-radius: var(--border-radius-sm);
-    cursor: pointer;
-    transition: background-color var(--transition-fast);
-}
-
-.mode-option:hover {
-    background-color: var(--mono-bg-hover);
-}
-
-.mode-option input[type="radio"] {
-    margin: 0;
-}
-
-.mode-icon {
-    font-size: 20px;
-}
-
-.mode-label {
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--mono-text-primary);
-}
+/* Sidebar mode-radio selector was removed — see index.html. The
+   selectors below ($.mode-section / .mode-option / etc.) are no longer
+   produced by any template. Block kept out of the bundle to keep the
+   stylesheet lean; if the radio UI is reintroduced, restore from git
+   history before commit 80c7829. */
 
 .sidebar-footer {
     padding: var(--space-4);
@@ -977,41 +956,31 @@ body {
     animation: iconPulse 2s ease-in-out infinite;
 }
 
-.welcome-icon .icon-sparkle {
-    position: absolute;
-    font-size: 20px;
-    color: var(--accent-mono);
-    opacity: 0.8;
-    z-index: 1;
+/* SVG variant of the welcome center mark. Uses an explicit pixel
+   size (font-size doesn't apply to <img>) and inherits the same
+   pulse animation so the visual rhythm with the orbiting sparkles
+   is preserved. The size is tuned to fill the 120px parent without
+   touching the orbiting fa-star sparkles' positions. */
+.welcome-icon .icon-main-svg {
+    width: 84px;
+    height: 84px;
+    display: block;
+    /* Font-size styling above doesn't matter for <img>, but we keep
+       z-index, position, and animation in the original .icon-main
+       rule and let them cascade through this more-specific selector. */
 }
 
-.welcome-icon .icon-sparkle-1 {
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    animation: sparkleRotate1 3s linear infinite;
+/* Touch the cards' generous spacing so the larger logo doesn't
+   feel cramped. */
+.welcome-header {
+    text-align: center;
 }
 
-.welcome-icon .icon-sparkle-2 {
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    animation: sparkleRotate2 3s linear infinite;
-}
-
-.welcome-icon .icon-sparkle-3 {
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    animation: sparkleRotate3 3s linear infinite;
-}
-
-.welcome-icon .icon-sparkle-4 {
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    animation: sparkleRotate4 3s linear infinite;
-}
+/* Orbiting fa-star sparkles + their sparkleRotate1..4 keyframes were
+   removed alongside the markup that used them — the new SVG logo
+   carries its own sparkle accent so the orbital rig was visual
+   noise. iconPulse is kept; it still drives the central logo's
+   gentle scale animation. */
 
 @keyframes iconPulse {
     0%, 100% {
@@ -1021,66 +990,6 @@ body {
     50% {
         transform: scale(1.1);
         opacity: 0.9;
-    }
-}
-
-@keyframes sparkleRotate1 {
-    0% {
-        transform: translateX(-50%) rotate(0deg) translateY(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateX(-50%) rotate(180deg) translateY(-10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateX(-50%) rotate(360deg) translateY(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate2 {
-    0% {
-        transform: translateY(-50%) rotate(0deg) translateX(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateY(-50%) rotate(180deg) translateX(10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateY(-50%) rotate(360deg) translateX(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate3 {
-    0% {
-        transform: translateX(-50%) rotate(0deg) translateY(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateX(-50%) rotate(180deg) translateY(10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateX(-50%) rotate(360deg) translateY(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate4 {
-    0% {
-        transform: translateY(-50%) rotate(0deg) translateX(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateY(-50%) rotate(180deg) translateX(-10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateY(-50%) rotate(360deg) translateX(0);
-        opacity: 0.8;
     }
 }
 
@@ -1120,6 +1029,22 @@ body {
     background-color: var(--mono-bg-hover);
     transform: translateY(-2px);
     box-shadow: var(--shadow-md);
+}
+
+/* Touch-only: skip the lift on hover (it sticks after tap on touch
+   devices) and give the press state a slight scale-down for feedback. */
+@media (hover: none) and (pointer: coarse) {
+    .capability-card:hover {
+        transform: none;
+        box-shadow: none;
+        background-color: var(--mono-bg-secondary);
+        border-color: var(--mono-border-light);
+    }
+    .capability-card:active {
+        transform: scale(0.98);
+        background-color: var(--mono-bg-hover);
+        border-color: var(--mono-border-dark);
+    }
 }
 
 .capability-card .card-icon {
@@ -1630,8 +1555,32 @@ body {
         max-width: 320px;
     }
 
+    /* Welcome cards: stack vertically and give them comfortable touch
+       targets. Reduce icon size so each card stays compact on phones. */
     .capability-cards {
         grid-template-columns: 1fr;
+        gap: var(--space-3);
+    }
+    .capability-card {
+        padding: var(--space-4);
+        min-height: 96px;       /* generous touch target */
+        text-align: left;
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+    }
+    .capability-card .card-icon {
+        font-size: 32px;
+        margin-bottom: 0;
+        flex-shrink: 0;
+    }
+    .capability-card h3 {
+        font-size: var(--font-size-base);
+        margin-bottom: 2px;
+    }
+    .capability-card p {
+        font-size: var(--font-size-xs);
+        line-height: 1.35;
     }
 
     .input-container {

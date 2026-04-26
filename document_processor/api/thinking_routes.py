@@ -48,9 +48,20 @@ router = APIRouter(prefix="/api/thinking", tags=["thinking"])
 
 # ─── session storage ──────────────────────────────────────────────────────────
 
-_sessions: Dict[str, Dict[str, Any]] = {}
-_event_queues: Dict[str, asyncio.Queue] = {}
 SESSION_CACHE_PREFIX = "thinking_session:"
+
+# P1.2: Bounded in-memory session cache (was an unbounded dict).
+# Redis remains the durable store; this dict is only a hot cache.
+try:
+    from cachetools import TTLCache
+    _sessions: Dict[str, Dict[str, Any]] = TTLCache(maxsize=512, ttl=7800)
+except ImportError:  # pragma: no cover
+    _sessions = {}
+
+_event_queues: Dict[str, asyncio.Queue] = {}
+
+# P1.1: Pub/sub channel for cross-replica event fan-out.
+_THINKING_EVENT_CHANNEL = "amor:thinking:events:{session_id}"
 try:
     SESSION_CACHE_TTL_SECONDS = int(os.getenv("THINKING_SESSION_TTL_SECONDS", "7200"))
 except ValueError:
@@ -97,7 +108,23 @@ def _event_queue(session_id: str) -> asyncio.Queue:
 
 
 async def _publish(session_id: str, event: Dict[str, Any]) -> None:
+    """
+    P1.1: Fan an event out to:
+      1. The local in-process queue (for SSE clients on this replica).
+      2. A Redis pub/sub channel (so SSE clients on the OTHER replica
+         can receive it too).
+    """
+    from uuid import uuid4 as _uuid4  # avoid shadowing module-level uuid4
+    if "event_id" not in event:
+        event = {**event, "event_id": _uuid4().hex}
     await _event_queue(session_id).put(event)
+    try:
+        await cache_manager.publish_event(
+            _THINKING_EVENT_CHANNEL.format(session_id=session_id),
+            event,
+        )
+    except Exception as exc:  # pragma: no cover — pub/sub is best-effort
+        logger.debug("thinking _publish redis fanout failed: %s", exc)
 
 
 def _require_owner(session: Dict[str, Any], user: User) -> None:
@@ -338,8 +365,24 @@ async def _run_session(session_id: str) -> None:
     session["progress"] = 5
     await _persist(session_id, session)
 
+    # P1.3: Hard ceilings per effort tier so a hung Ollama can't wedge the
+    # background task forever. Numbers map to roughly 4–6× the nominal time
+    # budget so a healthy run never trips the limit.
+    EFFORT_TIMEOUT = {
+        "basic": 600,     # 10 min ceiling
+        "medium": 1800,   # 30 min ceiling
+        "deep": 3600,     # 1 h ceiling
+        "expert": 5400,   # 1.5 h ceiling
+        "ultra": 7200,    # 2 h ceiling
+        # legacy aliases
+        "quick": 600,
+        "standard": 1800,
+    }
+    effort = session.get("effort") or "medium"
+    timeout_seconds = EFFORT_TIMEOUT.get(effort, EFFORT_TIMEOUT["medium"])
+
     try:
-        result = await engine.run()
+        result = await asyncio.wait_for(engine.run(), timeout=timeout_seconds)
         # Mirror the engine result into the session (belt and braces).
         session["understanding"] = result.get("understanding")
         session["sub_questions"] = result.get("sub_questions", [])
@@ -354,6 +397,20 @@ async def _run_session(session_id: str) -> None:
         session["completed_at"] = _now()
         await _persist(session_id, session)
         await _publish(session_id, {"type": "done", "session_id": session_id})
+    except asyncio.TimeoutError:
+        logger.error(
+            "thinking.run_session exceeded effort timeout session=%s (effort=%s, limit=%ds)",
+            session_id, effort, timeout_seconds,
+        )
+        msg = (
+            f"Thinking exceeded the {effort} effort time budget "
+            f"({timeout_seconds // 60} min). The pipeline was stopped."
+        )
+        session["status"] = "failed"
+        session["error"] = msg
+        session["completed_at"] = _now()
+        await _persist(session_id, session)
+        await _publish(session_id, {"type": "error", "message": msg})
     except Exception as exc:
         logger.exception("thinking.run_session failed session=%s", session_id)
         session["status"] = "failed"
@@ -395,7 +452,26 @@ async def stream_events(
     _require_owner(snapshot, user)
 
     async def event_stream():
+        # P1.1: Race the local queue against a Redis pub/sub subscription
+        # so cross-replica events still reach this SSE client.
+        from collections import deque
         queue = _event_queue(session_id)
+        seen_ids: deque = deque(maxlen=200)
+
+        channel = _THINKING_EVENT_CHANNEL.format(session_id=session_id)
+        sub_iter = cache_manager.subscribe_events(channel).__aiter__()
+
+        async def _redis_pump():
+            try:
+                async for event in sub_iter:
+                    await queue.put(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+        pump_task = asyncio.create_task(_redis_pump())
+
         try:
             snap = await _load(session_id)
             if snap:
@@ -412,10 +488,21 @@ async def stream_events(
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
+                # Dedupe local + Redis paths.
+                eid = event.get("event_id")
+                if eid:
+                    if eid in seen_ids:
+                        continue
+                    seen_ids.append(eid)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") in {"done", "error"}:
                     break
         finally:
+            pump_task.cancel()
+            try:
+                await pump_task
+            except (asyncio.CancelledError, Exception):
+                pass
             _event_queues.pop(session_id, None)
 
     return StreamingResponse(

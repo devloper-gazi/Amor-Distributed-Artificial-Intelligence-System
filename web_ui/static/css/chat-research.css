@@ -1200,6 +1200,154 @@ body.dark-mode .panel-setting-select {
 .research-depth-control {
     position: relative;
     flex-shrink: 0;
+    /* Mode-aware visibility transition. The depth selector is research-only;
+       when the user switches to Thinking or Coding it slides+fades out, and
+       slides+fades back in when they return to Research. We animate
+       max-width so the surrounding flex layout reclaims the space cleanly
+       (display:none would skip the animation; visibility:hidden would leave
+       a gap).
+
+       OVERFLOW NOTE: while the chip is visible we MUST keep overflow:visible
+       so the absolutely-positioned dropdown menu (which sits above the
+       button) can render. We only clip during the collapse animation.
+       Achieved with `transition-delay` on the `overflow` property:
+         • visible → hidden: clip immediately (delay 0ms) so the shrinking
+           button doesn't overrun the parent.
+         • hidden → visible: wait for the slide-in to finish (delay 220ms)
+           before un-clipping, so the dropdown is only allowed to extend
+           past the parent once the chip itself is fully laid out. */
+    overflow: visible;
+    max-width: 240px;
+    opacity: 1;
+    transform: scale(1);
+    transition:
+        max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 180ms ease-out,
+        transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+        margin 180ms ease-out,
+        overflow 0ms linear 220ms;
+}
+
+/* Hidden state — applied by app.js when mode != 'research'. Toggling the
+   class re-runs the transition each way. */
+.research-depth-control.is-hidden {
+    max-width: 0;
+    opacity: 0;
+    transform: scale(0.85);
+    margin-right: 0;
+    pointer-events: none;
+    overflow: hidden;
+    /* Apply overflow change immediately so the collapsing button is
+       clipped during the animation. */
+    transition:
+        max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 180ms ease-out,
+        transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+        margin 180ms ease-out,
+        overflow 0ms linear 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .research-depth-control {
+        transition: none;
+    }
+}
+
+/* ==================== Depth selector — responsive ==================== */
+/*
+ * The depth chip lives inside the input bar, so it has to stay readable
+ * and not steal horizontal space from the textarea on small screens.
+ * Tweaks per breakpoint:
+ *   ≤768px tablet   : compact button (smaller paddings, shorter caret),
+ *                     dropdown stretches to fit visible content rather
+ *                     than overrunning a narrow viewport.
+ *   ≤480px phone    : icon-priority chip (count stays, caret hides);
+ *                     dropdown anchors to the left edge of the input
+ *                     area instead of the button so it never clips off-
+ *                     screen on small devices.
+ *   ≤360px tiny    : tighter still — ensures Send button is reachable.
+ *
+ * The is-hidden transition collapses max-width — keep the same property
+ * on every breakpoint so research→thinking→research animates cleanly
+ * regardless of viewport.
+ */
+
+@media (max-width: 768px) {
+    .research-depth-control {
+        max-width: 200px;
+    }
+    .research-depth-control.is-hidden {
+        max-width: 0;
+    }
+    .depth-toggle-btn {
+        height: 40px;
+        min-width: 50px;
+        padding: 0 10px;
+        gap: 6px;
+    }
+    .depth-count { font-size: 13px; }
+    .depth-menu {
+        /* Don't overflow tablet width; pin to viewport edge if needed. */
+        width: min(260px, calc(100vw - 32px));
+        left: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .research-depth-control {
+        max-width: 90px;
+    }
+    .research-depth-control.is-hidden {
+        max-width: 0;
+    }
+    .depth-toggle-btn {
+        height: 38px;
+        min-width: 44px;
+        padding: 0 8px;
+        gap: 4px;
+    }
+    .depth-icon i { font-size: 13px; }
+    .depth-count { font-size: 12px; font-weight: 600; }
+    .depth-caret { display: none; }      /* save space; tap to open is enough */
+    .depth-badge { width: 6px; height: 6px; right: -2px; top: -2px; }
+
+    .depth-menu {
+        /* Anchor to input area edge so the menu never extends past the
+           right edge of the screen on phones. */
+        width: min(260px, calc(100vw - 24px));
+        left: -8px;
+        bottom: calc(100% + 14px);
+    }
+    .depth-menu::after {
+        left: 22px; /* keep arrow pointing roughly at the toggle button */
+    }
+    .depth-option {
+        padding: 14px 14px;  /* slightly bigger tap target */
+    }
+    .depth-option .opt-title { font-size: 14px; }
+    .depth-option .opt-sub { font-size: 11px; }
+}
+
+@media (max-width: 360px) {
+    .research-depth-control {
+        max-width: 64px;
+    }
+    .depth-toggle-btn {
+        min-width: 40px;
+        padding: 0 6px;
+    }
+    .depth-count { font-size: 11px; }
+}
+
+/* Touch-only refinements: removes hover lift that can stick after tap on
+   touchscreens, and gives the active-press state a clearer feedback. */
+@media (hover: none) and (pointer: coarse) {
+    .depth-toggle-btn:hover {
+        transform: none;
+    }
+    .depth-toggle-btn:active {
+        transform: scale(0.97);
+    }
 }
 
 .depth-toggle-btn {

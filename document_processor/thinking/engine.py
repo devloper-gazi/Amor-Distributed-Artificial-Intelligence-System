@@ -45,7 +45,7 @@ PhaseStatus = Literal["pending", "in_progress", "completed", "failed", "skipped"
 # ─────────────────────────────────────────────────────────────────────────────
 
 _EFFORT_BUDGETS: Dict[str, Dict[str, int]] = {
-    "quick": {
+    "basic": {
         "analyze": 600,
         "understand": 600,
         "decompose": 500,
@@ -54,7 +54,7 @@ _EFFORT_BUDGETS: Dict[str, Dict[str, int]] = {
         "synthesize": 1400,
         "critique": 500,
     },
-    "standard": {
+    "medium": {
         "analyze": 800,
         "understand": 900,
         "decompose": 700,
@@ -72,7 +72,46 @@ _EFFORT_BUDGETS: Dict[str, Dict[str, int]] = {
         "synthesize": 4000,
         "critique": 1000,
     },
+    "expert": {
+        "analyze": 1200,
+        "understand": 1400,
+        "decompose": 1200,
+        "explore": 2400,
+        "evaluate": 1200,
+        "synthesize": 5000,
+        "critique": 1200,
+    },
+    "ultra": {
+        "analyze": 1500,
+        "understand": 1800,
+        "decompose": 1500,
+        "explore": 3200,
+        "evaluate": 1500,
+        "synthesize": 6500,
+        "critique": 1500,
+    },
 }
+
+# Legacy → canonical tier names. Keeps old clients + persisted snapshots
+# working after the rename.
+_EFFORT_ALIAS: Dict[str, str] = {
+    "quick": "basic",
+    "fast": "basic",
+    "standard": "medium",
+    "balanced": "medium",
+    "thorough": "deep",
+    "comprehensive": "expert",
+    "exhaustive": "ultra",
+}
+
+
+def _canonical_effort(effort: str) -> str:
+    """Resolve alias → canonical tier; fall back to 'medium' on anything unknown."""
+    if not effort:
+        return "medium"
+    key = str(effort).strip().lower()
+    key = _EFFORT_ALIAS.get(key, key)
+    return key if key in _EFFORT_BUDGETS else "medium"
 
 
 def _now() -> str:
@@ -172,7 +211,7 @@ class ThinkingEngine:
         prompt: str,
         clarifications: Dict[str, str],
         deliverable: DeliverableKind,
-        effort: Literal["quick", "standard", "deep"],
+        effort: Literal["basic", "medium", "deep", "expert", "ultra", "quick", "standard"],
         provider: Literal["local", "claude"],
         llm_call: LLMCall,
         on_event: Optional[EventCallback] = None,
@@ -180,11 +219,12 @@ class ThinkingEngine:
         self.prompt = prompt
         self.clarifications = clarifications or {}
         self.deliverable = deliverable
-        self.effort = effort
+        # Normalize aliases (quick/standard/…) to the canonical 5-tier names.
+        self.effort = _canonical_effort(effort)
         self.provider = provider
         self.llm_call = llm_call
         self._on_event = on_event or _noop_event
-        self._budgets = _EFFORT_BUDGETS.get(effort, _EFFORT_BUDGETS["standard"])
+        self._budgets = _EFFORT_BUDGETS[self.effort]
 
         self.phases: List[ThinkingPhase] = [
             ThinkingPhase("understand", "Understanding"),

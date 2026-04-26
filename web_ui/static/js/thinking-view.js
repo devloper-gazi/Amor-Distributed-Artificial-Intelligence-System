@@ -11,7 +11,16 @@
 (function () {
     'use strict';
 
-    const EFFORT_LABELS = { quick: 'Quick', standard: 'Standard', deep: 'Deep' };
+    const EFFORT_LABELS = {
+        basic: 'Basic',
+        medium: 'Medium',
+        deep: 'Deep',
+        expert: 'Expert',
+        ultra: 'Ultra',
+        // legacy aliases for older snapshots
+        quick: 'Basic',
+        standard: 'Medium',
+    };
     const COMPLEXITY_CHIP = {
         trivial: { label: 'Simple', dot: 'var(--mono-400, #7a7a7a)' },
         moderate: { label: 'Moderate', dot: '#6f9bd8' },
@@ -80,7 +89,7 @@
     }
 
     class ThinkingView {
-        constructor({ prompt, effort = 'standard', provider = 'local' } = {}) {
+        constructor({ prompt, effort = 'medium', provider = 'local' } = {}) {
             this.prompt = prompt || '';
             this.effort = effort;
             this.provider = provider;
@@ -129,7 +138,7 @@
 
         _paintChips() {
             const chips = [];
-            chips.push(`<span class="amor-chip"><i class="fas fa-gauge-high"></i>${EFFORT_LABELS[this.effort] || 'Standard'}</span>`);
+            chips.push(`<span class="amor-chip"><i class="fas fa-gauge-high"></i>${EFFORT_LABELS[this.effort] || 'Medium'}</span>`);
             chips.push(`<span class="amor-chip"><i class="fas fa-microchip"></i>${this.provider === 'claude' ? 'Claude API' : 'Local AI'}</span>`);
             if (this.analysis?.complexity) {
                 const c = COMPLEXITY_CHIP[this.analysis.complexity] || COMPLEXITY_CHIP.moderate;

@@ -133,9 +133,25 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+#
+# P2.1: `allow_origins=["*"]` combined with `allow_credentials=True` is
+# a CSRF foot-gun — any third-party site could make authenticated
+# requests using the user's cookies. Replaced the wildcard with an
+# environment-driven allowlist (defaults to localhost so dev works out
+# of the box). Set CORS_ALLOWED_ORIGINS to a comma-separated list of
+# origins in production.
+import os as _os
+_cors_origins = [
+    o.strip()
+    for o in _os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000",
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -155,6 +171,22 @@ async def root(request: Request):
     return templates.TemplateResponse(
         "index.html",
         {"request": request, "static_version": app.state.static_version},
+    )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """
+    Browsers auto-request /favicon.ico regardless of <link> tags in
+    HTML. Without this route every page load logged a 404 in the
+    container — noisy and easy to mistake for a real bug. Serve the
+    32×32 PNG (browsers accept PNG even on the .ico path) so the
+    request resolves and the noise goes away.
+    """
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        os.path.join(web_ui_path, "static", "img", "favicon-32.png"),
+        media_type="image/png",
     )
 
 

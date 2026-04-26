@@ -444,6 +444,78 @@ class CacheManager:
             logger.error("cache_health_check_failed", error=str(e))
             return False
 
+    # ─── P1.1: Pub/Sub for cross-replica event broadcasting ─────────────
+    #
+    # The app runs with `replicas: 2` in docker-compose. Browser requests
+    # are round-robined across them by nginx. Background tasks (research
+    # / thinking) only emit events to a per-process asyncio.Queue, so an
+    # SSE client connected to the wrong replica receives nothing.
+    #
+    # publish_event() fans out to a Redis channel; any replica can
+    # subscribe via subscribe_events() and forward to its local SSE
+    # streams. Each event carries an event_id so SSE clients can
+    # de-duplicate when both the local Queue and the Redis subscription
+    # deliver the same event.
+
+    async def publish_event(self, channel: str, event: Any) -> None:
+        """
+        Publish a JSON-encoded event to a Redis channel. Best-effort:
+        a Redis hiccup must not crash the background task.
+        """
+        if not self._connected:
+            try:
+                await self.connect()
+            except Exception:
+                return  # silently degrade — local queue still delivers
+        try:
+            payload = json.dumps(event)
+            await self.redis.publish(channel, payload)
+        except Exception as e:
+            logger.warning("cache_publish_failed", channel=channel, error=str(e))
+
+    async def subscribe_events(self, channel: str):
+        """
+        Async iterator yielding JSON-decoded events from a Redis channel.
+
+        Usage:
+            async for event in cache_manager.subscribe_events("amor:foo"):
+                ...
+
+        The caller is responsible for breaking the loop on disconnect.
+        On any Redis error the iterator silently terminates so the SSE
+        endpoint can fall back to the local queue without crashing.
+        """
+        if not self._connected:
+            try:
+                await self.connect()
+            except Exception:
+                return
+        pubsub = None
+        try:
+            pubsub = self.redis.pubsub()
+            await pubsub.subscribe(channel)
+            async for message in pubsub.listen():
+                if message is None:
+                    continue
+                if message.get("type") != "message":
+                    continue
+                data = message.get("data")
+                if not data:
+                    continue
+                try:
+                    yield json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            logger.warning("cache_subscribe_failed", channel=channel, error=str(e))
+        finally:
+            if pubsub is not None:
+                try:
+                    await pubsub.unsubscribe(channel)
+                    await pubsub.close()
+                except Exception:
+                    pass
+
 
 # Global cache instance
 cache_manager = CacheManager()

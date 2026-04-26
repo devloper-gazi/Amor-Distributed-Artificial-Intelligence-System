@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Amor brand logo. Uses the same Tokyo-Night-aligned palette as the
+  PNG favicon (web_ui/static/img/favicon-256.png) so the tab icon,
+  header chip, and welcome hero stay visually consistent.
+
+  The SVG path is hand-tuned (not text-rendered) so it doesn't
+  depend on font availability and renders identically on every
+  browser / OS. Two gradients give the "A" depth without leaving
+  a flat-fill look:
+
+    • cyan→azure vertical gradient on the bar
+    • subtle inner glow on the rounded-square background
+
+  The sparkle dot is positioned to match the favicon-256.png
+  composition (upper-right quadrant, ~22% inset).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Amor logo">
+  <defs>
+    <linearGradient id="amor-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2233"/>
+      <stop offset="1" stop-color="#13141d"/>
+    </linearGradient>
+    <linearGradient id="amor-a" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b3e6ff"/>
+      <stop offset="0.55" stop-color="#7dcfff"/>
+      <stop offset="1" stop-color="#5cb8f0"/>
+    </linearGradient>
+    <radialGradient id="amor-glow" cx="0.78" cy="0.24" r="0.22">
+      <stop offset="0"   stop-color="#bb9af7" stop-opacity="0.65"/>
+      <stop offset="0.6" stop-color="#bb9af7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded-square background. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#amor-bg)"/>
+  <!-- Soft purple bloom under the sparkle dot. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#amor-glow)"/>
+
+  <!-- Stylized "A" — geometric, slightly heavier on the left bar so
+       the eye reads it as a letter even at 16x16. -->
+  <path
+    d="M 60 200
+       L 116 60
+       L 140 60
+       L 196 200
+       L 168 200
+       L 156 168
+       L 100 168
+       L 88 200 Z
+       M 110 144
+       L 146 144
+       L 128 96 Z"
+    fill="url(#amor-a)"
+    fill-rule="evenodd"/>
+
+  <!-- Sparkle accent dot. -->
+  <circle cx="200" cy="62" r="11" fill="#bb9af7"/>
+  <!-- Outer halo for the dot — gives it a little depth. -->
+  <circle cx="200" cy="62" r="18" fill="#bb9af7" fill-opacity="0.18"/>
+</svg>

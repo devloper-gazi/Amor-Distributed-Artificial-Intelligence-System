@@ -19,6 +19,14 @@ services:
   # Main application
   app:
     build: .
+    # Install any new deps from host requirements.txt on startup so the
+    # bind-mounted source tree never drifts from what the image provides.
+    # Fast after first boot (pip uses wheel cache); zero-cost when nothing
+    # is new.
+    command:
+      - sh
+      - -c
+      - "pip install --quiet --root-user-action=ignore -r /app/requirements.txt && exec python -m document_processor.main"
     # NOTE: The app is exposed via the `gateway` service on port 8000.
     # If you want direct access as well, add a port mapping like "8001:8000".
     environment:
@@ -98,6 +106,25 @@ services:
       - ./data:/data/documents
       - ./models:/models:ro
       - lancedb-data:/data/vectors
+      # Bind-mount source tree so host edits are immediately live in both
+      # replicas — no `docker cp` + restart cycle, no drift between app-1/app-2,
+      # and nothing is lost when containers are recreated. Safe for dev;
+      # remove these two lines to ship a fully self-contained image.
+      - ./document_processor:/app/document_processor
+      - ./web_ui:/app/web_ui
+      - ./requirements.txt:/app/requirements.txt:ro
+
+    # P2.3: Healthcheck so a frozen worker (e.g. Ollama hang, deadlocked
+    # event loop) is detected and restarted by Docker rather than
+    # silently swallowing requests forever. The /health endpoint already
+    # exists in main.py; this just wires Docker's liveness probe to it.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
 
     networks:
       - docprocessor-network
@@ -131,9 +158,20 @@ services:
   # Redis
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    # P2.2: AOF + periodic RDB snapshot so sessions/tokens survive
+    # `docker compose down`. Without these flags + the named volume
+    # below, every restart wiped all auth tokens, research sessions,
+    # and translation cache.
+    command: >
+      redis-server
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --save 60 1
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     networks:
       - docprocessor-network
 
@@ -233,6 +271,7 @@ volumes:
   grafana-data:
   ollama-data:
   lancedb-data:
+  redis-data:  # P2.2 — durable Redis state across `docker compose down`
 
 networks:
   docprocessor-network:
