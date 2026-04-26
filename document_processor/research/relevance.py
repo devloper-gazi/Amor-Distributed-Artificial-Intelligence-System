@@ -220,10 +220,19 @@ def _domain_bonus(domain: str) -> float:
     return 0.0
 
 
-def _bad_page_penalty(text: str) -> float:
-    if not text:
+def _bad_page_penalty(text: str, title: str = "") -> float:
+    """
+    Cumulative penalty for known bad-page markers. Inspects the page
+    title (always full) AND the first 600 chars of the body — login
+    walls / 404 pages usually announce themselves in the head, but
+    sometimes ONLY in the title (e.g. "404 — Not Found" with a body
+    that starts with normal navigation text). Capped at 0.7 so even
+    a multi-marker page can still show a tiny residual score if the
+    rest of the signal is unusually strong.
+    """
+    if not text and not title:
         return 0.0
-    head = text[:600].lower()  # bad-page markers usually surface in first chunk
+    head = (title + "\n" + (text[:600] if text else "")).lower()
     total = 0.0
     for pattern, pen in _BAD_PAGE_MARKERS:
         if pattern.search(head):
@@ -315,15 +324,23 @@ def _score_one(
     )
 
     # Penalties
-    bad_pen = _bad_page_penalty(content)
+    bad_pen = _bad_page_penalty(content, title=title)
     dup_pen = 0.20 if (url and url in seen_urls) else 0.0
 
-    # Domain over-representation: the SECOND+ source from a domain
-    # whose share already exceeds the threshold takes a penalty.
+    # Domain over-representation: every source from a domain whose
+    # share of the corpus exceeds _DOMAIN_OVERREP_RATIO takes a small
+    # penalty. (Earlier comment claimed "SECOND+ source only" — that's
+    # NOT what the code does, and the current behaviour is the right
+    # one: penalising all of them lets a single high-quality source
+    # from a different domain leapfrog past a Wikipedia-only corpus
+    # in the post-cap sort.) The `>= 2` guard prevents penalising the
+    # only source from a domain that simply happens to be 100% of a
+    # tiny corpus.
     overrep_pen = 0.0
     if domain and domain_total > 0:
-        share = domain_overrep.get(domain, 0) / domain_total
-        if share > _DOMAIN_OVERREP_RATIO and domain_overrep.get(domain, 0) >= 2:
+        domain_n = domain_overrep.get(domain, 0)
+        share = domain_n / domain_total
+        if share > _DOMAIN_OVERREP_RATIO and domain_n >= 2:
             overrep_pen = 0.10
 
     final = max(0.0, min(1.0, base - bad_pen - dup_pen - overrep_pen))

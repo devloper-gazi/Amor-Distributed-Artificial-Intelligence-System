@@ -264,8 +264,62 @@ def test_domain_bonus_recognizes_wikipedia_without_www():
     assert _domain_bonus("") == 0
 
 
+def test_bad_page_penalty_catches_404_in_title_only():
+    """
+    11. Regression: bad-page detector originally only inspected the
+    first 600 chars of body. A page titled "404 — Not Found" with
+    a normal-looking body (e.g. "Search results for ...") slipped
+    through unscathed. Now the title is folded into the inspected
+    head so title-only signals also trigger the penalty.
+    """
+    from document_processor.research.relevance import _bad_page_penalty
+
+    # Title-only marker triggers penalty.
+    assert _bad_page_penalty("Some search results unrelated", title="404 — Not Found") > 0
+    assert _bad_page_penalty("Continue to your dashboard", title="Sign in to MyService") > 0
+    # Body-only still works (existing behaviour).
+    assert _bad_page_penalty("Page Not Found. The requested page does not exist.") > 0
+    # Clean page → zero penalty.
+    assert _bad_page_penalty(
+        "Photosynthesis converts light into chemical energy.",
+        title="Photosynthesis",
+    ) == 0
+    # Both empty → zero.
+    assert _bad_page_penalty("", title="") == 0
+
+
+def test_llm_cache_key_no_delimiter_collision():
+    """
+    12. Regression: previous cache-key composition was
+    f"{model}|{system or ''}|{prompt}|{max_tokens}|{temp}" — a `|`
+    inside `prompt` or `system` could compose to the same string as
+    a different (system, prompt) pair, returning a wrong-cache-hit.
+    The JSON-list serialization fix makes that impossible. This
+    test asserts two such pathologically-shaped (but distinct)
+    inputs yield DIFFERENT keys.
+    """
+    from document_processor.api.local_ai_routes_simple import _llm_cache_key
+
+    # Old impl: both produce "model|A|B|C|256|0.7" → collision.
+    # New impl: JSON list embeds string boundaries → distinct hashes.
+    k1 = _llm_cache_key(prompt="B|C", system="A",   max_tokens=256)
+    k2 = _llm_cache_key(prompt="C",   system="A|B", max_tokens=256)
+    assert k1 != k2, "cache key collision: prompt vs system boundary leaked"
+
+    # Same inputs → same key (determinism).
+    assert _llm_cache_key("hello", "you are helpful", 100) == \
+           _llm_cache_key("hello", "you are helpful", 100)
+
+    # Different max_tokens or system → different keys.
+    assert _llm_cache_key("hello", "sys", 100) != _llm_cache_key("hello", "sys", 200)
+    assert _llm_cache_key("hello", "sys-a", 100) != _llm_cache_key("hello", "sys-b", 100)
+
+    # Key always begins with the documented prefix.
+    assert _llm_cache_key("x", None, 1).startswith("llm:")
+
+
 def test_basic_tier_passes_through():
-    """10. tier=basic short-circuits to passthrough regardless of score."""
+    """13. tier=basic short-circuits to passthrough regardless of score."""
     rfilter = RelevanceFilter(config=RelevanceConfig(
         tier="basic", max_sources=8, min_score=0.99,  # impossible threshold
     ))

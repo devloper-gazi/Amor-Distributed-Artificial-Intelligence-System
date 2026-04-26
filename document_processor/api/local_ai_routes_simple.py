@@ -797,17 +797,38 @@ _LLM_CACHE_KEY_PREFIX = "llm:"
 _OLLAMA_TEMPERATURE = 0.7
 
 
+def _llm_cache_key(prompt: str, system: Optional[str], max_tokens: int) -> str:
+    """
+    Build a collision-free cache key from the call parameters.
+
+    NOTE: the previous implementation joined fields with `|` which is
+    silently ambiguous — a prompt containing `|` could compose to the
+    same string as a different (system, prompt) pair, returning a
+    wrong-cache-hit. Using a JSON list serialization makes the
+    boundaries unambiguous: every value's exact byte representation is
+    embedded, escaping included, so two distinct tuples can never
+    produce the same hash input.
+    """
+    import hashlib
+    import json
+
+    payload = json.dumps(
+        [OLLAMA_MODEL, system or "", prompt, int(max_tokens), float(_OLLAMA_TEMPERATURE)],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return _LLM_CACHE_KEY_PREFIX + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) -> Optional[str]:
     """Phase 5 (opt-in) — read a cached Ollama response if any. Returns None
     on miss or any error. Never raises."""
     try:
-        import hashlib
         from ..config.settings import settings as _settings
 
         if not getattr(_settings, "llm_response_cache_enabled", False):
             return None
-        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_OLLAMA_TEMPERATURE}"
-        key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
+        key = _llm_cache_key(prompt, system, max_tokens)
         payload = await cache_manager.get_json(key)
         if isinstance(payload, dict) and isinstance(payload.get("response"), str):
             return payload["response"]
@@ -819,13 +840,11 @@ async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) ->
 async def _llm_cache_set(prompt: str, system: Optional[str], max_tokens: int, response: str) -> None:
     """Phase 5 (opt-in) — store an Ollama response. Never raises."""
     try:
-        import hashlib
         from ..config.settings import settings as _settings
 
         if not getattr(_settings, "llm_response_cache_enabled", False) or not response:
             return
-        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_OLLAMA_TEMPERATURE}"
-        key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
+        key = _llm_cache_key(prompt, system, max_tokens)
         ttl = int(getattr(_settings, "llm_response_cache_ttl_seconds", 7 * 24 * 3600))
         await cache_manager.set_json(
             key,
