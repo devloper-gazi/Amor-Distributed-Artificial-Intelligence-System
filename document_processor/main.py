@@ -174,6 +174,22 @@ async def root(request: Request):
     )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """
+    Browsers auto-request /favicon.ico regardless of <link> tags in
+    HTML. Without this route every page load logged a 404 in the
+    container — noisy and easy to mistake for a real bug. Serve the
+    32×32 PNG (browsers accept PNG even on the .ico path) so the
+    request resolves and the noise goes away.
+    """
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        os.path.join(web_ui_path, "static", "img", "favicon-32.png"),
+        media_type="image/png",
+    )
+
+
 @app.get("/api")
 async def api_root():
     """API root endpoint."""
