@@ -49,8 +49,13 @@ class FakeSource:
 
 
 def _run(coro):
-    """Run an async coroutine to completion in a fresh event loop."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """
+    Run an async coroutine to completion in a fresh event loop.
+    asyncio.run() is the supported sync→async bridge in 3.10+ and
+    avoids the DeprecationWarning that asyncio.get_event_loop() now
+    emits when no loop is running (will become a hard error in 3.14).
+    """
+    return asyncio.run(coro)
 
 
 def _highly_relevant_source(qid: int = 1) -> FakeSource:
@@ -235,8 +240,32 @@ def test_works_without_sklearn(monkeypatch):
     assert result.selected_count >= 0  # smoke: just doesn't crash
 
 
+def test_domain_bonus_recognizes_wikipedia_without_www():
+    """
+    9. Regression: `lstrip("www.")` is a character-set strip, not a
+    prefix strip. With the buggy version, "wikipedia.org" was mangled
+    to "ikipedia.org" and the trust pattern never matched. This test
+    asserts the .wikipedia.org bonus actually fires for both the
+    bare and www-prefixed forms.
+    """
+    from document_processor.research.relevance import _domain_bonus
+
+    assert _domain_bonus("wikipedia.org") > 0
+    assert _domain_bonus("en.wikipedia.org") > 0
+    assert _domain_bonus("www.wikipedia.org") > 0
+    assert _domain_bonus("wikipedia.org") >= _domain_bonus("example.com")
+    # Other trusted domains should also work whether or not they're
+    # prefixed with www.
+    assert _domain_bonus("nasa.gov") > 0
+    assert _domain_bonus("www.nasa.gov") > 0
+    assert _domain_bonus("mit.edu") > 0
+    # Untrusted domain still gets zero.
+    assert _domain_bonus("example.com") == 0
+    assert _domain_bonus("") == 0
+
+
 def test_basic_tier_passes_through():
-    """8. tier=basic short-circuits to passthrough regardless of score."""
+    """10. tier=basic short-circuits to passthrough regardless of score."""
     rfilter = RelevanceFilter(config=RelevanceConfig(
         tier="basic", max_sources=8, min_score=0.99,  # impossible threshold
     ))

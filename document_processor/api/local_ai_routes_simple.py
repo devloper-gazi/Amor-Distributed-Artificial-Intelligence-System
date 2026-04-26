@@ -789,7 +789,12 @@ async def _ensure_ollama_ready() -> Dict[str, Any]:
 
 
 _LLM_CACHE_KEY_PREFIX = "llm:"
-_LLM_CACHE_TEMPERATURE = 0.7  # mirror the hardcoded value below
+# SINGLE source of truth for the temperature parameter, used both by
+# the actual /api/generate request body AND by the cache-key hash.
+# Hard-coding the value in two places (here vs. inline in the request
+# JSON) silently drifts the cache out of sync with the model output —
+# any future temperature change MUST come through this constant.
+_OLLAMA_TEMPERATURE = 0.7
 
 
 async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) -> Optional[str]:
@@ -801,7 +806,7 @@ async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) ->
 
         if not getattr(_settings, "llm_response_cache_enabled", False):
             return None
-        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_LLM_CACHE_TEMPERATURE}"
+        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_OLLAMA_TEMPERATURE}"
         key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
         payload = await cache_manager.get_json(key)
         if isinstance(payload, dict) and isinstance(payload.get("response"), str):
@@ -819,7 +824,7 @@ async def _llm_cache_set(prompt: str, system: Optional[str], max_tokens: int, re
 
         if not getattr(_settings, "llm_response_cache_enabled", False) or not response:
             return
-        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_LLM_CACHE_TEMPERATURE}"
+        key_src = f"{OLLAMA_MODEL}|{system or ''}|{prompt}|{max_tokens}|{_OLLAMA_TEMPERATURE}"
         key = _LLM_CACHE_KEY_PREFIX + hashlib.sha256(key_src.encode("utf-8")).hexdigest()
         ttl = int(getattr(_settings, "llm_response_cache_ttl_seconds", 7 * 24 * 3600))
         await cache_manager.set_json(
@@ -870,7 +875,7 @@ async def _call_ollama_uncached(
                     "stream": False,
                     "options": {
                         "num_predict": max_tokens,
-                        "temperature": 0.7,
+                        "temperature": _OLLAMA_TEMPERATURE,
                     }
                 }
             )
@@ -893,7 +898,7 @@ async def _call_ollama_uncached(
                             "stream": False,
                             "options": {
                                 "num_predict": max_tokens,
-                                "temperature": 0.7,
+                                "temperature": _OLLAMA_TEMPERATURE,
                             },
                         },
                     )

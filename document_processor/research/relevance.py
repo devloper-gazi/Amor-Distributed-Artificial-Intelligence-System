@@ -208,7 +208,12 @@ def _phrase_candidates(query: str, sub_questions: Iterable[str]) -> List[str]:
 def _domain_bonus(domain: str) -> float:
     if not domain:
         return 0.0
-    d = domain.lower().lstrip("www.")
+    d = domain.lower()
+    # NOTE: must use prefix slicing, NOT str.lstrip("www.") — lstrip strips
+    # any character in the argument set, so "wikipedia.org".lstrip("www.")
+    # silently mangles to "ikipedia.org" and the trust patterns never match.
+    if d.startswith("www."):
+        d = d[4:]
     for pattern, bonus in _TRUSTED_DOMAIN_PATTERNS:
         if pattern.search(d):
             return bonus
