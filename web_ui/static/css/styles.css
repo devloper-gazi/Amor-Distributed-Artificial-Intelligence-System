@@ -976,41 +976,11 @@ body {
     text-align: center;
 }
 
-.welcome-icon .icon-sparkle {
-    position: absolute;
-    font-size: 20px;
-    color: var(--accent-mono);
-    opacity: 0.8;
-    z-index: 1;
-}
-
-.welcome-icon .icon-sparkle-1 {
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    animation: sparkleRotate1 3s linear infinite;
-}
-
-.welcome-icon .icon-sparkle-2 {
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    animation: sparkleRotate2 3s linear infinite;
-}
-
-.welcome-icon .icon-sparkle-3 {
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    animation: sparkleRotate3 3s linear infinite;
-}
-
-.welcome-icon .icon-sparkle-4 {
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    animation: sparkleRotate4 3s linear infinite;
-}
+/* Orbiting fa-star sparkles + their sparkleRotate1..4 keyframes were
+   removed alongside the markup that used them — the new SVG logo
+   carries its own sparkle accent so the orbital rig was visual
+   noise. iconPulse is kept; it still drives the central logo's
+   gentle scale animation. */
 
 @keyframes iconPulse {
     0%, 100% {
@@ -1020,66 +990,6 @@ body {
     50% {
         transform: scale(1.1);
         opacity: 0.9;
-    }
-}
-
-@keyframes sparkleRotate1 {
-    0% {
-        transform: translateX(-50%) rotate(0deg) translateY(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateX(-50%) rotate(180deg) translateY(-10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateX(-50%) rotate(360deg) translateY(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate2 {
-    0% {
-        transform: translateY(-50%) rotate(0deg) translateX(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateY(-50%) rotate(180deg) translateX(10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateY(-50%) rotate(360deg) translateX(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate3 {
-    0% {
-        transform: translateX(-50%) rotate(0deg) translateY(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateX(-50%) rotate(180deg) translateY(10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateX(-50%) rotate(360deg) translateY(0);
-        opacity: 0.8;
-    }
-}
-
-@keyframes sparkleRotate4 {
-    0% {
-        transform: translateY(-50%) rotate(0deg) translateX(0);
-        opacity: 0.8;
-    }
-    50% {
-        transform: translateY(-50%) rotate(180deg) translateX(-10px);
-        opacity: 1;
-    }
-    100% {
-        transform: translateY(-50%) rotate(360deg) translateX(0);
-        opacity: 0.8;
     }
 }
 
