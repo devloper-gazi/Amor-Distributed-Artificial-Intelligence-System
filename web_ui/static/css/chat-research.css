@@ -1769,3 +1769,124 @@ body.dark-mode .depth-menu {
     0%, 100% { border-color: rgba(125, 207, 255, 0.7); }
     50%      { border-color: rgba(125, 207, 255, 0.25); }
 }
+
+/* ====================================================================
+   Restored markdown rendering — when chat history loads an older
+   research/thinking message that only persisted raw markdown (no
+   snapshot), loadMessages() runs it through __renderResearchMarkdown
+   and wraps the output in this container so it inherits the same
+   typography as a live result card.
+   ==================================================================== */
+.research-markdown-restored {
+    color: var(--mono-text-primary);
+    font-size: 14px;
+    line-height: 1.65;
+    word-break: break-word;
+}
+.research-markdown-restored h1,
+.research-markdown-restored h2,
+.research-markdown-restored h3,
+.research-markdown-restored h4,
+.research-markdown-restored h5,
+.research-markdown-restored h6 {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 24px 0 10px;
+    letter-spacing: -0.005em;
+}
+.research-markdown-restored h1 { font-size: 22px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--mono-border-light, rgba(255,255,255,0.08)); }
+.research-markdown-restored h2 { font-size: 18px; }
+.research-markdown-restored h3 { font-size: 15.5px;
+    color: rgba(125, 207, 255, 0.95); }
+.research-markdown-restored h4 { font-size: 14px;
+    color: var(--mono-text-secondary); }
+.research-markdown-restored p {
+    margin: 8px 0;
+}
+.research-markdown-restored strong {
+    color: var(--mono-text-primary);
+    font-weight: 600;
+}
+.research-markdown-restored em { color: var(--mono-text-secondary); }
+.research-markdown-restored ul,
+.research-markdown-restored ol {
+    margin: 8px 0 12px 22px;
+    padding: 0;
+}
+.research-markdown-restored li {
+    margin: 4px 0;
+    line-height: 1.55;
+}
+.research-markdown-restored ul li::marker { color: rgba(125, 207, 255, 0.7); }
+.research-markdown-restored ol li::marker {
+    color: rgba(187, 154, 247, 0.85);
+    font-weight: 600;
+}
+.research-markdown-restored blockquote {
+    border-left: 3px solid var(--mono-border-medium, rgba(125,207,255,0.3));
+    padding: 4px 14px;
+    margin: 12px 0;
+    color: var(--mono-text-secondary);
+    background: rgba(255,255,255,0.02);
+    border-radius: 0 6px 6px 0;
+}
+.research-markdown-restored code {
+    background: var(--mono-bg-tertiary, rgba(255,255,255,0.06));
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    color: rgba(187, 154, 247, 0.95);
+}
+.research-markdown-restored pre {
+    background: var(--mono-bg-tertiary, rgba(0,0,0,0.25));
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 10px 0;
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+}
+.research-markdown-restored pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--mono-text-primary);
+    font-size: 12.5px;
+}
+.research-markdown-restored a {
+    color: rgba(125, 207, 255, 1);
+    text-decoration: none;
+    border-bottom: 1px dashed rgba(125, 207, 255, 0.4);
+    transition: border-color 0.12s ease;
+}
+.research-markdown-restored a:hover {
+    border-bottom-color: rgba(125, 207, 255, 1);
+}
+/* Inline citation chips — match the live research card */
+.research-markdown-restored sup,
+.research-markdown-restored .citation,
+.research-markdown-restored a[href^="#cite-"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    margin: 0 1px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    background: rgba(125, 207, 255, 0.12);
+    color: rgba(125, 207, 255, 1);
+    border: 1px solid rgba(125, 207, 255, 0.35);
+    vertical-align: super;
+    text-decoration: none;
+}
+.research-markdown-restored hr {
+    border: none;
+    height: 1px;
+    background: var(--mono-border-light, rgba(255,255,255,0.08));
+    margin: 18px 0;
+}

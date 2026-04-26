@@ -1976,7 +1976,16 @@ class ChatController {
     loadMessages(messages) {
         this.clearMessages();
         messages.forEach(msg => {
-            if (msg.format === 'research' && msg.extras?.research && typeof ResearchView === 'function') {
+            // Try the rich card paths FIRST — `format` may have been written
+            // either as the canonical "research" / "thinking" or (for older
+            // rows from a previous backend version) as "text" / "html" with
+            // the snapshot still tucked into `extras`. Treat the presence
+            // of `extras.research` / `extras.thinking` as the real signal.
+            const looksLikeResearch =
+                (msg.format === 'research' || (msg.extras?.research?.report_markdown ||
+                    Array.isArray(msg.extras?.research?.phases))) &&
+                msg.extras?.research && typeof ResearchView === 'function';
+            if (looksLikeResearch) {
                 try {
                     const view = ResearchView.fromSnapshot(msg.extras.research);
                     this._mountResearchCard(view);
@@ -1985,7 +1994,12 @@ class ChatController {
                     console.warn('Failed to restore research snapshot:', e);
                 }
             }
-            if (msg.format === 'thinking' && msg.extras?.thinking && typeof ThinkingView === 'function') {
+
+            const looksLikeThinking =
+                (msg.format === 'thinking' || msg.extras?.thinking?.session ||
+                    msg.extras?.thinking?.deliverable_markdown) &&
+                msg.extras?.thinking && typeof ThinkingView === 'function';
+            if (looksLikeThinking) {
                 try {
                     const view = ThinkingView.fromSnapshot(msg.extras.thinking);
                     this._mountThinkingCard(view);
@@ -1994,6 +2008,29 @@ class ChatController {
                     console.warn('Failed to restore thinking snapshot:', e);
                 }
             }
+
+            // Defensive markdown rendering — when the only thing we have is
+            // raw markdown text in `content`, run it through the renderer
+            // exposed by research-view.js so headings / bold / lists / code
+            // come out properly instead of as literal "# ", "**", "[5]"
+            // characters in the chat. Falls back to plain escaped text if
+            // the renderer hasn't loaded yet.
+            const looksLikeMarkdown = (msg.format === 'markdown') ||
+                (typeof msg.content === 'string' &&
+                 /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/.test(msg.content || '')) ||
+                (typeof msg.content === 'string' && /\*\*[^*]+\*\*/.test(msg.content || ''));
+            if (msg.role === 'assistant' && looksLikeMarkdown &&
+                typeof window.__renderResearchMarkdown === 'function') {
+                try {
+                    const html = window.__renderResearchMarkdown(msg.content || '', new Set());
+                    this.addMessage(msg.role, `<div class="research-result"><div class="research-markdown-restored">${html}</div></div>`,
+                        msg.aiType, msg.extras || {});
+                    return;
+                } catch (e) {
+                    console.warn('Failed to render restored markdown:', e);
+                }
+            }
+
             this.addMessage(msg.role, msg.content, msg.aiType, msg.extras || {});
         });
         // Keep full message metadata so history restores properly.

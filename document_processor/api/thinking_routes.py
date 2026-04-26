@@ -498,19 +498,40 @@ async def _run_session(session_id: str) -> None:
                 prompt=session.get("prompt") or "",
                 idempotency_key=session.get("user_message_idempotency_key"),
             )
+            # Persist the FULL snapshot (matching ThinkingView.fromSnapshot
+            # shape) so reloading the chat re-mounts the rich timeline + the
+            # deliverable card instead of showing raw markdown literals.
+            # See the matching note in local_ai_routes_simple.py — this
+            # backend write and the frontend write share an idempotency key,
+            # so whichever lands first wins; both must be a complete
+            # snapshot for the chat history to look right either way.
+            provider_kind = session.get("provider") or "local"
+            session_payload = {
+                "session_id": session.get("session_id"),
+                "phases": session.get("phases", []),
+                "sub_questions": session.get("sub_questions", []),
+                "alternatives": session.get("alternatives", []),
+                "decision": session.get("decision"),
+                "critique": session.get("critique"),
+                "understanding": session.get("understanding"),
+                "deliverable_markdown": session.get("deliverable_markdown") or "",
+                "detected_deliverable": session.get("detected_deliverable", "auto"),
+                "status": session.get("status", "completed"),
+            }
             await persist_assistant_message(
                 chat_session_id=session.get("chat_session_id"),
                 user_id=session.get("user_id"),
                 client_id=None,
                 content=session.get("deliverable_markdown") or "",
-                ai_type="local-thinking" if session.get("provider") == "local" else "claude-thinking",
-                format="text",
+                ai_type="local-thinking" if provider_kind == "local" else "claude-thinking",
+                format="thinking",
                 extras={"thinking": {
-                    "phases": session.get("phases", []),
-                    "sub_questions": session.get("sub_questions", []),
-                    "alternatives": session.get("alternatives", []),
-                    "decision": session.get("decision"),
-                    "critique": session.get("critique"),
+                    "prompt": session.get("prompt") or "",
+                    "effort": session.get("effort", "medium"),
+                    "provider": provider_kind,
+                    "analysis": session.get("analysis"),
+                    "session": session_payload,
+                    "state": "done",
                 }},
                 idempotency_key=session.get("assistant_message_idempotency_key"),
             )

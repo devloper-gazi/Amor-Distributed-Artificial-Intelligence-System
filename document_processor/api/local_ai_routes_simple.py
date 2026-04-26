@@ -1886,19 +1886,36 @@ async def execute_advanced_research(
             prompt=session.get("topic") or "",
             idempotency_key=session.get("user_message_idempotency_key"),
         )
+        # Persist a FULL snapshot matching the shape ResearchView.fromSnapshot
+        # consumes on the frontend. Prior versions used format="text" with a
+        # bare markdown string in `content` — that "won" the
+        # idempotency-keyed upsert race against the frontend's richer
+        # snapshot, so reloading the chat showed raw markdown literals
+        # ("# Heading", "**bold**", "[5]") instead of the rendered card.
+        # Persisting format="research" + the complete snapshot collapses
+        # both writers to the same row and lets loadMessages() restore
+        # the full ResearchView.
         await persist_assistant_message(
             chat_session_id=session.get("chat_session_id"),
             user_id=session.get("user_id"),
             client_id=None,
+            # `content` doubles as a fallback if some future client lacks
+            # the ResearchView component — give it the full markdown.
             content=session.get("report_markdown") or "",
             ai_type="local-ai-research",
-            format="text",
+            format="research",
             extras={"research": {
+                "query": session.get("topic") or "",
+                "depth": session.get("depth", "medium"),
+                "phases": session.get("phases", []),
+                "sub_questions": session.get("sub_questions", []),
                 "citations": session.get("citations", []),
                 "sources": session.get("sources", []),
+                "report_markdown": session.get("report_markdown") or "",
+                "summary": session.get("summary") or "",
                 "confidence": session.get("confidence"),
-                "depth": session.get("depth"),
-                "summary": session.get("summary"),
+                "translated": session.get("translated", False),
+                "live_sources": session.get("live_sources", []),
             }},
             idempotency_key=session.get("assistant_message_idempotency_key"),
         )
