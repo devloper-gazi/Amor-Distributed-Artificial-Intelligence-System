@@ -116,7 +116,20 @@
             await attemptRefresh();
         }
         const doFetch = async () => {
-            const headers = Object.assign({}, init.headers || {}, authHeaders());
+            // Merge BOTH X-Client-Id (from getChatHeaders) AND Authorization
+            // (from authHeaders). The legacy authFetch only added the JWT,
+            // which made every chat-store route 400-out with
+            // "Missing X-Client-Id header" — that broke auto-title,
+            // query-records, active-query, /messages, etc. Caller-supplied
+            // headers win last so explicit Content-Type etc. is preserved.
+            const chatHdrs = (typeof window.getChatHeaders === 'function')
+                ? window.getChatHeaders() : {};
+            const headers = Object.assign(
+                {},
+                chatHdrs,
+                authHeaders(),
+                init.headers || {},
+            );
             return fetch(path, { credentials: 'include', ...init, headers });
         };
         let res = await doFetch();

@@ -2085,6 +2085,11 @@ async def get_research_status(
         "phases": session.get("phases", []),
         "sub_questions": session.get("sub_questions", []),
         "live_sources": session.get("live_sources", []),
+        # The original prompt + depth — needed by the resume-from-reload
+        # path so the research card mounts with a real title instead of
+        # the legacy "(restored)" placeholder.
+        "topic": session.get("topic"),
+        "depth": session.get("depth", "standard"),
     }
 
     # Include result if completed

@@ -32,6 +32,13 @@
                 <span class="logo-text">Amor</span>
             </div>
         </div>
+        <!-- UX polish — topbar mirrors the active chat name so the user
+             always knows which chat they are in. Auto-title fills it; the
+             sidebar selection updates it via app.js. -->
+        <div class="top-bar-current" id="topBarCurrent" hidden>
+            <span class="top-bar-mode-dot" id="topBarModeDot" aria-hidden="true"></span>
+            <span class="top-bar-chat-title" id="chatTitle" data-chat-title>New Chat</span>
+        </div>
     </header>
 
     <!-- Sidebar Backdrop -->

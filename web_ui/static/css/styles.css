@@ -1640,3 +1640,154 @@ body {
     white-space: nowrap;
     border-width: 0;
 }
+
+/* ==================== UX Polish — Sidebar + Topbar (2026-04) ==================== */
+
+/* --- Topbar current-chat indicator ----------------------------------- */
+.top-bar-current {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--mono-bg-secondary, rgba(255,255,255,0.04));
+    border: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+    font-size: 12.5px;
+    color: var(--mono-text-secondary);
+    max-width: min(60vw, 480px);
+    pointer-events: none; /* purely informational */
+}
+.top-bar-current[hidden] { display: none; }
+.top-bar-chat-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    color: var(--mono-text-primary);
+    font-weight: 500;
+    letter-spacing: 0.005em;
+}
+.top-bar-mode-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--mono-text-tertiary);
+    box-shadow: 0 0 0 0 currentColor;
+}
+.top-bar-mode-dot.mode-research  { background: #7dcfff; box-shadow: 0 0 6px rgba(125,207,255,0.5); }
+.top-bar-mode-dot.mode-thinking  { background: #bb9af7; box-shadow: 0 0 6px rgba(187,154,247,0.5); }
+.top-bar-mode-dot.mode-coding    { background: #9ece6a; box-shadow: 0 0 6px rgba(158,206,106,0.45); }
+@media (max-width: 720px) { .top-bar-current { display: none; } }
+
+/* --- Sidebar history-item polish ------------------------------------- */
+.history-item {
+    position: relative;
+    padding-left: calc(var(--space-3) + 4px);
+}
+/* Mode-tinted accent rail on the left edge */
+.history-item-rail {
+    position: absolute;
+    left: 6px;
+    top: 25%;
+    bottom: 25%;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 0.18s ease;
+}
+.history-item.mode-research  .history-item-rail { background: rgba(125, 207, 255, 0.5); }
+.history-item.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 0.5); }
+.history-item.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 0.45); }
+.history-item.active .history-item-rail { top: 12%; bottom: 12%; }
+.history-item.active.mode-research  .history-item-rail { background: rgba(125, 207, 255, 1); }
+.history-item.active.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 1); }
+.history-item.active.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 1); }
+
+/* Color-coded mode pill */
+.mode-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    line-height: 1;
+}
+.mode-pill-research {
+    color: #7dcfff;
+    background: rgba(125, 207, 255, 0.1);
+    border-color: rgba(125, 207, 255, 0.35);
+}
+.mode-pill-thinking {
+    color: #bb9af7;
+    background: rgba(187, 154, 247, 0.1);
+    border-color: rgba(187, 154, 247, 0.35);
+}
+.mode-pill-coding {
+    color: #9ece6a;
+    background: rgba(158, 206, 106, 0.1);
+    border-color: rgba(158, 206, 106, 0.35);
+}
+
+/* Ghost / placeholder title — replaces the loud "Untitled Chat" string */
+.history-item-title-ghost {
+    display: inline-block;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+    font-weight: 400;
+    opacity: 0.85;
+    position: relative;
+    overflow: hidden;
+}
+.history-item-title-ghost::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(255,255,255,0.06),
+        transparent);
+    transform: translateX(-100%);
+    animation: ghostShimmer 2.4s ease-in-out infinite;
+}
+@keyframes ghostShimmer {
+    0%   { transform: translateX(-100%); }
+    60%  { transform: translateX(100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Cleaner sub-meta layout: pill first, date second */
+.history-item-sub {
+    gap: 8px;
+    align-items: center;
+}
+.history-item-date {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Tighter actions button — less visual weight when not hovered */
+.history-item-actions {
+    background-color: transparent;
+    color: var(--mono-text-tertiary);
+    opacity: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.history-item:hover .history-item-actions,
+.history-item.active .history-item-actions {
+    opacity: 0.8;
+    background-color: var(--mono-bg-hover, rgba(255,255,255,0.06));
+}
+.history-item-actions:hover { opacity: 1 !important; transform: none; }

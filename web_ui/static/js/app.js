@@ -535,15 +535,27 @@ async function renderChatHistory() {
         items.forEach(session => {
             const isActive = session.id === state.currentSessionId;
             const modeLabel = formatModeShort(session.mode);
+            const modeKey = (session.mode || '').toLowerCase();
             const isPinned = !!session.pinned;
             const pinnedIcon = isPinned ? '<i class="fas fa-thumbtack pinned-icon"></i>' : '';
+            // UX polish — empty/default titles render as a soft skeleton
+            // shimmer + ghost text rather than the loud literal "Untitled
+            // Chat" string. As soon as the first message lands the
+            // optimistic auto-title swaps it out.
+            const rawTitle = session.title || '';
+            const isPlaceholderTitle = !rawTitle ||
+                rawTitle === 'Untitled Chat' || rawTitle === 'New Chat';
+            const titleHtml = isPlaceholderTitle
+                ? `<span class="history-item-title-ghost">New chat…</span>`
+                : escapeHtml(rawTitle);
             html += `
-                <div class="history-item ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''}" data-session-id="${session.id}" data-session-mode="${session.mode}">
+                <div class="history-item mode-${modeKey} ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''}" data-session-id="${session.id}" data-session-mode="${session.mode}">
+                    <span class="history-item-rail" aria-hidden="true"></span>
                     <div class="history-item-content">
-                        <div class="history-item-title">${pinnedIcon}${escapeHtml(session.title || 'Untitled Chat')}</div>
+                        <div class="history-item-title" title="${escapeHtml(rawTitle || 'New chat')}">${pinnedIcon}${titleHtml}</div>
                         <div class="history-item-sub">
+                            <span class="history-item-mode mode-pill mode-pill-${modeKey}" aria-label="${modeKey}">${modeLabel}</span>
                             <span class="history-item-date">${formatTime(session.updatedAt)}</span>
-                            <span class="history-item-mode">${modeLabel}</span>
                         </div>
                     </div>
                     <button class="history-item-actions" type="button" aria-label="Chat actions" data-session-id="${session.id}">
@@ -557,7 +569,38 @@ async function renderChatHistory() {
     historyList.innerHTML = html;
     renderFoldersList();
     renderHistoryControls();
+    // Reflect the active session in the topbar.
+    updateTopBarFromActiveSession();
 }
+
+/**
+ * UX polish — keep the topbar showing the active chat's title + mode
+ * accent dot. Called after every renderChatHistory() and on session
+ * load so it stays in sync with the sidebar.
+ */
+function updateTopBarFromActiveSession() {
+    const wrap = document.getElementById('topBarCurrent');
+    const titleEl = document.getElementById('chatTitle');
+    const dotEl = document.getElementById('topBarModeDot');
+    if (!wrap || !titleEl) return;
+    const sid = state.currentSessionId;
+    if (!sid) {
+        wrap.hidden = true;
+        try { document.title = 'Amor'; } catch (_) {}
+        return;
+    }
+    const session = state._historyIndex?.get?.(sid);
+    const title = session?.title || 'New chat';
+    const mode = (session?.mode || '').toLowerCase();
+    wrap.hidden = false;
+    titleEl.textContent = title;
+    if (dotEl) {
+        dotEl.className = 'top-bar-mode-dot';
+        if (mode) dotEl.classList.add(`mode-${mode}`);
+    }
+    try { document.title = `${title} — Amor`; } catch (_) {}
+}
+window.updateTopBarFromActiveSession = updateTopBarFromActiveSession;
 
 async function loadSession(sessionId) {
     console.log(`📖 Loading session: ${sessionId}`);
@@ -577,6 +620,25 @@ async function loadSession(sessionId) {
 
     if (window.chatController && session.messages) {
         window.chatController.loadMessages(session.messages);
+    }
+
+    // Keep the topbar in sync with the freshly-loaded chat. The session
+    // index may not have this id yet (deep-link), so fall back to the
+    // server payload directly.
+    try {
+        const idx = state._historyIndex;
+        if (idx && !idx.has(sessionId)) {
+            idx.set(sessionId, {
+                id: session.id, mode: session.mode, title: session.title,
+                createdAt: parseServerDate(session.created_at),
+                updatedAt: parseServerDate(session.updated_at),
+                archived: !!session.archived, folderId: session.folder_id || null,
+                pinned: !!session.pinned,
+            });
+        }
+    } catch (_) {}
+    if (typeof updateTopBarFromActiveSession === 'function') {
+        updateTopBarFromActiveSession();
     }
 }
 

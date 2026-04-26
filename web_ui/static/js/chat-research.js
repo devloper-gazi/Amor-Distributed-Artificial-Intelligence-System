@@ -406,7 +406,10 @@ class ChatController {
                 console.warn('resume-research: ResearchView not loaded yet');
                 return;
             }
-            const view = new ResearchView(status.topic || '(restored)', status.depth || 'medium');
+            // Real query text from the running session, with a graceful
+            // fallback that no longer shows the awkward "(restored)" tag.
+            const restoredTopic = status.topic || status.query || 'Resumed research';
+            const view = new ResearchView(restoredTopic, status.depth || 'medium');
             this._mountResearchCard(view);
             // Seed from snapshot before live events kick in.
             try { view.handleEvent({ type: 'snapshot', ...status }); } catch (_) {}
@@ -547,11 +550,57 @@ class ChatController {
     }
 
     /**
-     * Phase B — fire-and-forget auto-title call. Doesn't block the AI
-     * request; the sidebar updates next time it re-renders.
+     * Predict the title the server will pick. Mirrors the Python helper
+     * `_generate_title_from_query` so the optimistic update lines up with
+     * what eventually persists in Mongo.
+     */
+    _predictTitle(query, maxChars = 60) {
+        let text = String(query || '').replace(/<[^>]+>/g, '');
+        text = text.replace(/[*_`#~>\[\]]+/g, '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'New Chat';
+        if (text.length <= maxChars) return text[0].toUpperCase() + text.slice(1);
+        let cut = text.slice(0, maxChars);
+        const lastSpace = cut.lastIndexOf(' ');
+        if (lastSpace > maxChars * 0.66) cut = cut.slice(0, lastSpace);
+        return (cut[0].toUpperCase() + cut.slice(1)).replace(/[.,;:]+$/, '') + '…';
+    }
+
+    /**
+     * Phase B + UX polish — auto-title with OPTIMISTIC client-side update.
+     *
+     * We immediately render a predicted title in the sidebar (matching the
+     * server's algorithm) so the user sees their query reflected the moment
+     * they hit Send — no waiting on a round-trip. The server response then
+     * confirms / corrects the prediction; if the server skipped the update
+     * (user already renamed) the cached state still wins.
      */
     _autoTitleSession(sessionId, prompt) {
         if (!sessionId || !prompt) return;
+        const predicted = this._predictTitle(prompt);
+
+        // Optimistic local update — patch the in-memory session list so the
+        // next render shows the new title. Falls back to a full re-render
+        // when the in-memory index isn't there yet.
+        try {
+            const idx = window.appState?._historyIndex;
+            const session = idx?.get?.(sessionId);
+            if (session && (!session.title ||
+                session.title === 'Untitled Chat' ||
+                session.title === 'New Chat')) {
+                session.title = predicted;
+            }
+            if (typeof window.renderChatHistory === 'function') {
+                window.renderChatHistory().catch(() => {});
+            }
+            // Topbar title (current chat name shown above the chat area).
+            const topTitle = document.getElementById('chatTitle')
+                || document.querySelector('[data-chat-title]');
+            if (topTitle) topTitle.textContent = predicted;
+            // Browser tab title — secondary signal that something useful
+            // is in flight.
+            try { document.title = `${predicted} — Amor`; } catch (_) {}
+        } catch (_) {}
+
         this._authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-title`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -559,10 +608,17 @@ class ChatController {
         }).then(async (resp) => {
             if (!resp.ok) return;
             const data = await resp.json();
-            if (data.updated && typeof window.renderChatHistory === 'function') {
-                // Optimistic re-render so the sidebar reflects the
-                // new title immediately.
+            // Reconcile with the server's chosen title. If the server
+            // skipped (user-renamed), our optimistic update is wrong —
+            // the next renderChatHistory() will pull the canonical value.
+            if (typeof window.renderChatHistory === 'function') {
                 try { window.renderChatHistory(); } catch (_) {}
+            }
+            if (data.title) {
+                const topTitle = document.getElementById('chatTitle')
+                    || document.querySelector('[data-chat-title]');
+                if (topTitle) topTitle.textContent = data.title;
+                try { document.title = `${data.title} — Amor`; } catch (_) {}
             }
         }).catch(() => { /* best-effort */ });
     }
