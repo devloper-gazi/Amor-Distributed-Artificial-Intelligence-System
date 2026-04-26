@@ -50,6 +50,14 @@ def _dt_utc(dt: datetime) -> datetime:
 class SessionCreateRequest(BaseModel):
     mode: str = Field(..., description="research | thinking | coding")
     title: Optional[str] = Field(None, description="Optional session title")
+    # Phase B1 — client-supplied UUID4 (or any unique string ≤64 chars)
+    # so a double-submit during the first message cannot create two
+    # MongoDB sessions. Server upserts on this key; second call returns
+    # the same session_id as the first.
+    idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Optional dedupe key — POST safe to retry under network loss",
+    )
 
 
 class SessionUpdateRequest(BaseModel):
@@ -66,6 +74,14 @@ class MessageAppendRequest(BaseModel):
     format: str = Field("text", description="text | html")
     aiType: Optional[str] = Field(None, description="claude | local-ai | etc")
     extras: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    # Phase C1 — defense-in-depth dedupe. Both the frontend (after the
+    # AI response arrives) AND the AI handler (before returning) write
+    # this message; the unique sparse index on chat_messages.
+    # idempotency_key collapses identical writes to one row.
+    idempotency_key: Optional[str] = Field(
+        None, max_length=64,
+        description="Optional dedupe key — POST safe to retry",
+    )
 
 
 class SessionSummary(BaseModel):
@@ -109,6 +125,7 @@ async def create_session(
         user_id=user.id,
         mode=mode,
         title=request.title,
+        idempotency_key=request.idempotency_key,
     )
 
     return SessionDetailResponse(
@@ -265,6 +282,7 @@ async def append_message(
             format=fmt,
             ai_type=request.aiType,
             extras=request.extras or {},
+            idempotency_key=request.idempotency_key,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -273,6 +291,69 @@ async def append_message(
         raise HTTPException(status_code=500, detail="Failed to append message")
 
     return {"ok": True, "message_id": message_id}
+
+
+# ── Phase B3 — auto-title from first query ──────────────────────────
+
+
+class AutoTitleRequest(BaseModel):
+    """Body for POST /api/sessions/{sid}/auto-title."""
+    query: str = Field(..., max_length=4000)
+
+
+class AutoTitleResponse(BaseModel):
+    title: str
+    updated: bool
+
+
+@router.post("/{session_id}/auto-title", response_model=AutoTitleResponse)
+async def auto_title(
+    session_id: str,
+    request: AutoTitleRequest,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """
+    Generate a smart title from the first query and persist it ONLY
+    if the existing title is still a default placeholder. This lets the
+    frontend fire-and-forget an auto-title call right after the user
+    submits, without overwriting a title the user has manually renamed.
+    """
+    from ..infrastructure.chat_store import _generate_title_from_query
+
+    client_id = _require_client_id(x_client_id)
+    new_title = _generate_title_from_query(request.query)
+
+    try:
+        # Read the current session to see if we should update.
+        db = await chat_store._db()  # noqa: SLF001
+        session = await db["chat_sessions"].find_one({"_id": session_id})
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        # Ownership check matching the rest of this module.
+        if user.id:
+            if session.get("user_id") != user.id:
+                raise HTTPException(status_code=404, detail="Session not found")
+        else:
+            if session.get("client_id") != client_id:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+        existing = session.get("title") or "Untitled Chat"
+        if existing in {"Untitled Chat", "New Chat"}:
+            await chat_store.update_session(
+                client_id=client_id,
+                session_id=session_id,
+                user_id=user.id,
+                title=new_title,
+            )
+            return AutoTitleResponse(title=new_title, updated=True)
+        # User-renamed (or already auto-titled) — don't overwrite.
+        return AutoTitleResponse(title=existing, updated=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("auto_title_failed", session_id=session_id, error=str(exc))
+        raise HTTPException(status_code=500, detail="Auto-title failed")
 
 
 @router.patch("/{session_id}")

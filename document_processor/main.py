@@ -43,6 +43,7 @@ except ImportError:
     logger.warning("Local AI routes not available")
 
 from .api.chat_sessions_routes import router as chat_sessions_router
+from .api.query_record_routes import router as query_record_router  # Phase B4
 from .api.chat_folders_routes import router as chat_folders_router
 from .api.auth_routes import router as auth_router
 from .auth.service import auth_service
@@ -226,6 +227,11 @@ if THINKING_AVAILABLE:
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
 logger.info("Chat sessions routes included")
+
+# Query records — durable bridge between ephemeral pipeline state and
+# permanent chat history (Phase B4 of fancy-swinging-karp.md).
+app.include_router(query_record_router)
+logger.info("Query record routes included")
 
 # Chat folders persistence (MongoDB)
 app.include_router(chat_folders_router)

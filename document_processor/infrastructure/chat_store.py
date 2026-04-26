@@ -248,7 +248,18 @@ class ChatStore:
         title: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> ChatSession:
+        """
+        Create a chat session.
+
+        When ``idempotency_key`` is supplied, this is an upsert keyed on
+        the unique sparse ``idempotency_key`` index — two concurrent
+        creates with the same key collapse to a single document, fixing
+        the sub-100 ms double-submit race that produced ghost
+        ``Untitled Chat`` rows. Without a key the call falls through to
+        the original `insert_one` path (back-compat for legacy callers).
+        """
         await self.ensure_indexes()
         db = await self._db()
         sessions = db["chat_sessions"]
@@ -256,6 +267,44 @@ class ChatStore:
         now = _utcnow()
         sid = session_id or _new_session_id()
 
+        if idempotency_key:
+            from pymongo import ReturnDocument
+            insert_doc = {
+                "_id": sid,
+                "client_id": client_id,
+                "user_id": user_id,
+                "mode": mode,
+                "title": title or "Untitled Chat",
+                "created_at": now,
+                "updated_at": now,
+                "archived": False,
+                "folder_id": None,
+                "pinned": False,
+                "idempotency_key": idempotency_key,
+            }
+            doc = await _write_with_retry(
+                lambda: sessions.find_one_and_update(
+                    {"idempotency_key": idempotency_key},
+                    {"$setOnInsert": insert_doc},
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                ),
+                op_name="session_upsert",
+            )
+            return ChatSession(
+                id=doc["_id"],
+                client_id=doc["client_id"],
+                user_id=doc.get("user_id"),
+                mode=doc["mode"],
+                title=doc["title"],
+                created_at=doc["created_at"],
+                updated_at=doc["updated_at"],
+                archived=bool(doc.get("archived", False)),
+                folder_id=doc.get("folder_id"),
+                pinned=bool(doc.get("pinned", False)),
+            )
+
+        # Legacy path — no idempotency, plain insert.
         doc = {
             "_id": sid,
             "client_id": client_id,
@@ -268,8 +317,10 @@ class ChatStore:
             "folder_id": None,
             "pinned": False,
         }
-
-        await sessions.insert_one(doc)
+        await _write_with_retry(
+            lambda: sessions.insert_one(doc),
+            op_name="session_insert",
+        )
 
         return ChatSession(
             id=sid,
@@ -451,7 +502,21 @@ class ChatStore:
         ai_type: Optional[str] = None,
         extras: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> str:
+        """
+        Append a message to a chat session.
+
+        When `idempotency_key` is supplied, this is an upsert keyed on
+        the unique sparse index `chat_messages.idempotency_key`. Both
+        the frontend (after the AI returns) and the backend AI handlers
+        (Phase C1) write the SAME logical message with the SAME key —
+        the second write becomes a no-op, defending against double
+        persistence under network retry or simultaneous client/server
+        writes.
+
+        Returns the canonical message id either way.
+        """
         await self.ensure_indexes()
         db = await self._db()
         sessions = db["chat_sessions"]
@@ -469,27 +534,67 @@ class ChatStore:
                 raise KeyError("session_not_found")
 
         now = _utcnow()
-        msg_doc = {
-            "session_id": session_id,
-            "role": role,
-            "content": content,
-            "format": format,
-            "ai_type": ai_type,
-            "extras": extras or {},
-            "created_at": now,
-        }
-        inserted = await messages.insert_one(msg_doc)
+        message_id_str: str
 
-        # Update session updated_at and auto-title on first user message
+        if idempotency_key:
+            # Upsert path. We use the idempotency_key both to dedupe and
+            # as the natural primary key for the row (str), which keeps
+            # the API-returned `message_id` stable across retries.
+            from pymongo import ReturnDocument
+            insert_doc = {
+                "_id": idempotency_key,
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "format": format,
+                "ai_type": ai_type,
+                "extras": extras or {},
+                "created_at": now,
+                "idempotency_key": idempotency_key,
+            }
+            doc = await _write_with_retry(
+                lambda: messages.find_one_and_update(
+                    {"idempotency_key": idempotency_key},
+                    {"$setOnInsert": insert_doc},
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                ),
+                op_name="message_upsert",
+            )
+            message_id_str = str(doc["_id"])
+        else:
+            # Legacy path — plain insert.
+            msg_doc = {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "format": format,
+                "ai_type": ai_type,
+                "extras": extras or {},
+                "created_at": now,
+            }
+            inserted = await _write_with_retry(
+                lambda: messages.insert_one(msg_doc),
+                op_name="message_insert",
+            )
+            message_id_str = str(inserted.inserted_id)
+
+        # Update session updated_at + auto-title on first user message.
+        # Phase B2: route through `_generate_title_from_query` so the
+        # sidebar gets a clean, word-boundary, markdown-stripped title
+        # instead of the previous mid-word raw 50-char cut.
         update: Dict[str, Any] = {"updated_at": now}
         if role == "user":
             existing_title = session.get("title") or "Untitled Chat"
-            if existing_title == "Untitled Chat" and content.strip():
-                update["title"] = (content.strip()[:50] + ("..." if len(content.strip()) > 50 else ""))
+            if existing_title in {"Untitled Chat", "New Chat"} and content.strip():
+                update["title"] = _generate_title_from_query(content)
 
-        await sessions.update_one({"_id": session_id}, {"$set": update})
+        await _write_with_retry(
+            lambda: sessions.update_one({"_id": session_id}, {"$set": update}),
+            op_name="session_touch",
+        )
 
-        return str(inserted.inserted_id)
+        return message_id_str
 
     async def update_session(
         self,
