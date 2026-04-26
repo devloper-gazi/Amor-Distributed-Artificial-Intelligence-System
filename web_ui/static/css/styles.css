@@ -107,6 +107,18 @@ body {
     font-size: 20px;
 }
 
+/* Brand SVG mark in the header. Sized to the same optical weight as
+   the previous Font Awesome icon (20px line-height ≈ 22px square)
+   so the surrounding flex layout stays untouched. */
+.logo .logo-mark {
+    width: 24px;
+    height: 24px;
+    display: block;
+    flex-shrink: 0;
+    /* The PNG/SVG already carries its own background so we don't
+       need filter() tricks for dark/light theme adaptation. */
+}
+
 /* Mode Selector */
 .mode-selector-container {
     position: relative;
@@ -942,6 +954,26 @@ body {
     position: relative;
     z-index: 2;
     animation: iconPulse 2s ease-in-out infinite;
+}
+
+/* SVG variant of the welcome center mark. Uses an explicit pixel
+   size (font-size doesn't apply to <img>) and inherits the same
+   pulse animation so the visual rhythm with the orbiting sparkles
+   is preserved. The size is tuned to fill the 120px parent without
+   touching the orbiting fa-star sparkles' positions. */
+.welcome-icon .icon-main-svg {
+    width: 84px;
+    height: 84px;
+    display: block;
+    /* Font-size styling above doesn't matter for <img>, but we keep
+       z-index, position, and animation in the original .icon-main
+       rule and let them cascade through this more-specific selector. */
+}
+
+/* Touch the cards' generous spacing so the larger logo doesn't
+   feel cramped. */
+.welcome-header {
+    text-align: center;
 }
 
 .welcome-icon .icon-sparkle {
