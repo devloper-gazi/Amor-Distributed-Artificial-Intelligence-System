@@ -5,7 +5,7 @@ Provides REST API for document processing and monitoring.
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
@@ -72,12 +72,41 @@ except ImportError:
     logger.warning("Translation routes not available")
 
 
+# Phase D4 — periodic SSE event-queue sweeper. Drops queues whose
+# backing session is in a terminal state (completed / failed /
+# cancelled) so a disconnected client can't leak its asyncio.Queue
+# indefinitely. Runs every 5 minutes; the work itself is cheap (one
+# `await _load(sid)` per known queue, capped at 512 by the TTL cache).
+import asyncio as _asyncio_main
+
+
+async def _sse_queue_sweeper() -> None:
+    """Lifespan task — periodically prune stale event queues."""
+    # Lazy imports so a startup failure in one route module doesn't
+    # take the whole sweeper offline.
+    while True:
+        try:
+            await _asyncio_main.sleep(300)  # 5 min
+        except _asyncio_main.CancelledError:
+            return
+        try:
+            from .api import thinking_routes, local_ai_routes_simple
+            t_dropped = await thinking_routes.sweep_stale_event_queues()
+            r_dropped = await local_ai_routes_simple.sweep_stale_event_queues()
+            if t_dropped or r_dropped:
+                logger.info("sse_queue_sweep",
+                            thinking=t_dropped, research=r_dropped)
+        except Exception as exc:
+            logger.warning("sse_queue_sweep_failed", error=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("application_starting", service=settings.service_name)
 
+    sweeper_task: Optional[_asyncio_main.Task] = None
     try:
         # Start pipeline
         await pipeline.start()
@@ -110,11 +139,23 @@ async def lifespan(app: FastAPI):
             )
             logger.info("local_ai_initialized")
 
+        # Phase D4 sweeper task — must outlive every request.
+        sweeper_task = _asyncio_main.create_task(_sse_queue_sweeper())
+        logger.info("sse_queue_sweeper_started")
+
         logger.info("application_started")
         yield
     finally:
         # Shutdown
         logger.info("application_stopping")
+
+        # Cancel the sweeper so the event loop drains cleanly.
+        if sweeper_task is not None:
+            sweeper_task.cancel()
+            try:
+                await sweeper_task
+            except (_asyncio_main.CancelledError, Exception):
+                pass
 
         # Cleanup Local AI if available
         if LOCAL_AI_AVAILABLE:

@@ -58,7 +58,20 @@ try:
 except ImportError:  # pragma: no cover
     _sessions = {}
 
-_event_queues: Dict[str, asyncio.Queue] = {}
+# Phase D4: bound the per-session event queue dict with a TTL cache —
+# a stalled client used to leak its asyncio.Queue forever (the cleanup
+# `pop` only fires when the SSE generator exits, which requires a
+# connected client). TTL matches the session payload's TTL so a queue
+# can never outlive its session by more than the cache slack.
+try:
+    from cachetools import TTLCache as _TTLCache  # noqa: WPS433
+    _event_queues: Dict[str, asyncio.Queue] = _TTLCache(maxsize=512, ttl=7800)
+except ImportError:  # pragma: no cover
+    _event_queues = {}
+
+# Per-queue maxsize so a stalled subscriber can't OOM the producer
+# (sliding-window drop in _publish below).
+_EVENT_QUEUE_MAXSIZE = 500
 
 # P1.1: Pub/sub channel for cross-replica event fan-out.
 _THINKING_EVENT_CHANNEL = "amor:thinking:events:{session_id}"
@@ -102,7 +115,7 @@ async def _load(session_id: str) -> Optional[Dict[str, Any]]:
 def _event_queue(session_id: str) -> asyncio.Queue:
     q = _event_queues.get(session_id)
     if q is None:
-        q = asyncio.Queue()
+        q = asyncio.Queue(maxsize=_EVENT_QUEUE_MAXSIZE)  # Phase D4 bound
         _event_queues[session_id] = q
     return q
 
@@ -113,11 +126,26 @@ async def _publish(session_id: str, event: Dict[str, Any]) -> None:
       1. The local in-process queue (for SSE clients on this replica).
       2. A Redis pub/sub channel (so SSE clients on the OTHER replica
          can receive it too).
+
+    Phase D4: bounded queue + sliding-window drop. If a stalled
+    subscriber lets the queue fill up, the OLDEST event is dropped to
+    make room for the newest — keeps the event stream relevant
+    instead of letting the producer OOM.
     """
     from uuid import uuid4 as _uuid4  # avoid shadowing module-level uuid4
     if "event_id" not in event:
         event = {**event, "event_id": _uuid4().hex}
-    await _event_queue(session_id).put(event)
+    queue = _event_queue(session_id)
+    try:
+        queue.put_nowait(event)
+    except asyncio.QueueFull:
+        # Drop oldest, push newest — the SSE client will see a small
+        # gap rather than indefinitely lag behind the producer.
+        try:
+            queue.get_nowait()
+            queue.put_nowait(event)
+        except (asyncio.QueueEmpty, asyncio.QueueFull):
+            pass
     try:
         await cache_manager.publish_event(
             _THINKING_EVENT_CHANNEL.format(session_id=session_id),
@@ -125,6 +153,31 @@ async def _publish(session_id: str, event: Dict[str, Any]) -> None:
         )
     except Exception as exc:  # pragma: no cover — pub/sub is best-effort
         logger.debug("thinking _publish redis fanout failed: %s", exc)
+
+
+async def sweep_stale_event_queues() -> int:
+    """
+    Phase D4: drop event queues whose backing session is already in a
+    terminal state. Called periodically by the lifespan task in
+    main.py. Defensive — a disconnected SSE client used to leak its
+    queue indefinitely; this guarantees cleanup within the sweep
+    cadence (5 min) regardless of client liveness.
+    """
+    if not _event_queues:
+        return 0
+    dropped = 0
+    for sid in list(_event_queues.keys()):
+        snap = await _load(sid)
+        if snap is None:
+            _event_queues.pop(sid, None)
+            dropped += 1
+            continue
+        if snap.get("status") in {"completed", "failed", "cancelled"}:
+            _event_queues.pop(sid, None)
+            dropped += 1
+    if dropped:
+        logger.warning("thinking_sse_queues_swept", dropped=dropped)
+    return dropped
 
 
 def _require_owner(session: Dict[str, Any], user: User) -> None:

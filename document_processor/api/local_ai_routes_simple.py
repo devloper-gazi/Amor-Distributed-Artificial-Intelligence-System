@@ -1561,10 +1561,16 @@ The summary should be clear, informative, and suitable for a general audience.""
 # ───────────────────────────────────────────────────────────────────
 
 # Per-session event queues for SSE streaming.
-# IMPORTANT: this dict is per-replica. P1.1 fans out events to a Redis
-# pub/sub channel as well so SSE clients connected to a different replica
-# than the one running the background task can still receive events.
-_event_queues: Dict[str, asyncio.Queue] = {}
+# Phase D4: bound the dict with a TTL cache so a leaked queue can't
+# survive forever, and bound each queue with a maxsize so a stalled
+# subscriber can't OOM the producer.
+try:
+    from cachetools import TTLCache as _TTLCache  # noqa: WPS433
+    _event_queues: Dict[str, asyncio.Queue] = _TTLCache(maxsize=512, ttl=7800)
+except ImportError:  # pragma: no cover
+    _event_queues = {}
+
+_EVENT_QUEUE_MAXSIZE = 500
 
 # Channel name format. Keep both replicas in sync — the SSE endpoint and
 # the publisher must use identical strings.
@@ -1574,7 +1580,7 @@ _RESEARCH_EVENT_CHANNEL = "amor:research:events:{session_id}"
 def _event_queue(session_id: str) -> asyncio.Queue:
     q = _event_queues.get(session_id)
     if q is None:
-        q = asyncio.Queue()
+        q = asyncio.Queue(maxsize=_EVENT_QUEUE_MAXSIZE)  # Phase D4 bound
         _event_queues[session_id] = q
     return q
 
@@ -1588,11 +1594,21 @@ async def _publish(session_id: str, event: Dict[str, Any]) -> None:
 
     Each event gets a UUID `event_id` for the SSE side to deduplicate
     when both deliveries arrive.
+
+    Phase D4: bounded queue + sliding-window drop. Stalled subscriber →
+    oldest event evicted, newest survives. Prevents producer OOM.
     """
     if "event_id" not in event:
         event = {**event, "event_id": uuid4().hex}
-    # Local fan-out is best-effort — never let a Redis hiccup block it.
-    await _event_queue(session_id).put(event)
+    queue = _event_queue(session_id)
+    try:
+        queue.put_nowait(event)
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()
+            queue.put_nowait(event)
+        except (asyncio.QueueEmpty, asyncio.QueueFull):
+            pass
     try:
         await cache_manager.publish_event(
             _RESEARCH_EVENT_CHANNEL.format(session_id=session_id),
@@ -1600,6 +1616,28 @@ async def _publish(session_id: str, event: Dict[str, Any]) -> None:
         )
     except Exception as exc:  # pragma: no cover — pub/sub is best-effort
         logger.debug("research _publish redis fanout failed: %s", exc)
+
+
+async def sweep_stale_event_queues() -> int:
+    """
+    Phase D4: drop event queues whose backing session is already in a
+    terminal state. Called by the lifespan sweeper task in main.py.
+    """
+    if not _event_queues:
+        return 0
+    dropped = 0
+    for sid in list(_event_queues.keys()):
+        snap = await _load_session(sid)
+        if snap is None:
+            _event_queues.pop(sid, None)
+            dropped += 1
+            continue
+        if snap.get("status") in {"completed", "failed", "cancelled"}:
+            _event_queues.pop(sid, None)
+            dropped += 1
+    if dropped:
+        logger.warning("research_sse_queues_swept", dropped=dropped)
+    return dropped
 
 
 async def _translate_batch_for_research(
