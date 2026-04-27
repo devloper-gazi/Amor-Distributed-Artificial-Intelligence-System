@@ -105,6 +105,10 @@ class ChatController {
         const openPanel = () => {
             settingsPanel.style.display = 'block';
             settingsBtn?.classList.add('active');
+            // Lazy-init the AI Model picker on first open. Idempotent.
+            this._initModelPicker?.().catch(err => {
+                console.warn('model picker init failed:', err);
+            });
         };
         const closePanel = () => {
             settingsPanel.style.display = 'none';
@@ -113,6 +117,11 @@ class ChatController {
 
         this.openResearchSettingsPanel = openPanel;
         this.closeResearchSettingsPanel = closePanel;
+
+        // Render the topbar chip on boot in case a previous session
+        // saved a tag — must reflect the current state immediately,
+        // not only after the panel is opened.
+        try { this._renderModelChip?.(); } catch (_) {}
 
         // Toggle panel visibility (if the legacy button exists)
         settingsBtn?.addEventListener('click', (e) => {
@@ -1180,6 +1189,8 @@ class ChatController {
                 query_record_id: this._currentQueryRecordId || null,
                 user_message_idempotency_key: this._currentUserMsgKey || null,
                 assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
+                // Optional Ollama tag override (More settings → AI Model)
+                preferred_model: this._readPreferredModel() || null,
             }),
             signal: this._currentAbortController?.signal,
         });
@@ -1364,6 +1375,8 @@ class ChatController {
                     query_record_id: this._currentQueryRecordId || null,
                     user_message_idempotency_key: this._currentUserMsgKey || null,
                     assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
+                    // Optional Ollama tag override (More settings → AI Model)
+                    preferred_model: this._readPreferredModel() || null,
                 }),
                 signal: this._currentAbortController?.signal,
             });
@@ -1494,6 +1507,9 @@ class ChatController {
                     query_record_id: this._currentQueryRecordId || null,
                     user_message_idempotency_key: this._currentUserMsgKey || null,
                     assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
+                    // Optional Ollama tag override (More settings → AI Model).
+                    // When null, the engine auto-selects per role+effort.
+                    preferred_model: this._readPreferredModel() || null,
                 }),
                 signal: this._currentAbortController?.signal,
             });
@@ -1616,6 +1632,300 @@ class ChatController {
             } catch (e) {
                 console.warn('code polling error:', e);
             }
+        }
+    }
+
+    // ── AI Model picker (More settings → AI Model) ──────────────────────
+    //
+    // Three pieces:
+    //   1. Read / save / clear the user's choice from localStorage
+    //      under `amor.preferredModel`.
+    //   2. Fetch the catalogue from /api/code/models and populate the
+    //      dropdown grouped by tier (flagship / balanced / lightweight).
+    //   3. Stream a Pull when the user picks a non-installed tag or
+    //      types a custom one.
+    // The selection is sent as `preferred_model` on every outbound mode
+    // request so backend handlers can use it.
+
+    _MODEL_LS_KEY = 'amor.preferredModel';
+
+    _readPreferredModel() {
+        try {
+            const raw = localStorage.getItem(this._MODEL_LS_KEY) || '';
+            return raw.trim();
+        } catch (_) { return ''; }
+    }
+
+    _writePreferredModel(tag) {
+        try {
+            const clean = (tag || '').trim();
+            if (!clean) {
+                localStorage.removeItem(this._MODEL_LS_KEY);
+            } else {
+                localStorage.setItem(this._MODEL_LS_KEY, clean);
+            }
+        } catch (_) { /* best-effort */ }
+    }
+
+    /**
+     * Initialise the AI Model picker UI. Idempotent — safe to call
+     * every time the settings panel opens. The catalogue HTTP fetch
+     * runs only once per session (cached).
+     */
+    async _initModelPicker() {
+        if (this._modelPickerInited) return;
+        this._modelPickerInited = true;
+
+        const select = document.getElementById('aiModelSelect');
+        const customInput = document.getElementById('customModelTag');
+        const pullBtn = document.getElementById('pullModelBtn');
+        const currentEl = document.getElementById('panelModelCurrent');
+        if (!select) return;
+
+        // Populate the dropdown from the cached catalogue.
+        await this._loadModelCatalogue();
+
+        // Restore previous selection from localStorage.
+        const saved = this._readPreferredModel();
+        if (saved) {
+            const exists = Array.from(select.options).some(o => o.value === saved);
+            if (exists) {
+                select.value = saved;
+            } else {
+                // Custom tag — preserve the value by injecting an option.
+                const opt = document.createElement('option');
+                opt.value = saved;
+                opt.textContent = `${saved} (custom)`;
+                select.appendChild(opt);
+                select.value = saved;
+            }
+        } else {
+            select.value = '';
+        }
+        this._refreshModelCurrentLabel(currentEl, select.value);
+        this._renderModelChip();
+
+        // Wire change handler.
+        select.addEventListener('change', () => {
+            const tag = select.value || '';
+            this._writePreferredModel(tag);
+            this._refreshModelCurrentLabel(currentEl, tag);
+            this._renderModelChip();
+        });
+
+        // Wire the Pull button — handles both "selected catalogue tag
+        // not yet installed" and "custom-tag input".
+        pullBtn?.addEventListener('click', () => {
+            const customTag = (customInput?.value || '').trim();
+            const target = customTag || select.value;
+            if (!target) {
+                customInput?.focus();
+                return;
+            }
+            this._pullModel(target).catch(err => {
+                console.warn('model pull failed:', err);
+            });
+        });
+
+        // Pressing Enter in the custom-tag input also triggers Pull.
+        customInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                pullBtn?.click();
+            }
+        });
+    }
+
+    async _loadModelCatalogue() {
+        const select = document.getElementById('aiModelSelect');
+        if (!select) return;
+        let data;
+        try {
+            const resp = await this._authFetch('/api/code/models');
+            if (!resp.ok) throw new Error(`status ${resp.status}`);
+            data = await resp.json();
+        } catch (e) {
+            console.warn('model catalogue fetch failed:', e);
+            return;
+        }
+
+        // Reset to just the Auto option.
+        const autoOpt = select.querySelector('option[value=""]');
+        select.innerHTML = '';
+        if (autoOpt) select.appendChild(autoOpt);
+        else {
+            const o = document.createElement('option');
+            o.value = ''; o.textContent = 'Auto · best per role (recommended)';
+            o.selected = true;
+            select.appendChild(o);
+        }
+
+        const installed = new Set(data.installed || []);
+        const catalogue = data.catalogue || [];
+        // Group by tier.
+        const tiers = { flagship: [], balanced: [], lightweight: [] };
+        catalogue.forEach(m => {
+            (tiers[m.tier] || tiers.balanced).push(m);
+        });
+        const labels = {
+            flagship: 'flagship · ≥ 16 GB VRAM',
+            balanced: 'balanced · 8–15 GB',
+            lightweight: 'lightweight · < 8 GB',
+        };
+        ['flagship', 'balanced', 'lightweight'].forEach(tier => {
+            const list = tiers[tier];
+            if (!list.length) return;
+            const group = document.createElement('optgroup');
+            group.label = labels[tier];
+            list.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.tag;
+                const isInstalled = installed.has(m.tag) || m.installed;
+                const bench = m.swebench_pct
+                    ? `${m.swebench_pct.toFixed(0)}% SWE-bench`
+                    : (m.humaneval_pct
+                        ? `${m.humaneval_pct.toFixed(0)}% HumanEval` : '');
+                const tail = isInstalled ? '· installed'
+                                         : (m.vram_gb ? `· ${m.vram_gb} GB pull` : '');
+                opt.textContent = `${m.display_name} ${tail ? '— ' + tail : ''} ${bench ? '· ' + bench : ''}`.trim();
+                if (!isInstalled) {
+                    // Not blocked — picking it sends preferred_model;
+                    // backend tries to pull on first call as fallback.
+                    opt.dataset.installed = 'false';
+                }
+                group.appendChild(opt);
+            });
+            select.appendChild(group);
+        });
+    }
+
+    _refreshModelCurrentLabel(el, tag) {
+        if (!el) return;
+        if (!tag) {
+            el.classList.add('is-auto');
+            el.innerHTML = 'Currently: <strong>Auto</strong>';
+        } else {
+            el.classList.remove('is-auto');
+            el.innerHTML = `Currently: <strong>${this.escapeHtml(tag)}</strong>`;
+        }
+    }
+
+    /**
+     * Render or hide the topbar chip showing the active non-default model.
+     * Called whenever the selection changes + once at boot.
+     */
+    _renderModelChip() {
+        const chip = document.getElementById('topBarModelChip');
+        const tagEl = document.getElementById('topBarModelTag');
+        if (!chip || !tagEl) return;
+        const tag = this._readPreferredModel();
+        if (!tag) {
+            chip.hidden = true;
+            return;
+        }
+        tagEl.textContent = tag;
+        chip.hidden = false;
+        // Click → open the settings panel scrolled to the picker.
+        if (!chip._wired) {
+            chip._wired = true;
+            chip.addEventListener('click', () => {
+                if (typeof this.openResearchSettingsPanel === 'function') {
+                    this.openResearchSettingsPanel();
+                }
+                setTimeout(() => {
+                    document.getElementById('aiModelSelect')?.focus();
+                }, 50);
+            });
+        }
+    }
+
+    /**
+     * Pull a model tag via the existing SSE endpoint. Drives the
+     * `#modelPullProgress` bar and refreshes the catalogue on success.
+     */
+    async _pullModel(tag) {
+        const progress = document.getElementById('modelPullProgress');
+        const fill = document.getElementById('pullFill');
+        const pct = document.getElementById('pullPct');
+        const status = document.getElementById('pullStatus');
+        const pullBtn = document.getElementById('pullModelBtn');
+
+        if (!tag) return;
+        if (progress) {
+            progress.hidden = false;
+            progress.classList.remove('error');
+        }
+        if (pct) pct.textContent = '0%';
+        if (fill) fill.style.width = '0%';
+        if (status) status.textContent = 'Starting…';
+        if (pullBtn) pullBtn.disabled = true;
+
+        const url = `/api/code/models/${encodeURIComponent(tag)}/pull`;
+        // EventSource doesn't support POST; use fetch + body reader so
+        // we can stream the SSE manually.
+        let resp;
+        try {
+            resp = await this._authFetch(url, { method: 'POST' });
+            if (!resp.ok || !resp.body) {
+                throw new Error(`pull start failed (${resp.status})`);
+            }
+        } catch (e) {
+            if (status) status.textContent = `Failed: ${e.message}`;
+            if (progress) progress.classList.add('error');
+            if (pullBtn) pullBtn.disabled = false;
+            return;
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                let idx;
+                while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                    const chunk = buffer.slice(0, idx);
+                    buffer = buffer.slice(idx + 2);
+                    const dataLine = chunk.split('\n').find(l => l.startsWith('data:'));
+                    if (!dataLine) continue;
+                    let evt;
+                    try { evt = JSON.parse(dataLine.slice(5).trim()); }
+                    catch (_) { continue; }
+                    if (evt.type === 'pull_progress') {
+                        const p = Math.max(0, Math.min(100, Number(evt.pct || 0)));
+                        if (fill) fill.style.width = `${p}%`;
+                        if (pct) pct.textContent = `${p}%`;
+                        if (status) status.textContent = evt.status || 'pulling…';
+                    } else if (evt.type === 'pull_complete') {
+                        if (fill) fill.style.width = '100%';
+                        if (pct) pct.textContent = '100%';
+                        if (status) status.textContent = 'Done';
+                        // Refresh catalogue + auto-select the just-pulled tag.
+                        await this._loadModelCatalogue();
+                        const select = document.getElementById('aiModelSelect');
+                        if (select) {
+                            const opt = Array.from(select.options).find(o => o.value === tag);
+                            if (opt) {
+                                select.value = tag;
+                                this._writePreferredModel(tag);
+                                this._refreshModelCurrentLabel(
+                                    document.getElementById('panelModelCurrent'),
+                                    tag,
+                                );
+                                this._renderModelChip();
+                            }
+                        }
+                        setTimeout(() => { if (progress) progress.hidden = true; }, 1500);
+                    } else if (evt.type === 'pull_error') {
+                        if (status) status.textContent = `Failed: ${evt.error || 'unknown'}`;
+                        if (progress) progress.classList.add('error');
+                    }
+                }
+            }
+        } finally {
+            if (pullBtn) pullBtn.disabled = false;
         }
     }
 

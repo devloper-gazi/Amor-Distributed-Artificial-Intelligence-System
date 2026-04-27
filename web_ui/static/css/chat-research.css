@@ -2509,3 +2509,216 @@ body.dark-mode .depth-menu {
     color: var(--mono-text-secondary, #b0b0c0);
     flex: 1;
 }
+
+/* ====================================================================
+   AI Model picker — More settings → AI Model
+   (Charter §6 Mandate 4: configuration drives behaviour)
+   ==================================================================== */
+
+.panel-setting-section {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--mono-border-light, rgba(255,255,255,0.06));
+}
+.panel-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-bottom: 10px;
+}
+.panel-section-title i {
+    color: rgba(125, 207, 255, 0.85);
+}
+.panel-section-hint {
+    margin-left: auto;
+    font-size: 10.5px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+}
+
+/* Custom-tag input + Pull button row */
+.panel-model-pull {
+    align-items: center;
+    gap: 8px;
+}
+.panel-setting-input {
+    flex: 1;
+    padding: 7px 10px;
+    background: var(--mono-bg-primary, #14141f);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 7px;
+    color: var(--mono-text-primary, #e8e8e8);
+    font-size: 12.5px;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    outline: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.panel-setting-input::placeholder {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    opacity: 0.7;
+}
+.panel-setting-input:focus {
+    border-color: rgba(125, 207, 255, 0.6);
+    background: var(--mono-bg-secondary, #1f2433);
+}
+.panel-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: rgba(125, 207, 255, 0.1);
+    border: 1px solid rgba(125, 207, 255, 0.4);
+    border-radius: 7px;
+    color: rgba(125, 207, 255, 1);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    flex-shrink: 0;
+}
+.panel-action-btn:hover {
+    background: rgba(125, 207, 255, 0.18);
+    border-color: rgba(125, 207, 255, 0.7);
+}
+.panel-action-btn:active { transform: scale(0.97); }
+.panel-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Pull progress bar (mounted under the row when a pull is in-flight) */
+.panel-pull-progress {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(255, 200, 96, 0.06);
+    border: 1px solid rgba(255, 200, 96, 0.3);
+    border-radius: 7px;
+}
+.panel-pull-progress .pull-bar {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.panel-pull-progress .pull-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, rgba(255, 200, 96, 0.95), #ff9800);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    position: relative;
+}
+.panel-pull-progress .pull-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent,
+                                       rgba(255,255,255,0.3),
+                                       transparent);
+    animation: pullShimmer 1.5s linear infinite;
+}
+@keyframes pullShimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+.panel-pull-progress .pull-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-top: 6px;
+}
+.panel-pull-progress .pull-pct {
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 200, 96, 1);
+    font-weight: 600;
+}
+.panel-pull-progress .pull-status {
+    color: var(--mono-text-tertiary, #8a8aa0);
+}
+.panel-pull-progress.error {
+    background: rgba(220, 110, 110, 0.08);
+    border-color: rgba(220, 110, 110, 0.4);
+}
+.panel-pull-progress.error .pull-fill {
+    background: rgba(255, 130, 130, 0.7);
+}
+
+/* Currently-selected indicator below the picker */
+.panel-model-current {
+    margin-top: 10px;
+    padding: 6px 10px;
+    background: var(--mono-bg-secondary, #1f2433);
+    border-left: 2px solid rgba(125, 207, 255, 0.5);
+    border-radius: 0 6px 6px 0;
+    font-size: 11.5px;
+    color: var(--mono-text-secondary, #b0b0c0);
+}
+.panel-model-current strong {
+    color: rgba(125, 207, 255, 1);
+    font-weight: 600;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+}
+.panel-model-current.is-auto strong {
+    color: var(--mono-text-primary, #e8e8e8);
+    font-family: inherit;
+}
+
+/* Better-grouped <optgroup> rendering inside the model select.
+   The browser default styling is dim and unreadable in dark mode. */
+#aiModelSelect optgroup {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+    font-weight: 700;
+    background: var(--mono-bg-primary, #14141f);
+}
+#aiModelSelect option {
+    color: var(--mono-text-primary, #e8e8e8);
+    background: var(--mono-bg-primary, #14141f);
+    font-style: normal;
+}
+#aiModelSelect option[disabled] {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+}
+
+/* ── Topbar active-model chip ─────────────────────────────────────── */
+
+.top-bar-model-chip {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(125, 207, 255, 0.08);
+    border: 1px solid rgba(125, 207, 255, 0.4);
+    border-radius: 999px;
+    color: rgba(125, 207, 255, 1);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.top-bar-model-chip:hover {
+    background: rgba(125, 207, 255, 0.18);
+}
+.top-bar-model-chip[hidden] { display: none; }
+.top-bar-model-chip i { font-size: 10px; }
+.top-bar-model-tag {
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+}
+@media (max-width: 720px) {
+    .top-bar-model-chip { display: none; }
+}
