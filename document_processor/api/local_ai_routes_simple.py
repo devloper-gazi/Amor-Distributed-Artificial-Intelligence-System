@@ -22,7 +22,10 @@ from ..infrastructure.cache import cache_manager
 from ..research import AdvancedResearcher
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
-from ..services.model_resolution import resolve_request_model
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 
 try:
     import trafilatura
@@ -838,6 +841,15 @@ _ACTIVE_MODEL: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
     "amor_active_ollama_model", default=None,
 )
 
+# v3 — Per-task advanced-options profile (temperature, top_p, num_gpu,
+# system_prompt, …). Same propagation semantics as _ACTIVE_MODEL: set
+# once at task entry, automatically picked up by every nested call.
+# Stored as a dict so the picker can persist arbitrary Ollama options
+# without baking each one into a typed slot.
+_ACTIVE_PROFILE: _contextvars.ContextVar[Optional[dict]] = _contextvars.ContextVar(
+    "amor_active_ollama_profile", default=None,
+)
+
 
 def set_active_model(model: Optional[str]):
     """Set the per-task override and return the reset token.
@@ -854,6 +866,40 @@ def set_active_model(model: Optional[str]):
     OLLAMA_MODEL).
     """
     return _ACTIVE_MODEL.set(model or None)
+
+
+def set_active_profile(profile: Optional[dict]):
+    """Set the per-task advanced-options profile (v3).
+
+    Same lifecycle as ``set_active_model``. Pass ``None`` or an empty
+    dict to clear; nested calls fall back to Ollama defaults.
+    """
+    return _ACTIVE_PROFILE.set(profile or None)
+
+
+def _resolve_profile() -> dict:
+    """Read the contextvar profile and translate it to Ollama options.
+
+    Imported lazily to avoid circular dep with services.model_manager."""
+    prof = _ACTIVE_PROFILE.get()
+    if not prof:
+        return {}
+    try:
+        from ..services.model_manager import ModelManager  # noqa: PLC0415
+        return ModelManager.apply_profile_to_options(prof)
+    except Exception:  # pragma: no cover
+        return {}
+
+
+def _resolve_system_prompt() -> Optional[str]:
+    prof = _ACTIVE_PROFILE.get()
+    if not prof:
+        return None
+    try:
+        from ..services.model_manager import ModelManager  # noqa: PLC0415
+        return ModelManager.system_prompt_from_profile(prof)
+    except Exception:  # pragma: no cover
+        return None
 
 
 def _resolve_model(model: Optional[str]) -> str:
@@ -983,6 +1029,19 @@ async def _call_ollama_uncached(
     return await _call_ollama_uncached_with(OLLAMA_MODEL, prompt, system, max_tokens)
 
 
+def _merge_profile_options(max_tokens: int) -> dict:
+    """Build the Ollama ``options`` dict, layering profile overrides on
+    top of system defaults. Profile values from ``_ACTIVE_PROFILE``
+    win over the env-default temperature / num_predict so per-model
+    sliders in the picker actually steer the daemon."""
+    base = {
+        "num_predict": max_tokens,
+        "temperature": _OLLAMA_TEMPERATURE,
+    }
+    base.update(_resolve_profile())
+    return base
+
+
 async def _call_ollama_uncached_with(
     model: str,
     prompt: str,
@@ -995,7 +1054,13 @@ async def _call_ollama_uncached_with(
     doesn't have it we attempt one auto-pull (when configured) and
     retry. On unrecoverable error, surfaces an HTTPException so the
     upper layers fall through to error-handling rather than silently
-    using OLLAMA_MODEL behind the user's back."""
+    using OLLAMA_MODEL behind the user's back.
+
+    v3 — when a profile is bound via ``set_active_profile``, its
+    Ollama options merge on top of the defaults *and* its
+    ``system_prompt`` is used when the caller didn't pass one. This
+    lets the picker's Advanced sliders + system-prompt textarea
+    actually take effect without changing every call site."""
     try:
         # Ensure the *configured default* model is available — the
         # legacy auto-pull pipe only knows about OLLAMA_MODEL. For the
@@ -1004,18 +1069,18 @@ async def _call_ollama_uncached_with(
         # already invoked, OR a 404 retry below.
         await _ensure_ollama_ready()
 
+        merged_opts = _merge_profile_options(max_tokens)
+        effective_system = system or _resolve_system_prompt() or ""
+
         async with httpx.AsyncClient(timeout=OLLAMA_HTTP_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
                     "model": model,
                     "prompt": prompt,
-                    "system": system or "",
+                    "system": effective_system,
                     "stream": False,
-                    "options": {
-                        "num_predict": max_tokens,
-                        "temperature": _OLLAMA_TEMPERATURE,
-                    },
+                    "options": merged_opts,
                 },
             )
 
@@ -1042,19 +1107,17 @@ async def _call_ollama_uncached_with(
                     json={
                         "model": model,
                         "prompt": prompt,
-                        "system": system or "",
+                        "system": effective_system,
                         "stream": False,
-                        "options": {
-                            "num_predict": max_tokens,
-                            "temperature": _OLLAMA_TEMPERATURE,
-                        },
+                        "options": merged_opts,
                     },
                 )
                 if retry.status_code == 200:
                     return retry.json().get("response", "")
                 # Fallback to OLLAMA_MODEL if the user's tag still doesn't
                 # work — better to answer with the default than to 500
-                # the whole pipeline.
+                # the whole pipeline. Profile options still apply (the
+                # user wanted those even if their tag is unavailable).
                 if model != OLLAMA_MODEL:
                     logger.warning(
                         "ollama_falling_back_to_default tag=%s default=%s",
@@ -1065,12 +1128,9 @@ async def _call_ollama_uncached_with(
                         json={
                             "model": OLLAMA_MODEL,
                             "prompt": prompt,
-                            "system": system or "",
+                            "system": effective_system,
                             "stream": False,
-                            "options": {
-                                "num_predict": max_tokens,
-                                "temperature": _OLLAMA_TEMPERATURE,
-                            },
+                            "options": merged_opts,
                         },
                     )
                     if fallback.status_code == 200:
@@ -1263,14 +1323,17 @@ async def start_research(
         # log can surface "Using qwen2.5-coder:7b — user preference".
         client_id_hdr = (x_client_id or "").strip() or session_id
         depth_for_pick = (request.depth or "medium").strip().lower() or "medium"
+        resolved_profile: Optional[dict] = None
         try:
-            resolved_model, model_reason = await resolve_request_model(
-                request=http_request,
-                requested_model=request.preferred_model,
-                user_id=user.id,
-                client_id=client_id_hdr,
-                mode="research",
-                effort=depth_for_pick,
+            resolved_model, resolved_profile, model_reason = (
+                await resolve_request_model_full(
+                    request=http_request,
+                    requested_model=request.preferred_model,
+                    user_id=user.id,
+                    client_id=client_id_hdr,
+                    mode="research",
+                    effort=depth_for_pick,
+                )
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("research_resolve_request_model_failed: %s", exc)
@@ -1298,6 +1361,10 @@ async def start_research(
             "preferred_model": resolved_model,
             "preferred_model_requested": request.preferred_model,
             "preferred_model_reason": model_reason,
+            # v3 — advanced profile (temperature, num_gpu, …) bound to
+            # this run; the worker stuffs it into _ACTIVE_PROFILE so
+            # every nested call_ollama() picks it up.
+            "preferred_model_profile": resolved_profile,
         }
         await _persist_session(session_id, research_sessions[session_id])
 
@@ -1831,6 +1898,9 @@ async def execute_advanced_research(
     # Stored on the session payload, read here once, propagated to
     # every nested call_ollama() via ContextVar.
     _model_token = set_active_model(session.get("preferred_model"))
+    # v3 — advanced profile (temperature, num_gpu, system_prompt, …)
+    # propagated the same way; cleared at task exit just like the model.
+    _profile_token = set_active_profile(session.get("preferred_model_profile"))
 
     async def llm(prompt: str, system: Optional[str], max_tokens: int) -> str:
         return await call_ollama(prompt, system, max_tokens)

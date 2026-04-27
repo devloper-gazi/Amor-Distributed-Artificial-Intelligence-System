@@ -40,7 +40,10 @@ from pydantic import BaseModel, Field
 
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
-from ..services.model_resolution import resolve_request_model
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 from ..code_intelligence import (
     CODE_PHASES,
     AdversarialReviewer,
@@ -375,14 +378,17 @@ async def start_code_session(
     # everywhere; otherwise we let the registry's per-role auto-pick
     # logic take over by leaving preferred_model = None.
     client_id_hdr = (x_client_id or "").strip() or session_id
+    resolved_profile: Optional[Dict[str, Any]] = None
     try:
-        resolved_model, model_reason = await resolve_request_model(
-            request=http_request,
-            requested_model=payload.preferred_model,
-            user_id=str(user.id),
-            client_id=client_id_hdr,
-            mode="code",
-            effort=effort,
+        resolved_model, resolved_profile, model_reason = (
+            await resolve_request_model_full(
+                request=http_request,
+                requested_model=payload.preferred_model,
+                user_id=str(user.id),
+                client_id=client_id_hdr,
+                mode="code",
+                effort=effort,
+            )
         )
         # Code Intelligence has a richer per-role auto-select than the
         # generic ModelManager — only honour resolution if it came from
@@ -392,6 +398,7 @@ async def start_code_session(
             effective_model = resolved_model
         else:
             effective_model = None  # Let CodeModelRegistry pick per role
+            resolved_profile = None  # without an explicit pref the profile is moot
     except Exception as exc:  # pragma: no cover
         logger.warning("code_resolve_request_model_failed: %s", exc)
         effective_model, model_reason = (payload.preferred_model, "fallback")
@@ -414,6 +421,7 @@ async def start_code_session(
         "preferred_model": effective_model,
         "preferred_model_requested": payload.preferred_model,
         "preferred_model_reason": model_reason,
+        "preferred_model_profile": resolved_profile,
         # Phase scaffold matching CODE_PHASES order.
         "phases": [
             {"name": n, "label": l, "status": "pending", "detail": {}}
@@ -459,6 +467,22 @@ async def _run_session(session_id: str) -> None:
     session = _sessions.get(session_id)
     if session is None:
         return
+
+    # v3 — propagate the resolved model + advanced profile (temperature,
+    # num_gpu, system_prompt, …) into the local-AI ContextVars so every
+    # nested call_ollama() inside the engine picks them up.
+    if session.get("preferred_model") or session.get("preferred_model_profile"):
+        try:
+            from .local_ai_routes_simple import (
+                set_active_model,
+                set_active_profile,
+            )
+            if session.get("preferred_model"):
+                set_active_model(session["preferred_model"])
+            if session.get("preferred_model_profile"):
+                set_active_profile(session["preferred_model_profile"])
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("code_preferred_model_contextvar_set_failed: %s", _exc)
 
     registry = get_model_registry()
     sandbox = get_sandbox() if session["enable_execution"] else None

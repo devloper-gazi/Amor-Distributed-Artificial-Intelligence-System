@@ -29,7 +29,10 @@ from fastapi.responses import StreamingResponse
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
 from ..infrastructure.cache import cache_manager
-from ..services.model_resolution import resolve_request_model
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 from ..thinking import ThinkingEngine
 from ..thinking.engine import _extract_json
 from ..thinking.models import (
@@ -329,14 +332,17 @@ async def start_think(
     # Server-side model resolution — see local_ai_routes_simple.start_research
     # for the full rationale. Mode = "thinking", effort tier = payload.effort.
     client_id_hdr = (x_client_id or "").strip() or session_id
+    resolved_profile: Optional[Dict[str, Any]] = None
     try:
-        resolved_model, model_reason = await resolve_request_model(
-            request=http_request,
-            requested_model=payload.preferred_model,
-            user_id=str(user.id),
-            client_id=client_id_hdr,
-            mode="thinking",
-            effort=(payload.effort or "medium").strip().lower() or "medium",
+        resolved_model, resolved_profile, model_reason = (
+            await resolve_request_model_full(
+                request=http_request,
+                requested_model=payload.preferred_model,
+                user_id=str(user.id),
+                client_id=client_id_hdr,
+                mode="thinking",
+                effort=(payload.effort or "medium").strip().lower() or "medium",
+            )
         )
     except Exception as exc:  # pragma: no cover
         logger.warning("thinking_resolve_request_model_failed: %s", exc)
@@ -391,6 +397,8 @@ async def start_think(
         "preferred_model": resolved_model,
         "preferred_model_requested": payload.preferred_model,
         "preferred_model_reason": model_reason,
+        # v3 — advanced profile bound to this run.
+        "preferred_model_profile": resolved_profile,
     }
     _sessions[session_id] = session
     await _persist(session_id, session)
@@ -433,6 +441,14 @@ async def _run_session(session_id: str) -> None:
             set_active_model(session["preferred_model"])
         except Exception as _exc:  # noqa: BLE001
             logger.debug("preferred_model_contextvar_set_failed: %s", _exc)
+    # v3 — advanced profile (temperature, num_gpu, system_prompt, …)
+    # propagated the same way.
+    if session.get("preferred_model_profile"):
+        try:
+            from .local_ai_routes_simple import set_active_profile
+            set_active_profile(session["preferred_model_profile"])
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("preferred_model_profile_contextvar_set_failed: %s", _exc)
 
     llm = _pick_llm(session["provider"])
 
