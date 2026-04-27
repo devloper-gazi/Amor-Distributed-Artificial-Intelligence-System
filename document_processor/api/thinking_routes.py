@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ..auth.dependencies import get_current_user
@@ -316,6 +316,7 @@ async def start_think(
     payload: ThinkRequest,
     background: BackgroundTasks,
     http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> ThinkResponse:
@@ -347,6 +348,12 @@ async def start_think(
     except Exception as exc:  # pragma: no cover
         logger.warning("thinking_resolve_request_model_failed: %s", exc)
         resolved_model, model_reason = (payload.preferred_model, "fallback")
+
+    # Spec validation point #1 — surface the resolved Ollama tag so the
+    # client can verify which model the run will use.
+    response.headers["X-Model-Used"] = (
+        resolved_model or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+    )
 
     session: Dict[str, Any] = {
         "session_id": session_id,

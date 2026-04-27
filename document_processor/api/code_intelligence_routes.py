@@ -34,6 +34,7 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
+    Response,
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -355,6 +356,7 @@ async def start_code_session(
     payload: CodeStartRequest,
     background: BackgroundTasks,
     http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> CodeStartResponse:
@@ -402,6 +404,17 @@ async def start_code_session(
     except Exception as exc:  # pragma: no cover
         logger.warning("code_resolve_request_model_failed: %s", exc)
         effective_model, model_reason = (payload.preferred_model, "fallback")
+
+    # Spec validation point #1 — surface the resolved tag. Code
+    # Intelligence is special: when no user pref is set, the engine
+    # picks per-role at runtime (planner=qwen2.5-coder:32b,
+    # critic=devstral:24b, …), so we emit a sentinel rather than a
+    # single tag in that case.
+    response.headers["X-Model-Used"] = (
+        effective_model
+        if effective_model
+        else "auto:per-role"
+    )
 
     session: Dict[str, Any] = {
         "session_id": session_id,

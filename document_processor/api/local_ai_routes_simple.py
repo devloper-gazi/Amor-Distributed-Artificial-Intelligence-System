@@ -12,7 +12,7 @@ from uuid import uuid4
 import re
 from urllib.parse import quote_plus, urlparse
 
-from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import httpx
@@ -1539,6 +1539,7 @@ async def start_research(
     request: LocalAIResearchRequest,
     background_tasks: BackgroundTasks,
     http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ):
@@ -1589,6 +1590,11 @@ async def start_research(
         except Exception as exc:  # pragma: no cover
             logger.warning("research_resolve_request_model_failed: %s", exc)
             resolved_model, model_reason = (request.preferred_model, "fallback")
+
+        # Spec validation point #1 — surface the resolved Ollama tag on
+        # the response so clients (and the picker UI) can verify which
+        # model the run will actually use.
+        response.headers["X-Model-Used"] = (resolved_model or OLLAMA_MODEL)
 
         # Initialize session tracking
         research_sessions[session_id] = {
