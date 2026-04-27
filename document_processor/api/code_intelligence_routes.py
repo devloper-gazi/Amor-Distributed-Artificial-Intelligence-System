@@ -484,6 +484,20 @@ async def _run_session(session_id: str) -> None:
         except Exception as _exc:  # noqa: BLE001
             logger.debug("code_preferred_model_contextvar_set_failed: %s", _exc)
 
+    # v4 — fetch the user's multi-model routing doc + push it into the
+    # ContextVar so call_ollama_with can apply per-role / fallback /
+    # ensemble at every nested LLM call.
+    try:
+        from ..infrastructure.chat_store import chat_store as _cs
+        from .local_ai_routes_simple import set_active_routing
+        routing = await _cs.get_model_routing(
+            user_id=session.get("user_id"),
+            client_id=session.get("client_id") or session_id,
+        )
+        set_active_routing(routing)
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("code_routing_contextvar_set_failed: %s", _exc)
+
     registry = get_model_registry()
     sandbox = get_sandbox() if session["enable_execution"] else None
     harness = get_static_harness() if session["enable_static_analysis"] else None
@@ -608,6 +622,17 @@ async def _run_session(session_id: str) -> None:
 
     # ── engine wiring ────────────────────────────────────────────────────
 
+    # v4 — role_setter binds each phase to an agent role so the per-role
+    # / ensemble strategies in `call_ollama_with` can swap models for
+    # planner vs coder vs critic on the fly. Lazy import — `set_active_role`
+    # only exists in the v4 local-ai module.
+    def _phase_role(role: str | None) -> None:
+        try:
+            from .local_ai_routes_simple import set_active_role
+            set_active_role(role)
+        except Exception:  # pragma: no cover
+            pass
+
     engine = CodeIntelligenceEngine(
         prompt=session["prompt"],
         code_context=session.get("code_context"),
@@ -623,6 +648,7 @@ async def _run_session(session_id: str) -> None:
         max_debug_iterations=session["max_debug_iterations"],
         on_event=on_event,
         prepare_models=prepare_models,
+        role_setter=_phase_role,
     )
 
     session["status"] = "in_progress"

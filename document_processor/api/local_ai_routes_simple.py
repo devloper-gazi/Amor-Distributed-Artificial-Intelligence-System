@@ -850,6 +850,18 @@ _ACTIVE_PROFILE: _contextvars.ContextVar[Optional[dict]] = _contextvars.ContextV
     "amor_active_ollama_profile", default=None,
 )
 
+# v4 — Per-task agent role + multi-model routing strategy. The
+# per-role / ensemble / fallback-chain logic in `call_ollama_with`
+# reads these ContextVars to decide which tag(s) to dispatch a call
+# to. Both default to "no opinion" — the route layer (or the engine
+# wiring) sets them at task entry / phase entry.
+_ACTIVE_ROLE: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
+    "amor_active_agent_role", default=None,
+)
+_ACTIVE_ROUTING: _contextvars.ContextVar[Optional[dict]] = _contextvars.ContextVar(
+    "amor_active_model_routing", default=None,
+)
+
 
 def set_active_model(model: Optional[str]):
     """Set the per-task override and return the reset token.
@@ -875,6 +887,70 @@ def set_active_profile(profile: Optional[dict]):
     dict to clear; nested calls fall back to Ollama defaults.
     """
     return _ACTIVE_PROFILE.set(profile or None)
+
+
+def set_active_role(role: Optional[str]):
+    """Set the per-call agent role (v4) — read by ``call_ollama_with``
+    when the active routing doc has ``strategy="per_role"``.
+
+    Engine phases call this at phase entry, e.g.::
+
+        set_active_role("planner")
+        await llm_call(prompt, system, max_tokens)  # may use planner-specific tag
+    """
+    return _ACTIVE_ROLE.set(role or None)
+
+
+def set_active_routing(routing: Optional[dict]):
+    """Set the per-task multi-model routing doc (v4).
+
+    The doc shape mirrors ``ChatStore.user_model_routing``:
+    ``{strategy, role_routes, fallback_chain, ensemble: {voting, members}}``.
+    """
+    return _ACTIVE_ROUTING.set(routing or None)
+
+
+# ── v4 — per-role / fallback / ensemble helpers (used by call_ollama_with)
+
+
+def _routing_apply_role(model: Optional[str]) -> Optional[str]:
+    """If routing.strategy=='per_role' and the active role has a
+    bound tag, return that tag; otherwise return ``model`` unchanged."""
+    routing = _ACTIVE_ROUTING.get()
+    if not routing:
+        return model
+    if routing.get("strategy") != "per_role":
+        return model
+    role = _ACTIVE_ROLE.get()
+    if not role:
+        return model
+    routes = routing.get("role_routes") or {}
+    return (routes.get(role) or "").strip() or model
+
+
+def _routing_fallback_chain() -> list[str]:
+    """Return the configured fallback chain (may be empty)."""
+    routing = _ACTIVE_ROUTING.get() or {}
+    chain = routing.get("fallback_chain") or []
+    return [str(t).strip() for t in chain if str(t).strip()]
+
+
+def _routing_is_ensemble() -> bool:
+    routing = _ACTIVE_ROUTING.get() or {}
+    if routing.get("strategy") != "ensemble":
+        return False
+    members = (routing.get("ensemble") or {}).get("members") or []
+    return len(members) >= 2
+
+
+def _routing_ensemble_config() -> tuple[list[str], str]:
+    routing = _ACTIVE_ROUTING.get() or {}
+    ens = routing.get("ensemble") or {}
+    members = [str(t).strip() for t in (ens.get("members") or []) if str(t).strip()]
+    voting = str(ens.get("voting") or "majority").lower()
+    if voting not in {"majority", "weighted", "first"}:
+        voting = "majority"
+    return members, voting
 
 
 def _resolve_profile() -> dict:
@@ -993,21 +1069,196 @@ async def call_ollama_with(
     """
     Same contract as ``call_ollama`` but takes an explicit model tag.
 
+    v4 — also honors three runtime knobs from ContextVars (set by the
+    routes layer at task / phase entry):
+
+      * ``per_role`` strategy + ``_ACTIVE_ROLE`` → swap ``model`` for
+        the role's bound tag from ``routing.role_routes``.
+      * ``ensemble`` strategy → fan out to N members in parallel and
+        vote (``majority`` / ``weighted`` / ``first``).
+      * ``fallback_chain`` → if the chosen tag fails (HTTP error / 404
+        on a missing model that auto-pull couldn't recover), try each
+        chain member in order before bailing.
+
     When ``model`` is ``None`` / empty / whitespace, falls back to
     ``OLLAMA_MODEL`` so callers can blindly pass through a
-    ``preferred_model`` field from the request body.
-
-    The cache key includes the model so two different tags never share
-    cached responses.
+    ``preferred_model`` field from the request body. The cache key
+    includes the *effective* model (post-role override) so two
+    different role tags never share cached responses.
     """
-    resolved = _resolve_model(model)
+    # Ensemble bypasses the cache — every call hits all members.
+    if _routing_is_ensemble():
+        return await _call_ollama_ensemble(prompt, system, max_tokens)
+
+    # Apply per-role override BEFORE resolution so the cache key is
+    # right and per-role logs are accurate.
+    role_overridden = _routing_apply_role(model)
+    resolved = _resolve_model(role_overridden)
     cached = await _llm_cache_get(prompt, system, max_tokens, resolved)
     if cached is not None:
         logger.debug("llm cache hit model=%s len=%d", resolved, len(cached))
         return cached
-    response = await _call_ollama_uncached_with(resolved, prompt, system, max_tokens)
-    await _llm_cache_set(prompt, system, max_tokens, response, resolved)
-    return response
+
+    # Walk the fallback chain: primary first, then routing.fallback_chain.
+    chain = [resolved]
+    for tag in _routing_fallback_chain():
+        if tag and tag.lower() != resolved.lower() and tag not in chain:
+            chain.append(tag)
+
+    last_exc: Exception | None = None
+    for idx, tag in enumerate(chain):
+        try:
+            response = await _call_ollama_uncached_with(
+                tag, prompt, system, max_tokens,
+            )
+            if idx > 0:
+                logger.warning(
+                    "call_ollama_fallback_used primary=%s used=%s pos=%d",
+                    resolved, tag, idx,
+                )
+            await _llm_cache_set(prompt, system, max_tokens, response, tag)
+            return response
+        except HTTPException as exc:
+            last_exc = exc
+            if exc.status_code in (404, 503) and idx + 1 < len(chain):
+                logger.warning(
+                    "call_ollama_chain_step_failed tag=%s status=%s "
+                    "trying_next_in_chain", tag, exc.status_code,
+                )
+                continue
+            raise
+        except Exception as exc:  # network blow-ups
+            last_exc = exc
+            if idx + 1 < len(chain):
+                logger.warning(
+                    "call_ollama_chain_step_failed tag=%s err=%s "
+                    "trying_next_in_chain", tag, exc,
+                )
+                continue
+            raise
+    # Defensive — should be unreachable, the loop either returns or raises.
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("call_ollama_with: empty fallback chain")
+
+
+async def _call_ollama_ensemble(
+    prompt: str, system: Optional[str], max_tokens: int,
+) -> str:
+    """
+    Ensemble dispatcher — runs every member in parallel and picks the
+    consensus answer per the configured voting strategy.
+
+    Voting strategies
+    -----------------
+    * ``first``    — return the first member to finish; cancel the rest
+                     (lowest latency, no consensus check).
+    * ``weighted`` — pick the longest non-empty response (proxy for
+                     "more thoughtful" without a vote oracle).
+    * ``majority`` — score each response by mean Jaccard similarity to
+                     the others and return the highest. Robust to one
+                     outlier in a 3-member ensemble.
+    """
+    members, voting = _routing_ensemble_config()
+    if not members:
+        # Defensive — _routing_is_ensemble() should already have ruled this out.
+        return await _call_ollama_uncached_with(
+            _resolve_model(None), prompt, system, max_tokens,
+        )
+
+    logger.info(
+        "call_ollama_ensemble_dispatch members=%s voting=%s",
+        members, voting,
+    )
+
+    if voting == "first":
+        # asyncio.wait + cancellation: return the first non-empty.
+        tasks = {
+            asyncio.create_task(
+                _call_ollama_uncached_with(m, prompt, system, max_tokens)
+            ): m
+            for m in members
+        }
+        try:
+            done, pending = await asyncio.wait(
+                tasks.keys(), return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            for t in done:
+                try:
+                    res = t.result()
+                    if res:
+                        return res
+                except Exception as exc:
+                    logger.warning("ensemble_first_member_failed: %s", exc)
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+        # Fallback — all failed; raise the last exception we saw.
+        for t in tasks:
+            if t.done():
+                exc = t.exception()
+                if exc:
+                    raise exc
+        return ""
+
+    # majority / weighted — collect every response, then pick.
+    results = await asyncio.gather(
+        *[
+            _call_ollama_uncached_with(m, prompt, system, max_tokens)
+            for m in members
+        ],
+        return_exceptions=True,
+    )
+    successes: list[tuple[str, str]] = [
+        (members[i], r) for i, r in enumerate(results)
+        if isinstance(r, str) and r.strip()
+    ]
+    if not successes:
+        # Re-raise the first exception we saw.
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+        return ""
+
+    if voting == "weighted":
+        winner_tag, winner_resp = max(successes, key=lambda x: len(x[1]))
+        logger.info(
+            "ensemble_weighted_winner tag=%s len=%d",
+            winner_tag, len(winner_resp),
+        )
+        return winner_resp
+
+    # majority — Jaccard on token bags.
+    def _tokens(s: str) -> set[str]:
+        return {w for w in s.lower().split() if w}
+
+    bags = [(t, _tokens(r), r) for t, r in successes]
+    if len(bags) == 1:
+        return bags[0][2]
+
+    def _score(tag_resp: tuple[str, set, str]) -> float:
+        _, my_bag, _ = tag_resp
+        if not my_bag:
+            return 0.0
+        sims = []
+        for ot, ob, _ in bags:
+            if ot == _ or not ob:
+                continue
+            inter = len(my_bag & ob)
+            union = len(my_bag | ob)
+            sims.append((inter / union) if union else 0.0)
+        return sum(sims) / len(sims) if sims else 0.0
+
+    bags.sort(key=_score, reverse=True)
+    winner_tag, _, winner_resp = bags[0]
+    logger.info(
+        "ensemble_majority_winner tag=%s candidates=%d",
+        winner_tag, len(bags),
+    )
+    return winner_resp
 
 
 async def call_ollama(
