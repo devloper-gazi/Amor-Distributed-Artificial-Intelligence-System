@@ -12,7 +12,7 @@ from uuid import uuid4
 import re
 from urllib.parse import quote_plus, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import httpx
@@ -22,6 +22,7 @@ from ..infrastructure.cache import cache_manager
 from ..research import AdvancedResearcher
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
+from ..services.model_resolution import resolve_request_model
 
 try:
     import trafilatura
@@ -1226,7 +1227,9 @@ async def list_ollama_models():
 async def start_research(
     request: LocalAIResearchRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
     user: User = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ):
     """Start autonomous research on a topic using Ollama."""
     # Ensure Ollama is reachable and the configured model is available (or can be auto-pulled).
@@ -1251,6 +1254,28 @@ async def start_research(
         # Create session
         session_id = str(uuid4())
 
+        # Server-side model resolution. Order:
+        #   1. request.preferred_model (the picker JS sets this when the
+        #      user explicitly chose a tag for this run)
+        #   2. per-user/client MongoDB pref for "research" (then "__all__")
+        #   3. ModelManager.auto_select for the depth tier
+        # `model_reason` goes onto the session payload so the SSE phase
+        # log can surface "Using qwen2.5-coder:7b — user preference".
+        client_id_hdr = (x_client_id or "").strip() or session_id
+        depth_for_pick = (request.depth or "medium").strip().lower() or "medium"
+        try:
+            resolved_model, model_reason = await resolve_request_model(
+                request=http_request,
+                requested_model=request.preferred_model,
+                user_id=user.id,
+                client_id=client_id_hdr,
+                mode="research",
+                effort=depth_for_pick,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("research_resolve_request_model_failed: %s", exc)
+            resolved_model, model_reason = (request.preferred_model, "fallback")
+
         # Initialize session tracking
         research_sessions[session_id] = {
             "session_id": session_id,
@@ -1270,7 +1295,9 @@ async def start_research(
             "cancel_requested": False,
             # Optional Ollama tag override (More settings → AI Model).
             # Empty / None → fall through to OLLAMA_MODEL.
-            "preferred_model": request.preferred_model,
+            "preferred_model": resolved_model,
+            "preferred_model_requested": request.preferred_model,
+            "preferred_model_reason": model_reason,
         }
         await _persist_session(session_id, research_sessions[session_id])
 

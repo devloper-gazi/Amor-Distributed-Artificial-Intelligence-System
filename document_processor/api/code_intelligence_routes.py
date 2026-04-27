@@ -31,6 +31,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    Header,
     HTTPException,
     Request,
 )
@@ -39,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
+from ..services.model_resolution import resolve_request_model
 from ..code_intelligence import (
     CODE_PHASES,
     AdversarialReviewer,
@@ -349,7 +351,9 @@ async def triage(
 async def start_code_session(
     payload: CodeStartRequest,
     background: BackgroundTasks,
+    http_request: Request,
     user: User = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> CodeStartResponse:
     """
     Kick off a full Code Intelligence session. Returns immediately with
@@ -363,6 +367,34 @@ async def start_code_session(
         if payload.max_debug_iterations is not None
         else settings.code_max_debug_iterations
     )
+
+    # Server-side model resolution. The Code Intelligence engine *also*
+    # picks per-role on top of this — but the resolved tag here becomes
+    # the global default (planner/coder/critic all see it unless they
+    # override). When the user picked a tag in the picker, we honour it
+    # everywhere; otherwise we let the registry's per-role auto-pick
+    # logic take over by leaving preferred_model = None.
+    client_id_hdr = (x_client_id or "").strip() or session_id
+    try:
+        resolved_model, model_reason = await resolve_request_model(
+            request=http_request,
+            requested_model=payload.preferred_model,
+            user_id=str(user.id),
+            client_id=client_id_hdr,
+            mode="code",
+            effort=effort,
+        )
+        # Code Intelligence has a richer per-role auto-select than the
+        # generic ModelManager — only honour resolution if it came from
+        # an explicit user choice, not a generic auto pick.
+        if model_reason in {"request override", "user preference (code)",
+                             "user preference (coding)", "user preference (__all__)"}:
+            effective_model = resolved_model
+        else:
+            effective_model = None  # Let CodeModelRegistry pick per role
+    except Exception as exc:  # pragma: no cover
+        logger.warning("code_resolve_request_model_failed: %s", exc)
+        effective_model, model_reason = (payload.preferred_model, "fallback")
 
     session: Dict[str, Any] = {
         "session_id": session_id,
@@ -379,7 +411,9 @@ async def start_code_session(
         "enable_static_analysis": bool(payload.enable_static_analysis),
         "enable_testing": bool(payload.enable_testing),
         "max_debug_iterations": int(max_debug),
-        "preferred_model": payload.preferred_model,
+        "preferred_model": effective_model,
+        "preferred_model_requested": payload.preferred_model,
+        "preferred_model_reason": model_reason,
         # Phase scaffold matching CODE_PHASES order.
         "phases": [
             {"name": n, "label": l, "status": "pending", "detail": {}}
