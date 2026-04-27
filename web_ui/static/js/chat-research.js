@@ -47,6 +47,7 @@ class ChatController {
         // query_record itself.
         this._currentThinkingBackendId = null;
         this._currentResearchBackendId = null;
+        this._currentCodeBackendId = null;
 
         // Expose open/close handlers for settings panel (wired during init)
         this.openResearchSettingsPanel = null;
@@ -779,6 +780,7 @@ class ChatController {
             this._currentQueryRecordId = null;
             this._currentThinkingBackendId = null;
             this._currentResearchBackendId = null;
+            this._currentCodeBackendId = null;
         }
     }
 
@@ -943,6 +945,10 @@ class ChatController {
             // provider — the backend picks local vs claude from the body.
             if (this.mode === 'thinking') {
                 await this.thinkingWithLocalAI(message, typingId, useClaudeAPI ? 'claude' : 'local');
+            } else if (this.mode === 'code') {
+                // Code Intelligence is local-only by design (zero-API
+                // multi-agent engine). The Claude toggle is ignored here.
+                await this._runCodeIntelligence(message, typingId);
             } else if (useClaudeAPI) {
                 await this.processWithClaude(message, typingId);
             } else {
@@ -978,6 +984,7 @@ class ChatController {
             this._currentAssistantMsgKey = null;
             this._currentThinkingBackendId = null;
             this._currentResearchBackendId = null;
+            this._currentCodeBackendId = null;
         }
     }
 
@@ -1003,6 +1010,11 @@ class ChatController {
         if (mode === 'thinking' && this._currentThinkingBackendId) {
             calls.push(this._authFetch(
                 `/api/thinking/${encodeURIComponent(this._currentThinkingBackendId)}/cancel`,
+                { method: 'POST' }
+            ));
+        } else if (mode === 'code' && this._currentCodeBackendId) {
+            calls.push(this._authFetch(
+                `/api/code/${encodeURIComponent(this._currentCodeBackendId)}/cancel`,
                 { method: 'POST' }
             ));
         } else if (mode === 'research' && !useClaudeAPI && this._currentResearchBackendId) {
@@ -1419,6 +1431,270 @@ class ChatController {
                 resolve({});
             };
         });
+    }
+
+    // ────────────────────────────────────────────────────── Code Intelligence Mode
+    //
+    // Flow:
+    //   1. POST /api/code/triage         → fast classification
+    //   2. POST /api/code/start          → returns session_id
+    //   3. SSE /api/code/{sid}/events    → live phase + sandbox events
+    //   4. Final snapshot persisted into the chat history
+    //
+    // 100% local — no Claude path. The mode-button-selected provider is
+    // ignored for code intelligence by design (zero-API engine).
+
+    async _runCodeIntelligence(message, typingId) {
+        if (typeof CodeView !== 'function') {
+            throw new Error('CodeView component is not loaded');
+        }
+
+        // Effort piggybacks on the same depth selector used by Thinking.
+        const depthSelect = document.getElementById('researchDepth');
+        const effort = depthSelect?.value || 'medium';
+
+        const view = new CodeView(message, effort, null);
+        this.removeTypingIndicator(typingId);
+        this._mountCodeCard(view);
+
+        // 1. Quick triage (best effort — failure doesn't block start).
+        try {
+            const triageRes = await this._authFetch('/api/code/triage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: message }),
+                signal: this._currentAbortController?.signal,
+            });
+            if (triageRes.ok) {
+                const triage = await triageRes.json();
+                view.handleEvent({ type: 'phase_complete',
+                    phase: 'triage', label: 'Triage', detail: triage });
+                if (triage?.language) view.language = triage.language;
+            }
+        } catch (e) {
+            console.warn('code triage failed (non-fatal):', e);
+        }
+
+        // 2. Start the pipeline.
+        let session;
+        try {
+            const res = await this._authFetch('/api/code/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: message,
+                    code_context: null,
+                    language: null,
+                    effort,
+                    provider: 'local',
+                    enable_execution: true,
+                    enable_static_analysis: true,
+                    enable_testing: true,
+                    chat_session_id: this.chatSessionId || null,
+                    query_record_id: this._currentQueryRecordId || null,
+                    user_message_idempotency_key: this._currentUserMsgKey || null,
+                    assistant_message_idempotency_key: this._currentAssistantMsgKey || null,
+                }),
+                signal: this._currentAbortController?.signal,
+            });
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (_) {}
+                throw new Error(`Failed to start code intelligence (${res.status})${detail ? ' - ' + detail : ''}`);
+            }
+            session = await res.json();
+        } catch (err) {
+            view.handleEvent({ type: 'error', message: err.message });
+            throw err;
+        }
+
+        // Stash the backend session id so the Stop button can hit
+        // /api/code/{sid}/cancel directly.
+        this._currentCodeBackendId = session.session_id;
+        this._persistActiveCode(session.session_id);
+
+        view.showTimeline({ session_id: session.session_id, phases: [] });
+
+        // 3. Stream — SSE first, polling fallback.
+        let runError = null;
+        try {
+            try {
+                await this._streamCode(session.session_id, view);
+            } catch (sseErr) {
+                console.warn('Code SSE failed, polling fallback:', sseErr);
+                await this._pollCode(session.session_id, view);
+            }
+        } catch (err) {
+            runError = err;
+            try { view.handleEvent({ type: 'error',
+                message: err.message || 'Code intelligence failed' }); } catch (_) {}
+        } finally {
+            this._clearActiveCode();
+        }
+
+        // 4. Persist snapshot — chat history reload re-mounts the rich card.
+        const snap = view.toSnapshot();
+        const assistantMsg = {
+            role: 'assistant',
+            content: runError
+                ? `Code intelligence failed: ${runError.message}`
+                : '',
+            aiType: 'local-code',
+            format: 'code',
+            extras: { code: snap, error: runError ? runError.message : undefined },
+        };
+        this.messageHistory.push(assistantMsg);
+        try { await this.persistChatMessage(assistantMsg); } catch (persistErr) {
+            console.warn('Failed to persist code snapshot:', persistErr);
+        }
+
+        if (runError) throw runError;
+    }
+
+    _mountCodeCard(view) {
+        const wrap = document.createElement('div');
+        wrap.className = 'message assistant local-code';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        wrap.innerHTML = `
+            <div class="message-bubble code-bubble">
+                <div class="message-header">
+                    <div class="message-avatar">⚙</div>
+                    <span class="message-name">Code Intelligence</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-content code-content"></div>
+            </div>
+        `;
+        wrap.querySelector('.code-content').appendChild(view.getElement());
+        this.messagesArea?.appendChild(wrap);
+        this.scrollToBottom();
+    }
+
+    _streamCode(sessionId, view) {
+        return this._sseLoop({
+            url: (token) => `/api/code/${sessionId}/events${
+                token ? `?access_token=${encodeURIComponent(token)}` : ''
+            }`,
+            view,
+            failureMessage: 'Code intelligence failed',
+        });
+    }
+
+    async _pollCode(sessionId, view) {
+        // Polling fallback if SSE is wedged. Same self-healing 400ms cadence
+        // as _pollThinking but tracking code-mode session shape.
+        const seen = new Set();
+        const start = Date.now();
+        const TIMEOUT_MS = 30 * 60 * 1000; // 30 min hard cap
+
+        while (true) {
+            if (Date.now() - start > TIMEOUT_MS) {
+                throw new Error('Code intelligence polling timed out');
+            }
+            await new Promise(r => setTimeout(r, 800));
+            try {
+                const resp = await this._authFetch(
+                    `/api/code/${encodeURIComponent(sessionId)}/status`
+                );
+                if (!resp.ok) {
+                    if (resp.status === 404) throw new Error('Code session lost');
+                    continue;
+                }
+                const snap = await resp.json();
+                view.handleEvent({ type: 'snapshot', ...snap });
+                if (snap.status === 'completed') {
+                    view.handleEvent({ type: 'done' });
+                    return;
+                }
+                if (snap.status === 'failed') {
+                    throw new Error(snap.error || 'Code intelligence failed');
+                }
+                if (snap.status === 'cancelled') {
+                    view.handleEvent({ type: 'cancelled' });
+                    return;
+                }
+            } catch (e) {
+                console.warn('code polling error:', e);
+            }
+        }
+    }
+
+    // ── localStorage active-code persistence (mirrors active-research) ──
+
+    _persistActiveCode(sessionId) {
+        try {
+            localStorage.setItem('amor.activeCode', JSON.stringify({
+                sessionId, ts: Date.now(),
+            }));
+        } catch (_) {}
+    }
+
+    _clearActiveCode() {
+        try { localStorage.removeItem('amor.activeCode'); } catch (_) {}
+    }
+
+    _readActiveCode() {
+        try {
+            const raw = localStorage.getItem('amor.activeCode');
+            if (!raw) return null;
+            const saved = JSON.parse(raw);
+            if (!saved?.sessionId) return null;
+            if (Date.now() - (saved.ts || 0) > 4 * 3600 * 1000) {
+                this._clearActiveCode();
+                return null;
+            }
+            return saved;
+        } catch (_) { return null; }
+    }
+
+    /**
+     * Resume an in-flight Code Intelligence session after page reload.
+     * Mirrors `_resumeActiveResearchIfAny`. Called once from
+     * DOMContentLoaded by app.js.
+     */
+    async _resumeActiveCodeIfAny() {
+        const saved = this._readActiveCode();
+        if (!saved) return;
+        try {
+            const resp = await this._authFetch(
+                `/api/code/${encodeURIComponent(saved.sessionId)}/status`
+            );
+            if (resp.status === 404) {
+                this._clearActiveCode();
+                return;
+            }
+            if (!resp.ok) return;
+            const snap = await resp.json();
+            if (snap.status === 'completed' || snap.status === 'failed') {
+                this._clearActiveCode();
+                return;
+            }
+            if (typeof CodeView !== 'function') return;
+            const view = CodeView.fromSnapshot({
+                prompt: snap.prompt || '',
+                effort: snap.effort || 'medium',
+                language: snap.language || null,
+                phases: snap.phases || [],
+                models_used: snap.models_used || {},
+                code: snap.code,
+                tests: snap.tests,
+                execution_results: snap.execution_results || [],
+                static_analysis: snap.static_analysis,
+                review: snap.review,
+                debug_iterations: snap.debug_iterations,
+                status: snap.status,
+            });
+            this._mountCodeCard(view);
+            this._currentCodeBackendId = saved.sessionId;
+            try {
+                try { await this._streamCode(saved.sessionId, view); }
+                catch (_) { await this._pollCode(saved.sessionId, view); }
+            } finally {
+                this._clearActiveCode();
+            }
+        } catch (e) {
+            console.warn('resume-code failed:', e);
+        }
     }
 
     _streamThinking(sessionId, view) {
@@ -2009,6 +2285,20 @@ class ChatController {
                 }
             }
 
+            const looksLikeCode =
+                (msg.format === 'code' || msg.extras?.code?.code ||
+                    msg.extras?.code?.execution_results) &&
+                msg.extras?.code && typeof CodeView === 'function';
+            if (looksLikeCode) {
+                try {
+                    const view = CodeView.fromSnapshot(msg.extras.code);
+                    this._mountCodeCard(view);
+                    return;
+                } catch (e) {
+                    console.warn('Failed to restore code snapshot:', e);
+                }
+            }
+
             // Defensive markdown rendering — when the only thing we have is
             // raw markdown text in `content`, run it through the renderer
             // exposed by research-view.js so headings / bold / lists / code
@@ -2074,6 +2364,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const tryResume = () => {
             try { window.chatController?._resumeActiveResearchIfAny?.(); }
             catch (e) { console.warn('resume-research bootstrap failed:', e); }
+            try { window.chatController?._resumeActiveCodeIfAny?.(); }
+            catch (e) { console.warn('resume-code bootstrap failed:', e); }
         };
         if (window.amorAuth?.isAuthenticated?.()) {
             tryResume();

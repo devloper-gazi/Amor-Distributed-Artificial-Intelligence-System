@@ -129,13 +129,18 @@
                     </div>
                     <div class="capability-card" data-mode="thinking">
                         <div class="card-icon">🧠</div>
-                        <h3>Analyze & Think</h3>
+                        <h3>Analyze &amp; Think</h3>
                         <p>Deep reasoning and analytical problem-solving</p>
+                    </div>
+                    <div class="capability-card" data-mode="code">
+                        <div class="card-icon">⚙</div>
+                        <h3>Code Intelligence</h3>
+                        <p>Multi-agent code generation, debugging &amp; review — 100% local, zero API cost</p>
                     </div>
                     <div class="capability-card" data-mode="coding">
                         <div class="card-icon">💻</div>
-                        <h3>Generate Code</h3>
-                        <p>Code generation, debugging, and technical assistance</p>
+                        <h3>Quick Code Chat</h3>
+                        <p>Single-shot code generation and technical assistance</p>
                     </div>
                 </div>
 
@@ -596,11 +601,17 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
+    <!-- highlight.js for code blocks in the Code Intelligence view -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+
     <script src="/static/js/auth.js?v={{ static_version }}"></script>
     <script src="/static/js/auth-chip.js?v={{ static_version }}"></script>
     <script src="/static/js/app.js?v={{ static_version }}"></script>
     <script src="/static/js/research-view.js?v={{ static_version }}"></script>
     <script src="/static/js/thinking-view.js?v={{ static_version }}"></script>
+    <script src="/static/js/code-view.js?v={{ static_version }}"></script>
     <script src="/static/js/chat-research.js?v={{ static_version }}"></script>
 </body>
 </html>

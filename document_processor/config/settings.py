@@ -217,6 +217,28 @@ class Settings(BaseSettings):
     llm_response_cache_enabled: bool = False
     llm_response_cache_ttl_seconds: int = 7 * 24 * 3600
 
+    # ── Code Intelligence Mode ──────────────────────────────────────────
+    # Multi-agent local-only code engine — see document_processor/
+    # code_intelligence/. Zero external API calls; all inference runs
+    # against the local Ollama deployment.
+    code_ollama_base_url: str = "http://ollama:11434"
+    # Force a specific Ollama tag for ALL code agents. Empty = let the
+    # CodeModelRegistry auto-select per role + effort.
+    code_default_model: str = ""
+    # Docker-based execution sandbox.
+    code_sandbox_enabled: bool = True
+    code_sandbox_timeout: int = 30
+    code_sandbox_memory: str = "256m"
+    # Maximum debug→fix→reexecute loops per session.
+    code_max_debug_iterations: int = 3
+    # Auto-pull the best code model if not installed.
+    code_auto_pull_models: bool = True
+    # Redis TTL for in-flight code intelligence sessions.
+    code_session_ttl_seconds: int = 7200
+    # Comma-separated language images to pre-pull at startup so the
+    # first execution isn't slowed by a 100 MB image fetch.
+    code_sandbox_prewarm_images: str = "python:3.11-slim,node:20-slim"
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

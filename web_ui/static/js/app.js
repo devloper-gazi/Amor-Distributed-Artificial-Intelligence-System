@@ -452,12 +452,13 @@ function updateModeDisplay(mode) {
     const modeNames = {
         research: 'Research',
         thinking: 'Thinking',
-        coding: 'Coding'
+        coding: 'Coding',
+        code: 'Code Intelligence',
     };
 
     const currentModeDisplay = document.getElementById('currentModeDisplay');
     if (currentModeDisplay) {
-        currentModeDisplay.textContent = modeNames[mode];
+        currentModeDisplay.textContent = modeNames[mode] || 'Research';
     }
 }
 
@@ -694,6 +695,7 @@ function formatModeShort(mode) {
     if (m === 'research') return 'R';
     if (m === 'thinking') return 'T';
     if (m === 'coding') return 'C';
+    if (m === 'code') return 'CI';  // Code Intelligence (multi-agent)
     return '?';
 }
 

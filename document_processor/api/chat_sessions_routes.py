@@ -30,7 +30,10 @@ def _require_client_id(x_client_id: Optional[str]) -> str:
 
 def _normalize_mode(mode: str) -> str:
     m = (mode or "").strip().lower()
-    if m not in {"research", "thinking", "coding"}:
+    # `code` = the new Code Intelligence multi-agent mode; `coding` is
+    # the legacy single-shot Claude/Local code chat. Both stay valid so
+    # existing chat sessions render correctly.
+    if m not in {"research", "thinking", "coding", "code"}:
         raise HTTPException(status_code=400, detail="Invalid mode")
     return m
 
