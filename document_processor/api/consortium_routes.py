@@ -18,6 +18,7 @@ drop, optional auth (JWT-or-X-Client-Id), 5-tier effort budgeting.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import logging
@@ -69,6 +70,7 @@ except ImportError:  # pragma: no cover
     _event_queues = {}
 
 _EVENT_QUEUE_MAXSIZE = 500
+_CONSORTIUM_EVENT_CHANNEL = "amor:consortium:events:{session_id}"
 
 
 # Optional active-cancel registry — we keep the asyncio.Task so the
@@ -94,6 +96,21 @@ def _require_client_id(x_client_id: Optional[str]) -> str:
     if not x_client_id or not x_client_id.strip():
         raise HTTPException(status_code=400, detail="Missing X-Client-Id header")
     return x_client_id.strip()
+
+
+def _require_owner(session: Dict[str, Any], user: Optional[User]) -> None:
+    """Reject reads for sessions owned by another authenticated user.
+
+    Anonymous sessions (``user_id=None``) are accessible to anyone with
+    the session_id — same posture as the chat-store routes. Mirrors
+    ``code_intelligence_routes._require_owner``.
+    """
+    owner = session.get("user_id")
+    # If the session has an authenticated owner, callers must
+    # authenticate as that owner. A 404 (not 403) avoids leaking the
+    # existence of the session.
+    if owner and (user is None or str(owner) != str(user.id)):
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 async def _persist(session_id: str, session: Dict[str, Any]) -> None:
@@ -290,7 +307,7 @@ async def _run_session(session_id: str) -> None:
         # Persist the snapshot every event — replicas + reload reads stay current.
         await _persist(session_id, session)
 
-        # Fan out to the SSE queue.
+        # Fan out to the local SSE queue.
         try:
             queue.put_nowait(event)
         except asyncio.QueueFull:
@@ -299,6 +316,19 @@ async def _run_session(session_id: str) -> None:
                 queue.put_nowait(event)
             except (asyncio.QueueEmpty, asyncio.QueueFull):
                 pass
+
+        # v6 — cross-replica fan-out via Redis pub/sub. Mirrors the
+        # pattern in code_intelligence_routes._publish so SSE clients
+        # connecting to a *different* replica than the one running the
+        # bg task still see live events. Failure-quiet — Redis offline
+        # just degrades to single-replica behaviour.
+        try:
+            await cache_manager.publish_event(
+                _CONSORTIUM_EVENT_CHANNEL.format(session_id=session_id),
+                event,
+            )
+        except Exception as exc:
+            logger.debug("consortium_publish_failed: %s", exc)
 
     orchestrator = ConsortiumOrchestrator(
         session_id=session_id,
@@ -335,12 +365,21 @@ async def event_stream(
     user: Optional[User] = Depends(get_optional_user),
 ):
     """SSE feed of consortium events. Replays cached events on
-    reconnect so a flaky client doesn't miss the start of the pipeline."""
+    reconnect so a flaky client doesn't miss the start of the pipeline.
+
+    v6 — also subscribes to Redis pub/sub so a client connecting to a
+    different replica than the one running the bg task still sees live
+    events. The local in-memory queue and the Redis subscription are
+    drained concurrently; either source can deliver an event first and
+    the other path is deduped via ``event_id``.
+    """
     session = await _load(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
 
     queue = _event_queue(session_id)
+    channel = _CONSORTIUM_EVENT_CHANNEL.format(session_id=session_id)
 
     async def stream():
         # Replay current snapshot so a fresh subscriber sees scope + phases.
@@ -357,13 +396,61 @@ async def event_stream(
         yield f"data: {json.dumps(snapshot)}\n\n"
 
         seen_ids: set[str] = set()
+        # Drain BOTH the in-process queue and the Redis pub/sub channel
+        # in parallel. Whichever fires first delivers; the other path
+        # gets deduped by event_id.
+        sub_task: Optional[asyncio.Task] = None
+        sub_queue: asyncio.Queue = asyncio.Queue(maxsize=_EVENT_QUEUE_MAXSIZE)
+
+        async def _redis_pump():
+            try:
+                async for evt in cache_manager.subscribe_events(channel):
+                    if isinstance(evt, dict):
+                        try:
+                            sub_queue.put_nowait(evt)
+                        except asyncio.QueueFull:
+                            with contextlib.suppress(
+                                asyncio.QueueEmpty, asyncio.QueueFull,
+                            ):
+                                sub_queue.get_nowait()
+                                sub_queue.put_nowait(evt)
+            except Exception as exc:
+                logger.debug("consortium_subscribe_failed: %s", exc)
+
+        sub_task = asyncio.create_task(_redis_pump())
+
         try:
             while True:
                 if await request.is_disconnected():
                     break
+                # Race the local queue + the redis-pump'd queue.
+                getters = [
+                    asyncio.create_task(queue.get()),
+                    asyncio.create_task(sub_queue.get()),
+                ]
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                    done, _pending = await asyncio.wait(
+                        getters, timeout=15.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    # Always cancel the losing tasks so we don't leak
+                    # a pending queue.get() across iterations.
+                    for t in getters:
+                        if not t.done():
+                            t.cancel()
+                if not done:
+                    yield ": keep-alive\n\n"
+                    continue
+                # Take the first finished result.
+                event = None
+                for t in done:
+                    if event is None:
+                        try:
+                            event = t.result()
+                        except Exception:
+                            event = None
+                if event is None:
                     yield ": keep-alive\n\n"
                     continue
                 eid = event.get("event_id")
@@ -378,7 +465,10 @@ async def event_stream(
                              "consortium_cancelled"}:
                     break
         finally:
-            pass  # event_queue is owned by the bg task; leave it alone
+            if sub_task and not sub_task.done():
+                sub_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await sub_task
 
     return StreamingResponse(
         stream(),
@@ -417,6 +507,7 @@ async def get_status(
     session = await _load(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
     return _public_snapshot(session)
 
 
@@ -439,6 +530,7 @@ async def cancel_session(
     session = await _load(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
     session["cancel_requested"] = True
     await _persist(session_id, session)
     # If the task is still running on this replica, cancel directly so
@@ -467,6 +559,7 @@ async def download_artifact(
     session = await _load(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_owner(session, user)
     artifact_dir = Path(session.get("artifact_dir") or "")
     if not artifact_dir.exists():
         raise HTTPException(
