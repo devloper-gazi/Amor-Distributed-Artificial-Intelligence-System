@@ -23,7 +23,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-LANGUAGE_RUNNERS: Dict[str, Dict[str, Any]] = {
+LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
     "python": {
         "image": "python:3.11-slim",
         "cmd": ["python", "/sandbox/work/main.py"],
@@ -47,7 +47,8 @@ LANGUAGE_RUNNERS: Dict[str, Dict[str, Any]] = {
     "typescript": {
         "image": "node:20-slim",
         "cmd": [
-            "sh", "-c",
+            "sh",
+            "-c",
             "cd /sandbox/work && "
             "npx -y -p typescript -p ts-node ts-node --skipProject main.ts 2>&1",
         ],
@@ -66,7 +67,8 @@ LANGUAGE_RUNNERS: Dict[str, Dict[str, Any]] = {
     "rust": {
         "image": "rust:1.78-slim",
         "cmd": [
-            "sh", "-c",
+            "sh",
+            "-c",
             "cd /sandbox/work && rustc main.rs -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.rs",
@@ -74,7 +76,8 @@ LANGUAGE_RUNNERS: Dict[str, Dict[str, Any]] = {
     "cpp": {
         "image": "gcc:13",
         "cmd": [
-            "sh", "-c",
+            "sh",
+            "-c",
             "cd /sandbox/work && g++ -O2 main.cpp -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.cpp",
@@ -82,7 +85,8 @@ LANGUAGE_RUNNERS: Dict[str, Dict[str, Any]] = {
     "java": {
         "image": "openjdk:21-slim",
         "cmd": [
-            "sh", "-c",
+            "sh",
+            "-c",
             "cd /sandbox/work && cp Main.java /tmp/ && cd /tmp && "
             "javac Main.java && java Main 2>&1",
         ],
@@ -102,19 +106,15 @@ class ExecutionResult:
     stdout: str
     stderr: str
     timed_out: bool = False
-    error: Optional[str] = None
+    error: str | None = None
     duration_ms: int = 0
     language: str = ""
 
     @property
     def success(self) -> bool:
-        return (
-            self.exit_code == 0
-            and not self.timed_out
-            and not self.error
-        )
+        return self.exit_code == 0 and not self.timed_out and not self.error
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "exit_code": self.exit_code,
             "stdout": self.stdout,
@@ -134,10 +134,7 @@ class ExecutionResult:
             status = "⏱ TIMEOUT"
         else:
             status = "❌ FAILED"
-        lines = [
-            f"Execution: {status} (exit={self.exit_code}, "
-            f"{self.duration_ms}ms)"
-        ]
+        lines = [f"Execution: {status} (exit={self.exit_code}, {self.duration_ms}ms)"]
         if self.error:
             lines.append(f"ERROR: {self.error[:500]}")
         if self.stdout.strip():
@@ -177,7 +174,10 @@ class ExecutionSandbox:
         """Cheap check: is the Docker CLI / daemon reachable?"""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "version", "--format", "{{.Server.Version}}",
+                "docker",
+                "version",
+                "--format",
+                "{{.Server.Version}}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -189,7 +189,10 @@ class ExecutionSandbox:
     async def _ensure_image(self, image: str) -> None:
         """Pull the Docker image if it isn't already present locally."""
         proc = await asyncio.create_subprocess_exec(
-            "docker", "image", "inspect", image,
+            "docker",
+            "image",
+            "inspect",
+            image,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -199,25 +202,29 @@ class ExecutionSandbox:
 
         logger.info("sandbox_pulling_image image=%s", image)
         proc = await asyncio.create_subprocess_exec(
-            "docker", "pull", image,
+            "docker",
+            "pull",
+            image,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(
-                f"Failed to pull Docker image {image}: "
-                f"{stderr.decode(errors='replace')}"
+                f"Failed to pull Docker image {image}: {stderr.decode(errors='replace')}"
             )
 
-    async def image_status(self) -> Dict[str, bool]:
+    async def image_status(self) -> dict[str, bool]:
         """Map of language → whether its base image is locally cached."""
-        out: Dict[str, bool] = {}
+        out: dict[str, bool] = {}
         for lang, cfg in LANGUAGE_RUNNERS.items():
             image = cfg["image"]
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "docker", "image", "inspect", image,
+                    "docker",
+                    "image",
+                    "inspect",
+                    image,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -233,10 +240,10 @@ class ExecutionSandbox:
         self,
         code: str,
         language: str = "python",
-        extra_files: Optional[Dict[str, str]] = None,
-        install_packages: Optional[List[str]] = None,
-        timeout: Optional[int] = None,
-        stdin_data: Optional[str] = None,
+        extra_files: dict[str, str] | None = None,
+        install_packages: list[str] | None = None,
+        timeout: int | None = None,
+        stdin_data: str | None = None,
     ) -> ExecutionResult:
         """
         Execute code in an isolated Docker container.
@@ -260,8 +267,7 @@ class ExecutionSandbox:
                 stdout="",
                 stderr="",
                 error=(
-                    f"Unsupported language: {language!r}. "
-                    f"Supported: {sorted(LANGUAGE_RUNNERS)}"
+                    f"Unsupported language: {language!r}. Supported: {sorted(LANGUAGE_RUNNERS)}"
                 ),
                 language=language,
             )
@@ -269,7 +275,7 @@ class ExecutionSandbox:
         timeout = int(timeout or self._default_timeout)
         container_name = f"amor-sandbox-{uuid.uuid4().hex[:12]}"
         workdir = tempfile.mkdtemp(prefix="amor_sandbox_")
-        proc: Optional[asyncio.subprocess.Process] = None
+        proc: asyncio.subprocess.Process | None = None
 
         try:
             # Write source
@@ -301,9 +307,7 @@ class ExecutionSandbox:
                     install_prefix = f"pip install --quiet {pkgs} && "
                 elif lang in ("javascript", "typescript"):
                     pkgs = " ".join(f'"{p}"' for p in install_packages)
-                    install_prefix = (
-                        f"cd /sandbox/work && npm install --silent {pkgs} && "
-                    )
+                    install_prefix = f"cd /sandbox/work && npm install --silent {pkgs} && "
             if install_prefix:
                 # Wrap whatever cmd we had in a single shell invocation.
                 original_cmd = " ".join(cmd_parts)
@@ -312,18 +316,28 @@ class ExecutionSandbox:
             await self._ensure_image(cfg["image"])
 
             docker_args = [
-                "docker", "run",
-                "--name", container_name,
+                "docker",
+                "run",
+                "--name",
+                container_name,
                 "--rm",
-                "--network", "none",
-                "--security-opt", "no-new-privileges",
-                "--memory", self._memory_limit,
-                "--memory-swap", self._memory_limit,
-                "--cpu-quota", str(self._cpu_quota),
+                "--network",
+                "none",
+                "--security-opt",
+                "no-new-privileges",
+                "--memory",
+                self._memory_limit,
+                "--memory-swap",
+                self._memory_limit,
+                "--cpu-quota",
+                str(self._cpu_quota),
                 "--read-only",
-                "--tmpfs", "/tmp:size=64m,exec",
-                "-v", f"{workdir}:/sandbox/work:ro",
-                "--workdir", "/sandbox/work",
+                "--tmpfs",
+                "/tmp:size=64m,exec",
+                "-v",
+                f"{workdir}:/sandbox/work:ro",
+                "--workdir",
+                "/sandbox/work",
                 cfg["image"],
                 *cmd_parts,
             ]
@@ -343,13 +357,15 @@ class ExecutionSandbox:
                     proc.communicate(input=stdin_bytes),
                     timeout=float(timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 # Kill the container by name (proc.kill alone is not
                 # sufficient because Docker forks the actual workload).
                 try:
                     kill_proc = await asyncio.create_subprocess_exec(
-                        "docker", "kill", container_name,
+                        "docker",
+                        "kill",
+                        container_name,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
                     )
@@ -389,7 +405,10 @@ class ExecutionSandbox:
             # container by name. Never raises.
             try:
                 cleanup = await asyncio.create_subprocess_exec(
-                    "docker", "rm", "-f", container_name,
+                    "docker",
+                    "rm",
+                    "-f",
+                    container_name,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )

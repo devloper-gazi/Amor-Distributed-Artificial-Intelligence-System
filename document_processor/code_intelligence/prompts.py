@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import json
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompts — one persona per agent
@@ -189,7 +188,7 @@ TRIAGE_SYSTEM_PROMPT = dedent(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _safe_truncate(text: Optional[str], limit: int) -> str:
+def _safe_truncate(text: str | None, limit: int) -> str:
     if not text:
         return ""
     if len(text) <= limit:
@@ -199,7 +198,7 @@ def _safe_truncate(text: Optional[str], limit: int) -> str:
 
 def triage_prompt(
     user_prompt: str,
-    code_context: Optional[str] = None,
+    code_context: str | None = None,
 ) -> str:
     return dedent(
         f"""
@@ -207,9 +206,19 @@ def triage_prompt(
         ---
         {_safe_truncate(user_prompt, 4000)}
         ---
-        {("Existing code context:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(code_context, 4000) + chr(10) + "---")
-         if code_context else ""}
+        {
+            (
+                "Existing code context:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(code_context, 4000)
+                + chr(10)
+                + "---"
+            )
+            if code_context
+            else ""
+        }
 
         Classify this request. Return JSON only matching the schema in
         your system prompt. If the request includes broken code with an
@@ -222,8 +231,8 @@ def triage_prompt(
 
 def planner_prompt(
     user_prompt: str,
-    code_context: Optional[str] = None,
-    triage: Optional[Dict[str, Any]] = None,
+    code_context: str | None = None,
+    triage: dict[str, Any] | None = None,
 ) -> str:
     triage_blob = json.dumps(triage or {}, ensure_ascii=False, indent=2)
     return dedent(
@@ -234,9 +243,19 @@ def planner_prompt(
         ---
         {_safe_truncate(user_prompt, 8000)}
         ---
-        {("Existing code context:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(code_context, 8000) + chr(10) + "---")
-         if code_context else ""}
+        {
+            (
+                "Existing code context:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(code_context, 8000)
+                + chr(10)
+                + "---"
+            )
+            if code_context
+            else ""
+        }
 
         Triage classification:
         {triage_blob}
@@ -272,9 +291,9 @@ def planner_prompt(
 
 def coder_prompt(
     user_prompt: str,
-    plan: Dict[str, Any],
-    code_context: Optional[str] = None,
-    feedback: Optional[str] = None,
+    plan: dict[str, Any],
+    code_context: str | None = None,
+    feedback: str | None = None,
 ) -> str:
     plan_blob = json.dumps(plan or {}, ensure_ascii=False, indent=2)
     return dedent(
@@ -285,13 +304,26 @@ def coder_prompt(
         ---
         {_safe_truncate(user_prompt, 6000)}
         ---
-        {("Existing code context:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(code_context, 6000) + chr(10) + "---")
-         if code_context else ""}
+        {
+            (
+                "Existing code context:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(code_context, 6000)
+                + chr(10)
+                + "---"
+            )
+            if code_context
+            else ""
+        }
         Plan from the architect:
         {plan_blob}
-        {("Prior feedback to incorporate:" + chr(10) +
-          _safe_truncate(feedback, 4000)) if feedback else ""}
+        {
+            ("Prior feedback to incorporate:" + chr(10) + _safe_truncate(feedback, 4000))
+            if feedback
+            else ""
+        }
 
         Write a COMPLETE, runnable implementation. Output exactly one
         code fence followed by exactly one JSON fence — see your system
@@ -304,7 +336,7 @@ def coder_prompt(
 def tester_prompt(
     user_prompt: str,
     code: str,
-    plan: Dict[str, Any],
+    plan: dict[str, Any],
 ) -> str:
     plan_blob = json.dumps(plan or {}, ensure_ascii=False, indent=2)
     return dedent(
@@ -335,7 +367,7 @@ def debugger_prompt(
     code: str,
     execution_feedback: str,
     static_feedback: str,
-    test_failure: Optional[str] = None,
+    test_failure: str | None = None,
     iteration: int = 1,
     language: str = "python",
 ) -> str:
@@ -360,9 +392,19 @@ def debugger_prompt(
         ---
         {_safe_truncate(static_feedback, 2000)}
         ---
-        {("Test failures:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(test_failure, 3000) + chr(10) + "---")
-         if test_failure else ""}
+        {
+            (
+                "Test failures:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(test_failure, 3000)
+                + chr(10)
+                + "---"
+            )
+            if test_failure
+            else ""
+        }
 
         Output the COMPLETE fixed code (not a diff) plus the JSON
         metadata block your system prompt requires.
@@ -373,9 +415,9 @@ def debugger_prompt(
 def critic_prompt(
     user_prompt: str,
     code: str,
-    plan: Dict[str, Any],
-    execution_feedback: Optional[str],
-    static_feedback: Optional[str],
+    plan: dict[str, Any],
+    execution_feedback: str | None,
+    static_feedback: str | None,
     language: str = "python",
 ) -> str:
     plan_blob = json.dumps(plan or {}, ensure_ascii=False, indent=2)
@@ -393,12 +435,32 @@ def critic_prompt(
         ```{language}
         {_safe_truncate(code, 12000)}
         ```
-        {("Execution result:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(execution_feedback, 3000) + chr(10) + "---")
-         if execution_feedback else ""}
-        {("Static analysis:" + chr(10) + "---" + chr(10) +
-          _safe_truncate(static_feedback, 2000) + chr(10) + "---")
-         if static_feedback else ""}
+        {
+            (
+                "Execution result:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(execution_feedback, 3000)
+                + chr(10)
+                + "---"
+            )
+            if execution_feedback
+            else ""
+        }
+        {
+            (
+                "Static analysis:"
+                + chr(10)
+                + "---"
+                + chr(10)
+                + _safe_truncate(static_feedback, 2000)
+                + chr(10)
+                + "---"
+            )
+            if static_feedback
+            else ""
+        }
 
         Return JSON only — no prose, no fences — matching the schema in
         your system prompt.

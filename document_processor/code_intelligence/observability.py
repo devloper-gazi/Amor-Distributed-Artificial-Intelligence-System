@@ -17,12 +17,12 @@ import asyncio
 import functools
 import json
 import logging
-import os
 import time
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ _LANGFUSE_TRIED = False
 
 
 def _trace_path_today() -> Path:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     _TRACE_DIR.mkdir(parents=True, exist_ok=True)
     return _TRACE_DIR / f"{today}.jsonl"
 
@@ -71,14 +71,14 @@ def _try_init_langfuse() -> Any:
         from langfuse import Langfuse  # type: ignore[import-not-found]
 
         _LANGFUSE_CLIENT = Langfuse(
-            host=url, public_key=pk, secret_key=sk,
+            host=url,
+            public_key=pk,
+            secret_key=sk,
         )
-        logger.info("observability_langfuse_initialised", url=url)
+        logger.info("observability_langfuse_initialised url=%s", url)
         return _LANGFUSE_CLIENT
     except ImportError:
-        logger.info(
-            "observability_langfuse_unavailable_falling_back_to_jsonl"
-        )
+        logger.info("observability_langfuse_unavailable_falling_back_to_jsonl")
         return None
     except Exception as exc:  # pragma: no cover
         logger.warning("observability_langfuse_init_failed: %s", exc)
@@ -90,7 +90,7 @@ def _try_init_langfuse() -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _emit_span(span: Dict[str, Any]) -> None:
+def _emit_span(span: dict[str, Any]) -> None:
     """Emit one span. Tries Langfuse, then JSONL, never raises."""
     client = _try_init_langfuse()
     if client is not None:
@@ -126,7 +126,7 @@ def _emit_span(span: Dict[str, Any]) -> None:
 
 def traced(
     role: str,
-    name: Optional[str] = None,
+    name: str | None = None,
     capture_args: bool = False,
 ) -> Callable[[Callable[..., Awaitable[_T]]], Callable[..., Awaitable[_T]]]:
     """
@@ -157,50 +157,54 @@ def traced(
         async def _wrapper(*args: Any, **kwargs: Any) -> _T:
             trace_id = uuid.uuid4().hex
             t0 = time.monotonic()
-            attrs: Dict[str, Any] = {}
+            attrs: dict[str, Any] = {}
             if capture_args:
                 # Cap repr length so a multi-MB doc string doesn't bloat.
                 attrs["args"] = [repr(a)[:300] for a in args[:5]]
-                attrs["kwargs"] = {
-                    k: repr(v)[:300] for k, v in list(kwargs.items())[:8]
-                }
+                attrs["kwargs"] = {k: repr(v)[:300] for k, v in list(kwargs.items())[:8]}
             try:
                 result = await func(*args, **kwargs)
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                _emit_span({
-                    "trace_id": trace_id,
-                    "name": resolved_name,
-                    "role": role,
-                    "status": "ok",
-                    "duration_ms": duration_ms,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "attributes": attrs,
-                })
+                _emit_span(
+                    {
+                        "trace_id": trace_id,
+                        "name": resolved_name,
+                        "role": role,
+                        "status": "ok",
+                        "duration_ms": duration_ms,
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "attributes": attrs,
+                    }
+                )
                 return result
             except asyncio.CancelledError:
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                _emit_span({
-                    "trace_id": trace_id,
-                    "name": resolved_name,
-                    "role": role,
-                    "status": "cancelled",
-                    "duration_ms": duration_ms,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "attributes": attrs,
-                })
+                _emit_span(
+                    {
+                        "trace_id": trace_id,
+                        "name": resolved_name,
+                        "role": role,
+                        "status": "cancelled",
+                        "duration_ms": duration_ms,
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "attributes": attrs,
+                    }
+                )
                 raise
             except Exception as exc:
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                _emit_span({
-                    "trace_id": trace_id,
-                    "name": resolved_name,
-                    "role": role,
-                    "status": "error",
-                    "duration_ms": duration_ms,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                    "error": f"{exc.__class__.__name__}: {exc}"[:500],
-                    "attributes": attrs,
-                })
+                _emit_span(
+                    {
+                        "trace_id": trace_id,
+                        "name": resolved_name,
+                        "role": role,
+                        "status": "error",
+                        "duration_ms": duration_ms,
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "error": f"{exc.__class__.__name__}: {exc}"[:500],
+                        "attributes": attrs,
+                    }
+                )
                 raise
 
         return _wrapper
@@ -215,12 +219,14 @@ def traced(
 
 def emit_event(role: str, name: str, **attributes: Any) -> None:
     """Emit a standalone span (zero duration). Useful for milestones."""
-    _emit_span({
-        "trace_id": uuid.uuid4().hex,
-        "name": name,
-        "role": role,
-        "status": "event",
-        "duration_ms": 0,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "attributes": attributes,
-    })
+    _emit_span(
+        {
+            "trace_id": uuid.uuid4().hex,
+            "name": name,
+            "role": role,
+            "status": "event",
+            "duration_ms": 0,
+            "started_at": datetime.now(UTC).isoformat(),
+            "attributes": attributes,
+        }
+    )

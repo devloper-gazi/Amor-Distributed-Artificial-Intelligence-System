@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from .agents import (
     AgentContext,
-    AgentOutput,
     CoderAgent,
     CriticAgent,
     DebuggerAgent,
@@ -39,9 +39,13 @@ from .static_analysis import StaticAnalysisHarness, StaticAnalysisResult
 logger = logging.getLogger(__name__)
 
 
-EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 PhaseStatus = Literal[
-    "pending", "in_progress", "completed", "failed", "skipped",
+    "pending",
+    "in_progress",
+    "completed",
+    "failed",
+    "skipped",
 ]
 
 
@@ -50,63 +54,62 @@ PhaseStatus = Literal[
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-CODE_PHASES: List[tuple] = [
-    ("triage",     "Triaging request"),
+CODE_PHASES: list[tuple] = [
+    ("triage", "Triaging request"),
     ("model_prep", "Preparing models"),
-    ("plan",       "Planning approach"),
-    ("implement",  "Implementing"),
-    ("execute",    "Executing code"),
-    ("analyze",    "Analyzing quality"),
-    ("test",       "Running tests"),
-    ("debug",      "Debugging & fixing"),
-    ("review",     "Final review"),
+    ("plan", "Planning approach"),
+    ("implement", "Implementing"),
+    ("execute", "Executing code"),
+    ("analyze", "Analyzing quality"),
+    ("test", "Running tests"),
+    ("debug", "Debugging & fixing"),
+    ("review", "Final review"),
 ]
 
 
 # Mirrors ThinkingEngine.PHASE_PROGRESS — per-phase end progress %.
-PHASE_PROGRESS: Dict[str, int] = {
-    "triage":     10,
+PHASE_PROGRESS: dict[str, int] = {
+    "triage": 10,
     "model_prep": 15,
-    "plan":       25,
-    "implement":  50,
-    "execute":    60,
-    "analyze":    68,
-    "test":       78,
-    "debug":      88,
-    "review":     98,
+    "plan": 25,
+    "implement": 50,
+    "execute": 60,
+    "analyze": 68,
+    "test": 78,
+    "debug": 88,
+    "review": 98,
 }
 
 
 # Effort tier → per-phase token budget. Mirrors thinking/engine.py.
-_CODE_EFFORT_BUDGETS: Dict[str, Dict[str, int]] = {
-    "basic":  {"plan":  800, "implement": 2000, "test":  600,
-               "debug": 1000, "review":  600},
-    "medium": {"plan": 1200, "implement": 3500, "test": 1000,
-               "debug": 1800, "review": 1000},
-    "deep":   {"plan": 1500, "implement": 5000, "test": 1500,
-               "debug": 2500, "review": 1500},
-    "expert": {"plan": 2000, "implement": 7000, "test": 2000,
-               "debug": 3500, "review": 2000},
-    "ultra":  {"plan": 2500, "implement": 9000, "test": 3000,
-               "debug": 5000, "review": 3000},
+_CODE_EFFORT_BUDGETS: dict[str, dict[str, int]] = {
+    "basic": {"plan": 800, "implement": 2000, "test": 600, "debug": 1000, "review": 600},
+    "medium": {"plan": 1200, "implement": 3500, "test": 1000, "debug": 1800, "review": 1000},
+    "deep": {"plan": 1500, "implement": 5000, "test": 1500, "debug": 2500, "review": 1500},
+    "expert": {"plan": 2000, "implement": 7000, "test": 2000, "debug": 3500, "review": 2000},
+    "ultra": {"plan": 2500, "implement": 9000, "test": 3000, "debug": 5000, "review": 3000},
 }
 
 
 # Effort tier → max debug→fix→reexecute iterations.
-_DEFAULT_DEBUG_ITERATIONS: Dict[str, int] = {
-    "basic":  1,
+_DEFAULT_DEBUG_ITERATIONS: dict[str, int] = {
+    "basic": 1,
     "medium": 3,
-    "deep":   3,
+    "deep": 3,
     "expert": 5,
-    "ultra":  5,
+    "ultra": 5,
 }
 
 
 # Legacy aliases — same set as ThinkingEngine.
-_EFFORT_ALIAS: Dict[str, str] = {
-    "quick": "basic", "fast": "basic",
-    "standard": "medium", "balanced": "medium",
-    "thorough": "deep", "comprehensive": "expert", "exhaustive": "ultra",
+_EFFORT_ALIAS: dict[str, str] = {
+    "quick": "basic",
+    "fast": "basic",
+    "standard": "medium",
+    "balanced": "medium",
+    "thorough": "deep",
+    "comprehensive": "expert",
+    "exhaustive": "ultra",
 }
 
 
@@ -119,7 +122,7 @@ def _canonical_effort(effort: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -127,11 +130,11 @@ class CodePhase:
     name: str
     label: str
     status: PhaseStatus = "pending"
-    detail: Dict[str, Any] = field(default_factory=dict)
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
+    detail: dict[str, Any] = field(default_factory=dict)
+    started_at: str | None = None
+    completed_at: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -149,23 +152,21 @@ class CodeIntelligenceEngine:
         self,
         *,
         prompt: str,
-        code_context: Optional[str],
-        language: Optional[str],
+        code_context: str | None,
+        language: str | None,
         effort: str,
         provider: str,
         llm_call: LLMCall,
-        sandbox: Optional[ExecutionSandbox] = None,
-        static_harness: Optional[StaticAnalysisHarness] = None,
+        sandbox: ExecutionSandbox | None = None,
+        static_harness: StaticAnalysisHarness | None = None,
         enable_execution: bool = True,
         enable_static_analysis: bool = True,
         enable_testing: bool = True,
-        max_debug_iterations: Optional[int] = None,
-        on_event: Optional[EventCallback] = None,
+        max_debug_iterations: int | None = None,
+        on_event: EventCallback | None = None,
         # Optional pre-flight helpers (the routes layer plugs these in
         # when it wants to surface model-download progress to the UI).
-        prepare_models: Optional[
-            Callable[[], Awaitable[Dict[str, str]]]
-        ] = None,
+        prepare_models: Callable[[], Awaitable[dict[str, str]]] | None = None,
     ) -> None:
         self.prompt = prompt
         self.code_context = code_context or None
@@ -188,20 +189,20 @@ class CodeIntelligenceEngine:
         self._prepare_models = prepare_models
         self._on_event = on_event or _noop_event
 
-        self.phases: List[CodePhase] = [
-            CodePhase(name=n, label=l) for n, l in CODE_PHASES
+        self.phases: list[CodePhase] = [
+            CodePhase(name=name, label=label) for name, label in CODE_PHASES
         ]
         self._phase_index = {p.name: p for p in self.phases}
 
         # Accumulated state — surfaced in snapshot()
-        self.triage: Dict[str, Any] = {}
-        self.models_used: Dict[str, str] = {}
-        self.plan: Dict[str, Any] = {}
-        self.code: Optional[str] = None
-        self.tests: Optional[str] = None
-        self.execution_results: List[Dict[str, Any]] = []
-        self.static_analysis: Optional[StaticAnalysisResult] = None
-        self.review: Dict[str, Any] = {}
+        self.triage: dict[str, Any] = {}
+        self.models_used: dict[str, str] = {}
+        self.plan: dict[str, Any] = {}
+        self.code: str | None = None
+        self.tests: str | None = None
+        self.execution_results: list[dict[str, Any]] = []
+        self.static_analysis: StaticAnalysisResult | None = None
+        self.review: dict[str, Any] = {}
         self.deliverable_markdown: str = ""
         self.debug_iterations_used: int = 0
         self.detected_language: str = self.language_hint or "python"
@@ -209,7 +210,7 @@ class CodeIntelligenceEngine:
 
     # ── helpers ───────────────────────────────────────────────────────────
 
-    async def _emit(self, event: Dict[str, Any]) -> None:
+    async def _emit(self, event: dict[str, Any]) -> None:
         try:
             await self._on_event(event)
         except Exception:
@@ -218,37 +219,39 @@ class CodeIntelligenceEngine:
     async def _run_phase(
         self,
         name: str,
-        runner: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
-    ) -> Optional[Dict[str, Any]]:
+        runner: Callable[[], Awaitable[dict[str, Any] | None]],
+    ) -> dict[str, Any] | None:
         phase = self._phase_index[name]
         phase.status = "in_progress"
         phase.started_at = _now()
-        await self._emit(
-            {"type": "phase_start", "phase": name, "label": phase.label}
-        )
+        await self._emit({"type": "phase_start", "phase": name, "label": phase.label})
         try:
             result = await runner()
             phase.status = "completed"
             phase.completed_at = _now()
             phase.detail = result or {}
-            await self._emit({
-                "type": "phase_complete",
-                "phase": name,
-                "label": phase.label,
-                "detail": phase.detail,
-            })
+            await self._emit(
+                {
+                    "type": "phase_complete",
+                    "phase": name,
+                    "label": phase.label,
+                    "detail": phase.detail,
+                }
+            )
             return result
         except Exception as exc:
             phase.status = "failed"
             phase.completed_at = _now()
             phase.detail = {"error": str(exc)}
             logger.exception("code.phase_failed phase=%s", name)
-            await self._emit({
-                "type": "phase_failed",
-                "phase": name,
-                "label": phase.label,
-                "error": str(exc),
-            })
+            await self._emit(
+                {
+                    "type": "phase_failed",
+                    "phase": name,
+                    "label": phase.label,
+                    "error": str(exc),
+                }
+            )
             return None
 
     def _skip(self, name: str, reason: str) -> None:
@@ -257,7 +260,7 @@ class CodeIntelligenceEngine:
 
     # ── phases ────────────────────────────────────────────────────────────
 
-    async def _phase_triage(self) -> Dict[str, Any]:
+    async def _phase_triage(self) -> dict[str, Any]:
         triage = await run_triage(
             self.llm_call,
             self.prompt,
@@ -271,20 +274,22 @@ class CodeIntelligenceEngine:
         self.detected_language = triage.get("language") or self.detected_language
         return triage
 
-    async def _phase_model_prep(self) -> Dict[str, Any]:
+    async def _phase_model_prep(self) -> dict[str, Any]:
         if self._prepare_models is None:
             return {"models_used": {}, "skipped": True}
         models_used = await self._prepare_models()
         self.models_used = dict(models_used or {})
         return {"models_used": self.models_used}
 
-    async def _phase_plan(self) -> Dict[str, Any]:
+    async def _phase_plan(self) -> dict[str, Any]:
         agent = PlannerAgent(self.llm_call, max_tokens=self._budgets["plan"])
-        out = await agent.run(AgentContext(
-            user_prompt=self.prompt,
-            code_context=self.code_context,
-            triage=self.triage,
-        ))
+        out = await agent.run(
+            AgentContext(
+                user_prompt=self.prompt,
+                code_context=self.code_context,
+                triage=self.triage,
+            )
+        )
         if out.error or not out.data:
             raise RuntimeError(out.error or "Planner returned empty plan")
         self.plan = out.data
@@ -295,90 +300,95 @@ class CodeIntelligenceEngine:
             self.title = out.data["title"]
         return out.data
 
-    async def _phase_implement(self) -> Dict[str, Any]:
-        agent = CoderAgent(
-            self.llm_call, max_tokens=self._budgets["implement"]
-        )
-        out = await agent.run(AgentContext(
-            user_prompt=self.prompt,
-            code_context=self.code_context,
-            triage=self.triage,
-            plan=self.plan,
-            language=self.detected_language,
-        ))
-        if out.error or not out.code:
-            raise RuntimeError(
-                out.error or "Coder produced no code"
+    async def _phase_implement(self) -> dict[str, Any]:
+        agent = CoderAgent(self.llm_call, max_tokens=self._budgets["implement"])
+        out = await agent.run(
+            AgentContext(
+                user_prompt=self.prompt,
+                code_context=self.code_context,
+                triage=self.triage,
+                plan=self.plan,
+                language=self.detected_language,
             )
+        )
+        if out.error or not out.code:
+            raise RuntimeError(out.error or "Coder produced no code")
         self.code = out.code
         if out.data.get("language"):
             self.detected_language = out.data["language"]
-        await self._emit({
-            "type": "code_ready",
-            "language": self.detected_language,
-            "code": self.code,
-            "metadata": out.data,
-        })
+        await self._emit(
+            {
+                "type": "code_ready",
+                "language": self.detected_language,
+                "code": self.code,
+                "metadata": out.data,
+            }
+        )
         return {
             "language": self.detected_language,
             "loc": len(self.code.splitlines()),
             "metadata": out.data,
         }
 
-    async def _phase_execute(self) -> Dict[str, Any]:
+    async def _phase_execute(self) -> dict[str, Any]:
         if not self.enable_execution or not self.sandbox or not self.code:
             self._skip("execute", "execution disabled or no code")
             return {"skipped": True}
-        await self._emit({
-            "type": "execution_start",
-            "language": self.detected_language,
-        })
+        await self._emit(
+            {
+                "type": "execution_start",
+                "language": self.detected_language,
+            }
+        )
         result = await self.sandbox.execute(
             code=self.code,
             language=self.detected_language,
         )
         self.execution_results.append(result.to_dict())
-        await self._emit({
-            "type": "execution_result",
-            "result": result.to_dict(),
-            "iteration": 0,
-        })
+        await self._emit(
+            {
+                "type": "execution_result",
+                "result": result.to_dict(),
+                "iteration": 0,
+            }
+        )
         return result.to_dict()
 
-    async def _phase_analyze(self) -> Dict[str, Any]:
+    async def _phase_analyze(self) -> dict[str, Any]:
         if not self.enable_static_analysis or not self.code:
             self._skip("analyze", "static analysis disabled or no code")
             return {"skipped": True}
-        sa = await self.static_harness.analyze(
-            self.code, self.detected_language
-        )
+        sa = await self.static_harness.analyze(self.code, self.detected_language)
         self.static_analysis = sa
         payload = sa.to_dict()
-        await self._emit({
-            "type": "static_analysis_result",
-            "result": payload,
-        })
+        await self._emit(
+            {
+                "type": "static_analysis_result",
+                "result": payload,
+            }
+        )
         return payload
 
-    async def _phase_test(self) -> Dict[str, Any]:
+    async def _phase_test(self) -> dict[str, Any]:
         if not self.enable_testing or not self.code:
             self._skip("test", "testing disabled or no code")
             return {"skipped": True}
         # Skip tests for explanation/architecture-only deliverables.
         if self.plan.get("deliverable_type") in {
-            "explanation", "architecture_doc",
+            "explanation",
+            "architecture_doc",
         }:
             self._skip("test", "non-code deliverable")
             return {"skipped": True}
-        agent = TesterAgent(
-            self.llm_call, max_tokens=self._budgets["test"]
+        agent = TesterAgent(self.llm_call, max_tokens=self._budgets["test"])
+        out = await agent.run(
+            AgentContext(
+                user_prompt=self.prompt,
+                plan=self.plan,
+                code=self.code,
+                language=self.detected_language,
+            )
         )
-        out = await agent.run(AgentContext(
-            user_prompt=self.prompt,
-            plan=self.plan,
-            code=self.code,
-            language=self.detected_language,
-        ))
         if out.error or not out.code:
             # Tester failure shouldn't kill the pipeline.
             return {
@@ -386,14 +396,16 @@ class CodeIntelligenceEngine:
                 "reason": out.error or "tester returned empty",
             }
         self.tests = out.code
-        await self._emit({
-            "type": "test_ready",
-            "code": self.tests,
-            "metadata": out.data,
-        })
+        await self._emit(
+            {
+                "type": "test_ready",
+                "code": self.tests,
+                "metadata": out.data,
+            }
+        )
         return out.data
 
-    async def _phase_debug(self) -> Dict[str, Any]:
+    async def _phase_debug(self) -> dict[str, Any]:
         """
         Debug → re-execute loop. Only runs when:
           • Execution was enabled AND
@@ -408,83 +420,105 @@ class CodeIntelligenceEngine:
             return {"skipped": True}
         # If the most recent execution succeeded, nothing to debug.
         if self.execution_results and self.execution_results[-1].get(
-            "success", False,
+            "success",
+            False,
         ):
             self._skip("debug", "execution already passing")
             return {"skipped": True, "reason": "no failure"}
 
-        debugger = DebuggerAgent(
-            self.llm_call, max_tokens=self._budgets["debug"]
-        )
+        debugger = DebuggerAgent(self.llm_call, max_tokens=self._budgets["debug"])
 
-        last_result: Dict[str, Any] = {}
+        last_result: dict[str, Any] = {}
         iteration = 0
         while iteration < self.max_debug_iterations:
             iteration += 1
             self.debug_iterations_used = iteration
 
-            await self._emit({
-                "type": "debug_iteration_start",
-                "iteration": iteration,
-                "max": self.max_debug_iterations,
-            })
+            await self._emit(
+                {
+                    "type": "debug_iteration_start",
+                    "iteration": iteration,
+                    "max": self.max_debug_iterations,
+                }
+            )
 
             exec_feedback = (
-                ExecutionResult(**{
-                    k: v for k, v in self.execution_results[-1].items()
-                    if k in {"exit_code", "stdout", "stderr",
-                             "timed_out", "error", "duration_ms",
-                             "language"}
-                }).to_feedback_str()
-                if self.execution_results else "(no execution data)"
+                ExecutionResult(
+                    **{
+                        k: v
+                        for k, v in self.execution_results[-1].items()
+                        if k
+                        in {
+                            "exit_code",
+                            "stdout",
+                            "stderr",
+                            "timed_out",
+                            "error",
+                            "duration_ms",
+                            "language",
+                        }
+                    }
+                ).to_feedback_str()
+                if self.execution_results
+                else "(no execution data)"
             )
             static_feedback = (
                 self.static_analysis.to_feedback_str()
-                if self.static_analysis else "(no static analysis)"
+                if self.static_analysis
+                else "(no static analysis)"
             )
 
-            out = await debugger.run(AgentContext(
-                user_prompt=self.prompt,
-                code_context=self.code_context,
-                plan=self.plan,
-                code=self.code,
-                language=self.detected_language,
-                execution_feedback=exec_feedback,
-                static_feedback=static_feedback,
-                debug_iteration=iteration,
-            ))
+            out = await debugger.run(
+                AgentContext(
+                    user_prompt=self.prompt,
+                    code_context=self.code_context,
+                    plan=self.plan,
+                    code=self.code,
+                    language=self.detected_language,
+                    execution_feedback=exec_feedback,
+                    static_feedback=static_feedback,
+                    debug_iteration=iteration,
+                )
+            )
             if out.error or not out.code:
                 logger.warning(
                     "debug_iteration_no_fix iteration=%d error=%s",
-                    iteration, out.error,
+                    iteration,
+                    out.error,
                 )
                 break
 
             self.code = out.code
-            await self._emit({
-                "type": "code_ready",
-                "language": self.detected_language,
-                "code": self.code,
-                "metadata": out.data,
-                "iteration": iteration,
-            })
+            await self._emit(
+                {
+                    "type": "code_ready",
+                    "language": self.detected_language,
+                    "code": self.code,
+                    "metadata": out.data,
+                    "iteration": iteration,
+                }
+            )
 
             # Re-run the sandbox with the patched code.
-            await self._emit({
-                "type": "execution_start",
-                "iteration": iteration,
-            })
+            await self._emit(
+                {
+                    "type": "execution_start",
+                    "iteration": iteration,
+                }
+            )
             new_result = await self.sandbox.execute(
                 code=self.code,
                 language=self.detected_language,
             )
             new_dict = new_result.to_dict()
             self.execution_results.append(new_dict)
-            await self._emit({
-                "type": "execution_result",
-                "result": new_dict,
-                "iteration": iteration,
-            })
+            await self._emit(
+                {
+                    "type": "execution_result",
+                    "result": new_dict,
+                    "iteration": iteration,
+                }
+            )
             last_result = new_dict
             if new_result.success:
                 break
@@ -494,18 +528,15 @@ class CodeIntelligenceEngine:
             "max_iterations": self.max_debug_iterations,
             "last_result": last_result,
             "final_success": bool(
-                self.execution_results
-                and self.execution_results[-1].get("success", False),
+                self.execution_results and self.execution_results[-1].get("success", False),
             ),
         }
 
-    async def _phase_review(self) -> Dict[str, Any]:
+    async def _phase_review(self) -> dict[str, Any]:
         if not self.code:
             self._skip("review", "no code to review")
             return {"skipped": True}
-        agent = CriticAgent(
-            self.llm_call, max_tokens=self._budgets["review"]
-        )
+        agent = CriticAgent(self.llm_call, max_tokens=self._budgets["review"])
         exec_feedback = None
         if self.execution_results:
             last = self.execution_results[-1]
@@ -515,18 +546,17 @@ class CodeIntelligenceEngine:
                 f"stdout(len)={len(last.get('stdout', ''))} "
                 f"stderr={last.get('stderr', '')[:600]}"
             )
-        static_feedback = (
-            self.static_analysis.to_feedback_str()
-            if self.static_analysis else None
+        static_feedback = self.static_analysis.to_feedback_str() if self.static_analysis else None
+        out = await agent.run(
+            AgentContext(
+                user_prompt=self.prompt,
+                plan=self.plan,
+                code=self.code,
+                language=self.detected_language,
+                execution_feedback=exec_feedback,
+                static_feedback=static_feedback,
+            )
         )
-        out = await agent.run(AgentContext(
-            user_prompt=self.prompt,
-            plan=self.plan,
-            code=self.code,
-            language=self.detected_language,
-            execution_feedback=exec_feedback,
-            static_feedback=static_feedback,
-        ))
         if out.error or not out.data:
             # Don't fail the whole pipeline if review breaks.
             self.review = {
@@ -537,29 +567,32 @@ class CodeIntelligenceEngine:
                 "security_concerns": [],
                 "performance_concerns": [],
                 "final_comment": (
-                    f"Critic unavailable — defaulting to approved_with_minor. "
-                    f"({out.error})"
+                    f"Critic unavailable — defaulting to approved_with_minor. ({out.error})"
                 )[:400],
             }
         else:
             self.review = out.data
-        await self._emit({
-            "type": "review_ready",
-            "review": self.review,
-        })
+        await self._emit(
+            {
+                "type": "review_ready",
+                "review": self.review,
+            }
+        )
         return self.review
 
     # ── deliverable assembly ──────────────────────────────────────────────
 
     def _build_deliverable_markdown(self) -> str:
         """Final markdown that lands in the chat history."""
-        task_type = (self.plan.get("task_type")
-                     or self.triage.get("task_type")
-                     or "Code task").replace("_", " ").title()
+        task_type = (
+            (self.plan.get("task_type") or self.triage.get("task_type") or "Code task")
+            .replace("_", " ")
+            .title()
+        )
         title = self.title or "Code task"
         lang = self.detected_language or "text"
 
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(f"## {task_type} — {title}")
         lines.append("")
 
@@ -597,8 +630,7 @@ class CodeIntelligenceEngine:
                 )
                 if self.static_analysis.complexity_score is not None:
                     lines.append(
-                        f"- Avg cyclomatic complexity: "
-                        f"{self.static_analysis.complexity_score:.1f}"
+                        f"- Avg cyclomatic complexity: {self.static_analysis.complexity_score:.1f}"
                     )
                 lines.append("")
 
@@ -614,12 +646,12 @@ class CodeIntelligenceEngine:
         if self.execution_results:
             lines.append("### Execution Results")
             for i, res in enumerate(self.execution_results):
-                tag = "✅ Pass" if res.get("success") else (
-                    "⏱ Timeout" if res.get("timed_out") else "❌ Fail"
+                tag = (
+                    "✅ Pass"
+                    if res.get("success")
+                    else ("⏱ Timeout" if res.get("timed_out") else "❌ Fail")
                 )
-                attempt = (
-                    "Initial run" if i == 0 else f"Debug iteration {i}"
-                )
+                attempt = "Initial run" if i == 0 else f"Debug iteration {i}"
                 lines.append(
                     f"- **{attempt}** — {tag} "
                     f"(exit={res.get('exit_code')}, "
@@ -638,8 +670,7 @@ class CodeIntelligenceEngine:
                 "approved_with_minor": "🟢 Approved with minor comments",
                 "needs_revision": "🟠 Needs revision",
                 "rejected": "🔴 Rejected",
-            }.get(self.review.get("verdict", "approved_with_minor"),
-                  "🟢 Approved")
+            }.get(self.review.get("verdict", "approved_with_minor"), "🟢 Approved")
             score = self.review.get("score", 70)
             lines.append("### Code Review")
             lines.append(f"**Score: {score}/100** — {verdict_label}")
@@ -649,31 +680,28 @@ class CodeIntelligenceEngine:
                 lines.append(comment)
                 lines.append("")
             major_issues = [
-                i for i in self.review.get("issues", [])
+                i
+                for i in self.review.get("issues", [])
                 if i.get("severity") in ("critical", "major")
             ]
             if major_issues:
                 lines.append("**Notable issues:**")
                 for issue in major_issues[:6]:
-                    lines.append(
-                        f"- *{issue['severity']}* — "
-                        f"{issue['description']}"
-                    )
+                    lines.append(f"- *{issue['severity']}* — {issue['description']}")
                 lines.append("")
 
         return "\n".join(lines).strip() + "\n"
 
     # ── run ───────────────────────────────────────────────────────────────
 
-    async def run(self) -> Dict[str, Any]:
+    async def run(self) -> dict[str, Any]:
         await self._run_phase("triage", self._phase_triage)
         await self._run_phase("model_prep", self._phase_model_prep)
         await self._run_phase("plan", self._phase_plan)
 
         # If planning failed, we cannot meaningfully continue.
         if self._phase_index["plan"].status != "completed":
-            for n in ("implement", "execute", "analyze",
-                      "test", "debug", "review"):
+            for n in ("implement", "execute", "analyze", "test", "debug", "review"):
                 self._skip(n, "plan failed")
             self.deliverable_markdown = self._build_deliverable_markdown()
             return self.snapshot()
@@ -696,15 +724,17 @@ class CodeIntelligenceEngine:
         await self._run_phase("review", self._phase_review)
 
         self.deliverable_markdown = self._build_deliverable_markdown()
-        await self._emit({
-            "type": "deliverable_ready",
-            "markdown": self.deliverable_markdown,
-        })
+        await self._emit(
+            {
+                "type": "deliverable_ready",
+                "markdown": self.deliverable_markdown,
+            }
+        )
         return self.snapshot()
 
     # ── snapshot ──────────────────────────────────────────────────────────
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "phases": [p.to_dict() for p in self.phases],
             "triage": self.triage,
@@ -715,16 +745,11 @@ class CodeIntelligenceEngine:
             "language": self.detected_language,
             "title": self.title,
             "execution_results": self.execution_results,
-            "static_analysis": (
-                self.static_analysis.to_dict()
-                if self.static_analysis else None
-            ),
+            "static_analysis": (self.static_analysis.to_dict() if self.static_analysis else None),
             "review": self.review,
             "deliverable_markdown": self.deliverable_markdown,
             "debug_iterations": self.debug_iterations_used,
-            "task_type": self.plan.get("task_type")
-                         or self.triage.get("task_type")
-                         or "generation",
+            "task_type": self.plan.get("task_type") or self.triage.get("task_type") or "generation",
         }
 
 
@@ -733,5 +758,5 @@ class CodeIntelligenceEngine:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _noop_event(_event: Dict[str, Any]) -> None:
+async def _noop_event(_event: dict[str, Any]) -> None:
     return None

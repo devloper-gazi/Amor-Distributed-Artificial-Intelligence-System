@@ -17,20 +17,20 @@ from .engine import (
 )
 from .model_registry import (
     CODE_MODEL_CATALOGUE,
+    ROLE_STRENGTH_MAP,
     CodeModelRegistry,
     ModelSpec,
-    ROLE_STRENGTH_MAP,
 )
 from .observability import emit_event, traced
 from .repomap import RepoMap
-from .sandbox import ExecutionResult, ExecutionSandbox, LANGUAGE_RUNNERS
+from .sandbox import LANGUAGE_RUNNERS, ExecutionResult, ExecutionSandbox
 from .static_analysis import (
     AnalysisIssue,
     StaticAnalysisHarness,
     StaticAnalysisResult,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by version, not alphabetical
     # v1 — engine + 5 agents foundation
     "CodeIntelligenceEngine",
     "CodeModelRegistry",

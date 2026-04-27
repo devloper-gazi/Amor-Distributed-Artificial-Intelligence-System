@@ -26,7 +26,7 @@ async def test_traced_decorator_emits_ok_span(tmp_path, monkeypatch):
     # Read the most recent JSONL file in tmp_path.
     files = list(tmp_path.glob("*.jsonl"))
     assert len(files) == 1
-    lines = [json.loads(l) for l in files[0].read_text().splitlines() if l.strip()]
+    lines = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
     assert len(lines) == 1
     span = lines[0]
     assert span["role"] == "agent.test"
@@ -49,7 +49,7 @@ async def test_traced_decorator_records_exception(tmp_path, monkeypatch):
         await boom()
 
     files = list(tmp_path.glob("*.jsonl"))
-    spans = [json.loads(l) for l in files[0].read_text().splitlines() if l.strip()]
+    spans = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
     assert spans[0]["status"] == "error"
     assert "ValueError" in spans[0]["error"]
     assert "kaboom" in spans[0]["error"]
@@ -73,7 +73,7 @@ async def test_traced_decorator_handles_cancellation(tmp_path, monkeypatch):
 
     files = list(tmp_path.glob("*.jsonl"))
     if files:
-        spans = [json.loads(l) for l in files[0].read_text().splitlines() if l.strip()]
+        spans = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
         # Cancellation should be recorded if the task ran long enough.
         if spans:
             assert spans[0]["status"] == "cancelled"
@@ -92,7 +92,7 @@ async def test_emit_event_freestanding(tmp_path, monkeypatch):
         bytes=1234567,
     )
     files = list(tmp_path.glob("*.jsonl"))
-    spans = [json.loads(l) for l in files[0].read_text().splitlines() if l.strip()]
+    spans = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
     assert spans[0]["name"] == "model_pull_complete"
     assert spans[0]["status"] == "event"
     assert spans[0]["attributes"]["tag"] == "qwen2.5-coder:7b"
@@ -110,6 +110,6 @@ def test_capture_args_caps_repr_length(tmp_path, monkeypatch):
     huge = "x" * 10_000
     asyncio.run(hog(huge))
     files = list(tmp_path.glob("*.jsonl"))
-    spans = [json.loads(l) for l in files[0].read_text().splitlines() if l.strip()]
+    spans = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
     # The arg repr should be truncated, not full 10k.
     assert all(len(a) <= 350 for a in spans[0]["attributes"]["args"])

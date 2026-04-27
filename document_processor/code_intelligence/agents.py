@@ -14,11 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any
 
 from . import prompts as P
-from .static_analysis import StaticAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # Same shape as ThinkingEngine's LLMCall: prompt, system, max_tokens → str.
-LLMCall = Callable[[str, Optional[str], int], Awaitable[str]]
+LLMCall = Callable[[str, str | None, int], Awaitable[str]]
 
 
 @dataclass
@@ -40,15 +40,15 @@ class AgentContext:
     """
 
     user_prompt: str
-    code_context: Optional[str] = None
-    triage: Optional[Dict[str, Any]] = None
-    plan: Optional[Dict[str, Any]] = None
-    code: Optional[str] = None
-    tests: Optional[str] = None
+    code_context: str | None = None
+    triage: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
+    code: str | None = None
+    tests: str | None = None
     language: str = "python"
-    execution_feedback: Optional[str] = None
-    static_feedback: Optional[str] = None
-    test_failure: Optional[str] = None
+    execution_feedback: str | None = None
+    static_feedback: str | None = None
+    test_failure: str | None = None
     debug_iteration: int = 0
 
 
@@ -56,11 +56,11 @@ class AgentContext:
 class AgentOutput:
     """Generic agent return shape."""
 
-    raw: str = ""                 # Untouched LLM output, for debugging
-    data: Dict[str, Any] = field(default_factory=dict)
-    code: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    raw: str = ""  # Untouched LLM output, for debugging
+    data: dict[str, Any] = field(default_factory=dict)
+    code: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,15 +68,11 @@ class AgentOutput:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-_JSON_FENCE_RE = re.compile(
-    r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE
-)
-_CODE_FENCE_RE = re.compile(
-    r"```([a-zA-Z0-9_+\-#]*)\s*\n([\s\S]*?)```", re.MULTILINE
-)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE)
+_CODE_FENCE_RE = re.compile(r"```([a-zA-Z0-9_+\-#]*)\s*\n([\s\S]*?)```", re.MULTILINE)
 
 
-def _extract_json(raw: str) -> Dict[str, Any]:
+def _extract_json(raw: str) -> dict[str, Any]:
     """
     Extract a JSON object from a model reply. Mirrors the helper in
     thinking/engine.py. Falls back through fenced JSON → widest braces →
@@ -101,7 +97,7 @@ def _extract_json(raw: str) -> Dict[str, Any]:
     first = stripped.find("{")
     last = stripped.rfind("}")
     if first != -1 and last != -1 and last > first:
-        candidate = stripped[first: last + 1]
+        candidate = stripped[first : last + 1]
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
@@ -109,14 +105,12 @@ def _extract_json(raw: str) -> Dict[str, Any]:
             try:
                 return json.loads(cleaned)
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"could not parse model JSON: {exc}"
-                ) from exc
+                raise ValueError(f"could not parse model JSON: {exc}") from exc
 
     raise ValueError("no JSON object found in model output")
 
 
-def _extract_code_and_meta(raw: str) -> Dict[str, Any]:
+def _extract_code_and_meta(raw: str) -> dict[str, Any]:
     """
     Pull a code fence and a JSON metadata fence out of an LLM reply.
 
@@ -128,11 +122,11 @@ def _extract_code_and_meta(raw: str) -> Dict[str, Any]:
     """
     code = ""
     language = ""
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
 
     fences = list(_CODE_FENCE_RE.finditer(raw))
-    json_blocks: List[Dict[str, Any]] = []
-    code_blocks: List[Dict[str, Any]] = []
+    json_blocks: list[dict[str, Any]] = []
+    code_blocks: list[dict[str, Any]] = []
     for m in fences:
         lang = (m.group(1) or "").strip().lower()
         body = m.group(2).rstrip()
@@ -182,7 +176,9 @@ class _BaseAgent:
     async def _call(self, prompt: str) -> str:
         """Single LLM call with this agent's persona + token budget."""
         raw = await self.llm_call(
-            prompt, self.system_prompt, self.max_tokens,
+            prompt,
+            self.system_prompt,
+            self.max_tokens,
         )
         return raw or ""
 
@@ -211,39 +207,58 @@ class PlannerAgent(_BaseAgent):
 
         # Clamp lists / strings to keep one rogue plan from blowing up
         # the UI or downstream prompts.
-        plan_steps_raw = data.get("plan") if isinstance(
-            data.get("plan"), list
-        ) else []
-        plan_steps: List[Dict[str, Any]] = []
+        plan_steps_raw = data.get("plan") if isinstance(data.get("plan"), list) else []
+        plan_steps_raw = plan_steps_raw or []  # narrow Optional → list for pyright
+        plan_steps: list[dict[str, Any]] = []
         for i, step in enumerate(plan_steps_raw[:20], start=1):
             if not isinstance(step, dict):
                 continue
-            plan_steps.append({
-                "step": int(step.get("step", i)),
-                "action": str(step.get("action", ""))[:200],
-                "agent": _enum(
-                    step.get("agent"),
-                    {"coder", "tester", "debugger", "critic", "planner"},
-                    "coder",
-                ),
-                "description": str(step.get("description", ""))[:600],
-                "depends_on": [
-                    int(d) for d in (step.get("depends_on") or [])
-                    if isinstance(d, (int, str)) and str(d).isdigit()
-                ][:5],
-            })
+            plan_steps.append(
+                {
+                    "step": int(step.get("step", i)),
+                    "action": str(step.get("action", ""))[:200],
+                    "agent": _enum(
+                        step.get("agent"),
+                        {"coder", "tester", "debugger", "critic", "planner"},
+                        "coder",
+                    ),
+                    "description": str(step.get("description", ""))[:600],
+                    "depends_on": [
+                        int(d)
+                        for d in (step.get("depends_on") or [])
+                        if isinstance(d, (int, str)) and str(d).isdigit()
+                    ][:5],
+                }
+            )
 
-        normalized: Dict[str, Any] = {
+        normalized: dict[str, Any] = {
             "task_type": _enum(
                 data.get("task_type"),
-                {"generation", "debugging", "review", "refactoring",
-                 "explanation", "architecture", "optimization", "testing"},
+                {
+                    "generation",
+                    "debugging",
+                    "review",
+                    "refactoring",
+                    "explanation",
+                    "architecture",
+                    "optimization",
+                    "testing",
+                },
                 "generation",
             ),
             "language": _enum(
                 data.get("language"),
-                {"python", "javascript", "typescript", "go", "rust",
-                 "cpp", "java", "bash", "other"},
+                {
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "go",
+                    "rust",
+                    "cpp",
+                    "java",
+                    "bash",
+                    "other",
+                },
                 "python",
             ),
             "framework": str(data.get("framework") or "")[:80] or None,
@@ -254,12 +269,8 @@ class PlannerAgent(_BaseAgent):
             ),
             "title": str(data.get("title") or "Code task")[:100],
             "plan": plan_steps,
-            "context_needed": [
-                str(c)[:200] for c in (data.get("context_needed") or [])
-            ][:10],
-            "risks": [
-                str(r)[:300] for r in (data.get("risks") or [])
-            ][:10],
+            "context_needed": [str(c)[:200] for c in (data.get("context_needed") or [])][:10],
+            "risks": [str(r)[:300] for r in (data.get("risks") or [])][:10],
             "test_strategy": _enum(
                 data.get("test_strategy"),
                 {"unit", "integration", "e2e", "none"},
@@ -267,8 +278,14 @@ class PlannerAgent(_BaseAgent):
             ),
             "deliverable_type": _enum(
                 data.get("deliverable_type"),
-                {"code_file", "code_snippet", "explanation", "diff",
-                 "test_suite", "architecture_doc"},
+                {
+                    "code_file",
+                    "code_snippet",
+                    "explanation",
+                    "diff",
+                    "test_suite",
+                    "architecture_doc",
+                },
                 "code_snippet",
             ),
         }
@@ -309,9 +326,7 @@ class CoderAgent(_BaseAgent):
                     or plan.get("language", "python")
                 ),
                 "filename": str(meta.get("filename") or "")[:120] or None,
-                "dependencies": [
-                    str(d)[:80] for d in (meta.get("dependencies") or [])
-                ][:20],
+                "dependencies": [str(d)[:80] for d in (meta.get("dependencies") or [])][:20],
                 "changes": str(meta.get("changes") or "")[:400],
             },
             metadata=meta,
@@ -347,22 +362,16 @@ class TesterAgent(_BaseAgent):
             raw=raw,
             code=parsed["code"],
             data={
-                "language": (
-                    parsed["language"]
-                    or str(meta.get("language") or "")
-                    or ctx.language
-                ),
+                "language": (parsed["language"] or str(meta.get("language") or "") or ctx.language),
                 "framework": str(meta.get("framework") or "")[:80],
                 "test_count": _clamp_int(
-                    meta.get("test_count"), 0, 10_000, 0,
+                    meta.get("test_count"),
+                    0,
+                    10_000,
+                    0,
                 ),
-                "coverage_estimate": str(
-                    meta.get("coverage_estimate") or ""
-                )[:80],
-                "critical_cases": [
-                    str(c)[:200]
-                    for c in (meta.get("critical_cases") or [])
-                ][:10],
+                "coverage_estimate": str(meta.get("coverage_estimate") or "")[:80],
+                "critical_cases": [str(c)[:200] for c in (meta.get("critical_cases") or [])][:10],
             },
             metadata=meta,
         )
@@ -401,17 +410,14 @@ class DebuggerAgent(_BaseAgent):
             raw=raw,
             code=parsed["code"],
             data={
-                "language": (
-                    parsed["language"]
-                    or str(meta.get("language") or "")
-                    or ctx.language
-                ),
+                "language": (parsed["language"] or str(meta.get("language") or "") or ctx.language),
                 "root_cause": str(meta.get("root_cause") or "")[:600],
-                "fix_description": str(
-                    meta.get("fix_description") or ""
-                )[:600],
+                "fix_description": str(meta.get("fix_description") or "")[:600],
                 "lines_changed": _clamp_int(
-                    meta.get("lines_changed"), 0, 100_000, 0,
+                    meta.get("lines_changed"),
+                    0,
+                    100_000,
+                    0,
                 ),
                 "confidence": _enum(
                     meta.get("confidence"),
@@ -462,37 +468,32 @@ class CriticAgent(_BaseAgent):
             "rejected": "rejected",
         }.get(verdict_raw, "needs_revision")
 
-        issues_raw = data.get("issues") if isinstance(
-            data.get("issues"), list
-        ) else []
-        issues: List[Dict[str, Any]] = []
+        issues_raw = data.get("issues") if isinstance(data.get("issues"), list) else []
+        issues_raw = issues_raw or []  # narrow Optional → list for pyright
+        issues: list[dict[str, Any]] = []
         for it in issues_raw[:20]:
             if not isinstance(it, dict):
                 continue
-            issues.append({
-                "severity": _enum(
-                    it.get("severity"),
-                    {"critical", "major", "minor", "nit"},
-                    "minor",
-                ),
-                "description": str(it.get("description") or "")[:500],
-                "suggestion": str(it.get("suggestion") or "")[:500],
-            })
+            issues.append(
+                {
+                    "severity": _enum(
+                        it.get("severity"),
+                        {"critical", "major", "minor", "nit"},
+                        "minor",
+                    ),
+                    "description": str(it.get("description") or "")[:500],
+                    "suggestion": str(it.get("suggestion") or "")[:500],
+                }
+            )
 
-        normalized: Dict[str, Any] = {
+        normalized: dict[str, Any] = {
             "verdict": verdict,
             "score": _clamp_int(data.get("score"), 0, 100, 70),
-            "strengths": [
-                str(s)[:300] for s in (data.get("strengths") or [])
-            ][:10],
+            "strengths": [str(s)[:300] for s in (data.get("strengths") or [])][:10],
             "issues": issues,
-            "security_concerns": [
-                str(s)[:300]
-                for s in (data.get("security_concerns") or [])
-            ][:10],
+            "security_concerns": [str(s)[:300] for s in (data.get("security_concerns") or [])][:10],
             "performance_concerns": [
-                str(s)[:300]
-                for s in (data.get("performance_concerns") or [])
+                str(s)[:300] for s in (data.get("performance_concerns") or [])
             ][:10],
             "final_comment": str(data.get("final_comment") or "")[:1500],
         }
@@ -507,9 +508,9 @@ class CriticAgent(_BaseAgent):
 async def run_triage(
     llm_call: LLMCall,
     user_prompt: str,
-    code_context: Optional[str] = None,
+    code_context: str | None = None,
     max_tokens: int = 600,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Fast classification call. Returns a normalised dict with safe
     defaults if the model returns nonsense.
@@ -526,14 +527,21 @@ async def run_triage(
     return {
         "task_type": _enum(
             data.get("task_type"),
-            {"generation", "debugging", "review", "refactoring",
-             "explanation", "architecture", "optimization", "testing"},
+            {
+                "generation",
+                "debugging",
+                "review",
+                "refactoring",
+                "explanation",
+                "architecture",
+                "optimization",
+                "testing",
+            },
             "generation",
         ),
         "language": _enum(
             data.get("language"),
-            {"python", "javascript", "typescript", "go", "rust",
-             "cpp", "java", "bash", "other"},
+            {"python", "javascript", "typescript", "go", "rust", "cpp", "java", "bash", "other"},
             "python",
         ),
         "complexity": _enum(
@@ -543,9 +551,7 @@ async def run_triage(
         ),
         "needs_execution": bool(data.get("needs_execution", True)),
         "needs_tests": bool(data.get("needs_tests", True)),
-        "estimated_phases": [
-            str(p)[:30] for p in (data.get("estimated_phases") or [])
-        ][:9],
+        "estimated_phases": [str(p)[:30] for p in (data.get("estimated_phases") or [])][:9],
     }
 
 

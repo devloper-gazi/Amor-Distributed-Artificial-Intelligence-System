@@ -35,11 +35,11 @@ prompts so the LLM has up-to-date structural context.
 from __future__ import annotations
 
 import logging
-import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -51,43 +51,43 @@ def _estimate_tokens(text: str) -> int:
 
 
 # Languages we attempt to parse (tree-sitter mapping).
-_LANG_BY_SUFFIX: Dict[str, str] = {
-    ".py":   "python",
-    ".js":   "javascript",
-    ".jsx":  "javascript",
-    ".ts":   "typescript",
-    ".tsx":  "tsx",
-    ".go":   "go",
-    ".rs":   "rust",
-    ".rb":   "ruby",
+_LANG_BY_SUFFIX: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".rb": "ruby",
     ".java": "java",
-    ".c":    "c",
-    ".h":    "c",
-    ".cpp":  "cpp",
-    ".cc":   "cpp",
-    ".hpp":  "cpp",
-    ".cs":   "c_sharp",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".hpp": "cpp",
+    ".cs": "c_sharp",
     ".swift": "swift",
-    ".kt":   "kotlin",
-    ".php":  "php",
+    ".kt": "kotlin",
+    ".php": "php",
 }
 
 
 @dataclass
 class SymbolEntry:
     name: str
-    kind: str   # "class" | "function" | "method" | "import" | "constant"
+    kind: str  # "class" | "function" | "method" | "import" | "constant"
     line: int
-    signature: Optional[str] = None
+    signature: str | None = None
 
 
 @dataclass
 class FileSnapshot:
     path: str
     language: str
-    symbols: List[SymbolEntry] = field(default_factory=list)
-    imports: List[str] = field(default_factory=list)
-    references: Set[str] = field(default_factory=set)
+    symbols: list[SymbolEntry] = field(default_factory=list)
+    imports: list[str] = field(default_factory=list)
+    references: set[str] = field(default_factory=set)
     sloc: int = 0
 
 
@@ -108,13 +108,12 @@ def _try_init_tree_sitter() -> bool:
         from tree_sitter_language_pack import (  # type: ignore[import-not-found]
             get_parser,
         )
+
         _TS_GET_PARSER = get_parser
         _TS_AVAILABLE = True
         return True
     except ImportError:
-        logger.info(
-            "repomap_tree_sitter_unavailable falling_back_to_regex"
-        )
+        logger.info("repomap_tree_sitter_unavailable falling_back_to_regex")
         return False
     except Exception as exc:  # pragma: no cover
         logger.warning("repomap_tree_sitter_init_failed: %s", exc)
@@ -141,12 +140,14 @@ def _regex_python_snapshot(path: str, source: str) -> FileSnapshot:
         m = _PY_DEF_RE.match(line)
         if m:
             kind = "class" if m.group("kind").strip() == "class" else "function"
-            snap.symbols.append(SymbolEntry(
-                name=m.group("name"),
-                kind=kind,
-                line=i,
-                signature=line.strip()[:120],
-            ))
+            snap.symbols.append(
+                SymbolEntry(
+                    name=m.group("name"),
+                    kind=kind,
+                    line=i,
+                    signature=line.strip()[:120],
+                )
+            )
             continue
         im = _PY_IMPORT_RE.match(line)
         if im:
@@ -158,7 +159,7 @@ def _regex_python_snapshot(path: str, source: str) -> FileSnapshot:
             continue
     # Reference set: capitalised identifiers used in the body.
     snap.references = set(_PY_REF_RE.findall(source))
-    snap.sloc = len([l for l in source.splitlines() if l.strip()])
+    snap.sloc = len([line for line in source.splitlines() if line.strip()])
     return snap
 
 
@@ -170,36 +171,48 @@ def _regex_python_snapshot(path: str, source: str) -> FileSnapshot:
 def _ts_snapshot(path: str, source: str, language: str) -> FileSnapshot:
     snap = FileSnapshot(path=path, language=language)
     if not _try_init_tree_sitter():
-        return _regex_python_snapshot(path, source) if language == "python" \
-            else snap
+        return _regex_python_snapshot(path, source) if language == "python" else snap
     try:
         parser = _TS_GET_PARSER(language)
         tree = parser.parse(source.encode("utf-8"))
     except Exception:
-        return _regex_python_snapshot(path, source) if language == "python" \
-            else snap
+        return _regex_python_snapshot(path, source) if language == "python" else snap
 
     src = source.encode("utf-8")
 
     # Walk the tree with a stack — extract function/class/method
     # definitions plus import-like nodes, by node type.
     def_kinds = {
-        "function_definition", "function_declaration",
-        "method_definition", "method_declaration",
-        "class_definition", "class_declaration",
-        "struct_item", "enum_item", "trait_item", "impl_item",
+        "function_definition",
+        "function_declaration",
+        "method_definition",
+        "method_declaration",
+        "class_definition",
+        "class_declaration",
+        "struct_item",
+        "enum_item",
+        "trait_item",
+        "impl_item",
     }
     import_kinds = {
-        "import_statement", "import_from_statement",
-        "import_declaration", "use_declaration",
+        "import_statement",
+        "import_from_statement",
+        "import_declaration",
+        "use_declaration",
     }
 
-    def name_of(node: Any) -> Optional[str]:
+    def name_of(node: Any) -> str | None:
         for child in node.children:
-            if child.type in {"identifier", "type_identifier",
-                              "constant", "name", "field_identifier"}:
-                return src[child.start_byte:child.end_byte].decode(
-                    "utf-8", errors="replace",
+            if child.type in {
+                "identifier",
+                "type_identifier",
+                "constant",
+                "name",
+                "field_identifier",
+            }:
+                return src[child.start_byte : child.end_byte].decode(
+                    "utf-8",
+                    errors="replace",
                 )
         return None
 
@@ -209,26 +222,31 @@ def _ts_snapshot(path: str, source: str, language: str) -> FileSnapshot:
         if node.type in def_kinds:
             n = name_of(node)
             kind = (
-                "class" if "class" in node.type else
-                "method" if "method" in node.type else
-                "function"
+                "class"
+                if "class" in node.type
+                else "method"
+                if "method" in node.type
+                else "function"
             )
             if n:
-                snap.symbols.append(SymbolEntry(
-                    name=n,
-                    kind=kind,
-                    line=node.start_point[0] + 1,
-                ))
+                snap.symbols.append(
+                    SymbolEntry(
+                        name=n,
+                        kind=kind,
+                        line=node.start_point[0] + 1,
+                    )
+                )
         elif node.type in import_kinds:
-            txt = src[node.start_byte:node.end_byte].decode(
-                "utf-8", errors="replace",
+            txt = src[node.start_byte : node.end_byte].decode(
+                "utf-8",
+                errors="replace",
             )
             snap.imports.append(txt.strip().splitlines()[0][:200])
         # Don't descend into function bodies (signatures only).
         if node.type not in def_kinds:
             stack.extend(node.children)
 
-    snap.sloc = len([l for l in source.splitlines() if l.strip()])
+    snap.sloc = len([line for line in source.splitlines() if line.strip()])
     return snap
 
 
@@ -243,30 +261,29 @@ class RepoMap:
     def __init__(
         self,
         workspace: Path,
-        scope: Optional[Iterable[str]] = None,
+        scope: Iterable[str] | None = None,
         gitignore: bool = True,
         max_files: int = 800,
         max_file_size_kb: int = 256,
     ):
         self.workspace = Path(workspace).resolve()
-        self.scope = [Path(s) for s in (scope or ["document_processor",
-                                                  "web_ui"])]
+        self.scope = [Path(s) for s in (scope or ["document_processor", "web_ui"])]
         self.gitignore = gitignore
         self.max_files = max_files
         self.max_file_size = max_file_size_kb * 1024
-        self.snapshots: Dict[str, FileSnapshot] = {}
+        self.snapshots: dict[str, FileSnapshot] = {}
 
     # ── Discovery + parsing ───────────────────────────────────────────────
 
-    def _walk_files(self) -> List[Path]:
-        roots: List[Path] = []
+    def _walk_files(self) -> list[Path]:
+        roots: list[Path] = []
         for s in self.scope:
             p = (self.workspace / s).resolve()
             if not p.exists():
                 continue
             roots.append(p)
         ignored = self._gitignore_set() if self.gitignore else set()
-        out: List[Path] = []
+        out: list[Path] = []
         for root in roots:
             for path in root.rglob("*"):
                 if not path.is_file():
@@ -274,8 +291,7 @@ class RepoMap:
                 if path.suffix.lower() not in _LANG_BY_SUFFIX:
                     continue
                 rel = path.relative_to(self.workspace).as_posix()
-                if any(part.startswith(".") and part not in {"."}
-                       for part in path.parts):
+                if any(part.startswith(".") and part not in {"."} for part in path.parts):
                     continue
                 if any(rel.startswith(ig) for ig in ignored):
                     continue
@@ -289,13 +305,13 @@ class RepoMap:
                     return out
         return out
 
-    def _gitignore_set(self) -> Set[str]:
+    def _gitignore_set(self) -> set[str]:
         gi = self.workspace / ".gitignore"
         if not gi.exists():
             return set()
         # Conservative: only honour line-prefix matches, no glob wizardry.
         lines = gi.read_text(encoding="utf-8", errors="replace").splitlines()
-        out: Set[str] = set()
+        out: set[str] = set()
         for raw in lines:
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -336,9 +352,9 @@ class RepoMap:
 
     def rank(
         self,
-        focus_files: Optional[List[str]] = None,
+        focus_files: list[str] | None = None,
         boost: float = 50.0,
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         """
         Return (path, score) sorted descending. PageRank when NetworkX
         is available; otherwise a heuristic on symbol count + focus
@@ -352,7 +368,7 @@ class RepoMap:
 
         g = nx.DiGraph()
         # Map symbol name → defining file for cheap reference resolution.
-        sym_to_file: Dict[str, str] = {}
+        sym_to_file: dict[str, str] = {}
         for path, snap in self.snapshots.items():
             g.add_node(path)
             for sym in snap.symbols:
@@ -368,12 +384,12 @@ class RepoMap:
         if not g.nodes:
             return []
 
-        personalization = {
-            n: (boost if n in focus else 1.0) for n in g.nodes
-        }
+        personalization = {n: (boost if n in focus else 1.0) for n in g.nodes}
         try:
             scores = nx.pagerank(
-                g, personalization=personalization, max_iter=80,
+                g,
+                personalization=personalization,
+                max_iter=80,
             )
         except Exception:
             return self._heuristic_rank(focus, boost)
@@ -382,10 +398,10 @@ class RepoMap:
 
     def _heuristic_rank(
         self,
-        focus: Set[str],
+        focus: set[str],
         boost: float,
-    ) -> List[Tuple[str, float]]:
-        out: List[Tuple[str, float]] = []
+    ) -> list[tuple[str, float]]:
+        out: list[tuple[str, float]] = []
         for path, snap in self.snapshots.items():
             score = float(len(snap.symbols)) + 0.5 * len(snap.imports)
             if path in focus:
@@ -398,7 +414,7 @@ class RepoMap:
 
     def repo_map(
         self,
-        focus_files: Optional[List[str]] = None,
+        focus_files: list[str] | None = None,
         budget_tokens: int = 1024,
     ) -> str:
         """Token-budgeted markdown summary of the workspace."""
@@ -410,8 +426,8 @@ class RepoMap:
         # budget, reduce N until we fit.
         def render_for(n: int) -> str:
             head = ranked[:n]
-            blocks: List[str] = [f"# RepoMap ({budget_tokens} tokens)"]
-            for path, score in head:
+            blocks: list[str] = [f"# RepoMap ({budget_tokens} tokens)"]
+            for path, _score in head:
                 snap = self.snapshots.get(path)
                 if not snap:
                     continue

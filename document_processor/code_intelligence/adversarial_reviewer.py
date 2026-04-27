@@ -29,16 +29,14 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_RULES_PATH = (
-    Path(__file__).parent / "security" / "adversary_rules.yaml"
-)
+_DEFAULT_RULES_PATH = Path(__file__).parent / "security" / "adversary_rules.yaml"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,10 +47,10 @@ _DEFAULT_RULES_PATH = (
 @dataclass
 class CompiledRule:
     id: str
-    severity: str   # "critical" | "high" | "medium" | "low"
+    severity: str  # "critical" | "high" | "medium" | "low"
     description: str
     pattern: re.Pattern
-    targets: List[str] = field(default_factory=list)
+    targets: list[str] = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -80,12 +78,12 @@ class AdversarialReviewer:
 
     def __init__(
         self,
-        rules_path: Optional[Path] = None,
+        rules_path: Path | None = None,
         block_on_critical: bool = True,
     ):
         self._rules_path = Path(rules_path) if rules_path else _DEFAULT_RULES_PATH
         self._block_on_critical = block_on_critical
-        self._rules: List[CompiledRule] = []
+        self._rules: list[CompiledRule] = []
         self._load_rules()
 
     # ── Rules ─────────────────────────────────────────────────────────────
@@ -94,10 +92,7 @@ class AdversarialReviewer:
         try:
             import yaml  # type: ignore[import-not-found]
         except ImportError:  # pragma: no cover
-            logger.warning(
-                "adversarial_reviewer_yaml_not_available "
-                "rules_skipped"
-            )
+            logger.warning("adversarial_reviewer_yaml_not_available rules_skipped")
             self._rules = []
             return
 
@@ -115,7 +110,7 @@ class AdversarialReviewer:
             self._rules = []
             return
 
-        compiled: List[CompiledRule] = []
+        compiled: list[CompiledRule] = []
         for item in (doc or {}).get("rules") or []:
             if not isinstance(item, dict):
                 continue
@@ -135,20 +130,26 @@ class AdversarialReviewer:
                 pat = re.compile(pat_str, flags)
             except re.error as exc:
                 logger.warning(
-                    "adversarial_rule_regex_invalid id=%s err=%s", rid, exc,
+                    "adversarial_rule_regex_invalid id=%s err=%s",
+                    rid,
+                    exc,
                 )
                 continue
             targets = [str(t) for t in (item.get("targets") or [])]
-            compiled.append(CompiledRule(
-                id=rid, severity=sev,
-                description=str(item.get("description") or ""),
-                pattern=pat,
-                targets=targets,
-            ))
+            compiled.append(
+                CompiledRule(
+                    id=rid,
+                    severity=sev,
+                    description=str(item.get("description") or ""),
+                    pattern=pat,
+                    targets=targets,
+                )
+            )
         self._rules = compiled
         logger.info(
             "adversarial_reviewer_loaded rules=%d path=%s",
-            len(self._rules), self._rules_path,
+            len(self._rules),
+            self._rules_path,
         )
 
     def reload_rules(self) -> int:
@@ -165,8 +166,8 @@ class AdversarialReviewer:
     def inspect_event(
         self,
         session_id: str,
-        event: Dict[str, Any],
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        event: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any] | None]:
         """
         Run every rule against the event payload.
 
@@ -184,20 +185,20 @@ class AdversarialReviewer:
         if not haystack:
             return True, None
 
-        hits: List[Dict[str, Any]] = []
+        hits: list[dict[str, Any]] = []
         for rule in self._rules:
             if rule.targets and etype and etype not in rule.targets:
                 continue
             m = rule.pattern.search(haystack)
             if m:
-                hits.append({
-                    "rule_id": rule.id,
-                    "severity": rule.severity,
-                    "description": rule.description,
-                    "match_excerpt": haystack[
-                        max(0, m.start() - 40): m.end() + 40
-                    ][:200],
-                })
+                hits.append(
+                    {
+                        "rule_id": rule.id,
+                        "severity": rule.severity,
+                        "description": rule.description,
+                        "match_excerpt": haystack[max(0, m.start() - 40) : m.end() + 40][:200],
+                    }
+                )
 
         if not hits:
             return True, None
@@ -209,7 +210,7 @@ class AdversarialReviewer:
             "source_event_type": etype,
             "severity": worst,
             "hits": hits,
-            "detected_at": datetime.now(timezone.utc).isoformat(),
+            "detected_at": datetime.now(UTC).isoformat(),
         }
 
         # Persist to MongoDB best-effort. We only schedule the task when
@@ -218,6 +219,7 @@ class AdversarialReviewer:
         # raises RuntimeError; we just skip persistence in that case.
         try:
             import asyncio as _asyncio
+
             try:
                 _asyncio.get_running_loop()
             except RuntimeError:
@@ -227,13 +229,11 @@ class AdversarialReviewer:
         except Exception:  # pragma: no cover
             pass
 
-        allow = not (
-            self._block_on_critical and worst == "critical"
-        )
+        allow = not (self._block_on_critical and worst == "critical")
         return allow, alert
 
     @staticmethod
-    def _worst_severity(hits: List[Dict[str, Any]]) -> str:
+    def _worst_severity(hits: list[dict[str, Any]]) -> str:
         rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
         return max(
             (h.get("severity", "medium") for h in hits),
@@ -241,14 +241,14 @@ class AdversarialReviewer:
         )
 
     @staticmethod
-    def _stringify(event: Dict[str, Any]) -> str:
+    def _stringify(event: dict[str, Any]) -> str:
         """
         Flatten an event into a single string for regex scanning. We
         skip event_id, timestamps, and other UUID-like fields to keep
         the haystack focused on substantive content.
         """
         skip = {"event_id", "session_id", "started_at", "completed_at"}
-        parts: List[str] = []
+        parts: list[str] = []
 
         def _walk(node: Any) -> None:
             if isinstance(node, str):
@@ -269,17 +269,22 @@ class AdversarialReviewer:
     # ── Persistence ───────────────────────────────────────────────────────
 
     async def _persist_alert(
-        self, session_id: str, alert: Dict[str, Any],
+        self,
+        session_id: str,
+        alert: dict[str, Any],
     ) -> None:
         try:
             from ..infrastructure.storage import storage_manager
+
             db = storage_manager.mongo_db
             if db is None:
                 return
-            await db["adversarial_events"].insert_one({
-                "session_id": session_id,
-                **alert,
-                "_at": time.time(),
-            })
+            await db["adversarial_events"].insert_one(
+                {
+                    "session_id": session_id,
+                    **alert,
+                    "_at": time.time(),
+                }
+            )
         except Exception as exc:
             logger.debug("adversarial_persist_failed: %s", exc)
