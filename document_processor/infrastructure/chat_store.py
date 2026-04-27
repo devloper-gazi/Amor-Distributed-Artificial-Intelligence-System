@@ -237,8 +237,158 @@ class ChatStore:
             [("idempotency_key", 1)], sparse=True, unique=True
         )
 
+        # Per-user model preferences (More settings → AI Model). Stored
+        # under user_id when authenticated, client_id otherwise. The
+        # "mode" value is one of "research" / "thinking" / "coding" /
+        # "code" / "__all__" — the wildcard applies across modes when
+        # no exact-mode preference exists.
+        prefs = db["user_model_preferences"]
+        await prefs.create_index(
+            [("user_id", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+        await prefs.create_index(
+            [("client_id", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+
         self._indexes_ready = True
         logger.info("chat_store_indexes_ready")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # User model preferences (More settings → AI Model)
+    #
+    # Optional override of the default Ollama tag, stored per-user (or
+    # per-client when unauthenticated). The settings UI writes here; the
+    # AI handlers read here at request time. Falling back to None means
+    # the caller should auto-select.
+    # ─────────────────────────────────────────────────────────────────────
+
+    PREFERENCE_MODE_ALL = "__all__"
+
+    @staticmethod
+    def _pref_filter(
+        user_id: Optional[str], client_id: str, mode: str,
+    ) -> Dict[str, Any]:
+        """Build the unique-key filter — user_id wins when set, else client_id."""
+        if user_id:
+            return {"user_id": str(user_id), "mode": mode}
+        return {"user_id": None, "client_id": client_id, "mode": mode}
+
+    async def set_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+        model_tag: str,
+        model_source: str = "ollama_registry",
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Upsert a model preference for a specific mode (or "__all__")."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        flt = self._pref_filter(user_id, client_id, mode)
+        now = _utcnow()
+        await _write_with_retry(
+            lambda: coll.update_one(
+                flt,
+                {
+                    "$set": {
+                        "model_tag": model_tag,
+                        "model_source": model_source,
+                        "display_name": display_name,
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {**flt, "set_at": now},
+                },
+                upsert=True,
+            ),
+            op_name="set_model_preference",
+        )
+
+    async def get_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+    ) -> Optional[str]:
+        """
+        Resolution order:
+          1. Exact (user/client, mode)
+          2. Wildcard (user/client, "__all__")
+          3. None — caller should auto-select
+        """
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        try:
+            exact = await coll.find_one(
+                self._pref_filter(user_id, client_id, mode)
+            )
+            if exact and exact.get("model_tag"):
+                return str(exact["model_tag"])
+            wildcard = await coll.find_one(
+                self._pref_filter(user_id, client_id, self.PREFERENCE_MODE_ALL)
+            )
+            if wildcard and wildcard.get("model_tag"):
+                return str(wildcard["model_tag"])
+        except Exception as exc:
+            logger.warning("get_model_preference_failed: %s", exc)
+        return None
+
+    async def delete_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+    ) -> bool:
+        """Remove a preference; returns True if a row was deleted."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        try:
+            res = await _write_with_retry(
+                lambda: coll.delete_one(self._pref_filter(user_id, client_id, mode)),
+                op_name="delete_model_preference",
+            )
+            return bool(getattr(res, "deleted_count", 0))
+        except Exception as exc:
+            logger.warning("delete_model_preference_failed: %s", exc)
+            return False
+
+    async def get_all_model_preferences(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return {mode: {model_tag, model_source, display_name, ...}} — used
+        by the settings UI to populate the picker on open."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        flt: Dict[str, Any] = (
+            {"user_id": str(user_id)} if user_id
+            else {"user_id": None, "client_id": client_id}
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        try:
+            async for doc in coll.find(flt):
+                mode = doc.get("mode") or self.PREFERENCE_MODE_ALL
+                out[mode] = {
+                    "model_tag": doc.get("model_tag"),
+                    "model_source": doc.get("model_source"),
+                    "display_name": doc.get("display_name"),
+                    "set_at": doc.get("set_at"),
+                    "updated_at": doc.get("updated_at"),
+                }
+        except Exception as exc:
+            logger.warning("get_all_model_preferences_failed: %s", exc)
+        return out
 
     async def create_session(
         self,

@@ -64,6 +64,15 @@ except ImportError as _code_exc:  # pragma: no cover
     CODE_INTELLIGENCE_AVAILABLE = False
     logger.warning("Code intelligence routes not available: %s", _code_exc)
 
+# Unified model management (More Settings → AI Model picker)
+try:
+    from .api.model_routes import router as model_router
+    from .services.model_manager import ModelManager
+    MODEL_ROUTES_AVAILABLE = True
+except ImportError as _model_exc:  # pragma: no cover
+    MODEL_ROUTES_AVAILABLE = False
+    logger.warning("Model routes not available: %s", _model_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -202,6 +211,21 @@ async def lifespan(app: FastAPI):
                 vector_db_path=vector_path
             )
             logger.info("local_ai_initialized")
+
+        # Unified ModelManager — singleton on app.state. Created on
+        # demand by /api/models/* routes if missing, but pre-instantiating
+        # here lets us run the first installed-models probe early so the
+        # picker UI doesn't take 8s to render on the first open.
+        if MODEL_ROUTES_AVAILABLE:
+            try:
+                app.state.model_manager = ModelManager()
+                # Best-effort warm probe — failure logs but doesn't block.
+                _asyncio_main.create_task(
+                    app.state.model_manager.list_installed(force_refresh=True),
+                )
+                logger.info("model_manager_initialized")
+            except Exception as e:
+                logger.warning("model_manager_init_failed", error=str(e))
 
         # Phase D4 sweeper task — must outlive every request.
         sweeper_task = _asyncio_main.create_task(_sse_queue_sweeper())
@@ -365,6 +389,11 @@ if THINKING_AVAILABLE:
 if CODE_INTELLIGENCE_AVAILABLE:
     app.include_router(code_intelligence_router)
     logger.info("Code intelligence routes included")
+
+# Unified model management — /api/models/* (More Settings → AI Model)
+if MODEL_ROUTES_AVAILABLE:
+    app.include_router(model_router)
+    logger.info("Model routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
