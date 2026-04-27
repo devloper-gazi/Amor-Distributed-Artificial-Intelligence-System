@@ -73,6 +73,14 @@ except ImportError as _model_exc:  # pragma: no cover
     MODEL_ROUTES_AVAILABLE = False
     logger.warning("Model routes not available: %s", _model_exc)
 
+# Consortium Mode — meta-orchestrator chaining Code Intelligence + Research + Thinking
+try:
+    from .api.consortium_routes import router as consortium_router
+    CONSORTIUM_AVAILABLE = True
+except ImportError as _cons_exc:  # pragma: no cover
+    CONSORTIUM_AVAILABLE = False
+    logger.warning("Consortium routes not available: %s", _cons_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -394,6 +402,11 @@ if CODE_INTELLIGENCE_AVAILABLE:
 if MODEL_ROUTES_AVAILABLE:
     app.include_router(model_router)
     logger.info("Model routes included")
+
+# Consortium Mode — /api/consortium/* (meta-orchestrator)
+if CONSORTIUM_AVAILABLE:
+    app.include_router(consortium_router)
+    logger.info("Consortium routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
