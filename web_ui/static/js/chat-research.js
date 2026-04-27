@@ -1635,17 +1635,17 @@ class ChatController {
         }
     }
 
-    // ── AI Model picker (More settings → AI Model) ──────────────────────
+    // ── AI Model selector (More settings → AI Model) ───────────────────
     //
-    // Three pieces:
-    //   1. Read / save / clear the user's choice from localStorage
-    //      under `amor.preferredModel`.
-    //   2. Fetch the catalogue from /api/code/models and populate the
-    //      dropdown grouped by tier (flagship / balanced / lightweight).
-    //   3. Stream a Pull when the user picks a non-installed tag or
-    //      types a custom one.
-    // The selection is sent as `preferred_model` on every outbound mode
-    // request so backend handlers can use it.
+    // Three-tab UI backed by /api/models/* (Installed / Pull / Upload).
+    // Per-mode scope toggle decides whether the chosen tag binds to a
+    // single mode or all modes. Server-side resolution means the mere
+    // act of saving a preference is enough — the next request, even
+    // without a `preferred_model` field on the wire, will use it.
+    //
+    // localStorage `amor.preferredModel` is still written so:
+    //  (a) the topbar chip shows the active tag without an HTTP call;
+    //  (b) outbound bodies can carry preferred_model for back-compat.
 
     _MODEL_LS_KEY = 'amor.preferredModel';
 
@@ -1667,152 +1667,290 @@ class ChatController {
         } catch (_) { /* best-effort */ }
     }
 
-    /**
-     * Initialise the AI Model picker UI. Idempotent — safe to call
-     * every time the settings panel opens. The catalogue HTTP fetch
-     * runs only once per session (cached).
-     */
-    async _initModelPicker() {
-        if (this._modelPickerInited) return;
-        this._modelPickerInited = true;
-
-        const select = document.getElementById('aiModelSelect');
-        const customInput = document.getElementById('customModelTag');
-        const pullBtn = document.getElementById('pullModelBtn');
-        const currentEl = document.getElementById('panelModelCurrent');
-        if (!select) return;
-
-        // Populate the dropdown from the cached catalogue.
-        await this._loadModelCatalogue();
-
-        // Restore previous selection from localStorage.
-        const saved = this._readPreferredModel();
-        if (saved) {
-            const exists = Array.from(select.options).some(o => o.value === saved);
-            if (exists) {
-                select.value = saved;
-            } else {
-                // Custom tag — preserve the value by injecting an option.
-                const opt = document.createElement('option');
-                opt.value = saved;
-                opt.textContent = `${saved} (custom)`;
-                select.appendChild(opt);
-                select.value = saved;
-            }
-        } else {
-            select.value = '';
+    /** Idempotent state holder for the picker. */
+    _modelState() {
+        if (!this._modelStateObj) {
+            this._modelStateObj = {
+                scope: '__all__',         // active scope tab
+                tab: 'installed',         // active source tab
+                installed: [],            // list of {tag, display_name, ...}
+                catalogue: [],            // pullable catalogue entries
+                preferences: {},          // { mode: {model_tag, ...} }
+                autoSelect: null,         // {tag, reason}
+                ollamaUp: true,
+                pendingFile: null,        // currently-staged upload File
+                pendingFileBytes: 0,
+                uploading: false,
+                pulling: false,
+            };
         }
-        this._refreshModelCurrentLabel(currentEl, select.value);
-        this._renderModelChip();
+        return this._modelStateObj;
+    }
 
-        // Wire change handler.
-        select.addEventListener('change', () => {
-            const tag = select.value || '';
-            this._writePreferredModel(tag);
-            this._refreshModelCurrentLabel(currentEl, tag);
-            this._renderModelChip();
-        });
+    /** Lazy-init the picker on first panel-open. */
+    async _initModelPicker() {
+        // Backwards-compatible name — defers to initModelSelector once.
+        return this.initModelSelector();
+    }
 
-        // Wire the Pull button — handles both "selected catalogue tag
-        // not yet installed" and "custom-tag input".
-        pullBtn?.addEventListener('click', () => {
-            const customTag = (customInput?.value || '').trim();
-            const target = customTag || select.value;
-            if (!target) {
-                customInput?.focus();
-                return;
+    /**
+     * Initialise the picker. Wiring happens once; data refresh on every
+     * call (cheap — backed by 2-min server-side cache).
+     */
+    async initModelSelector() {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+
+        // One-time wiring — tab buttons, scope buttons, drop-zone, etc.
+        if (!root.dataset.wired) {
+            root.dataset.wired = '1';
+            this._wireModelTabs(root);
+            this._wireModelScope(root);
+            this._wireModelPullButton();
+            this._wireModelUpload();
+            // Topbar chip wiring — opens the panel + jumps to picker.
+            const chip = document.getElementById('topBarModelChip');
+            if (chip && !chip.dataset.wired) {
+                chip.dataset.wired = '1';
+                chip.addEventListener('click', () => {
+                    if (typeof this.openResearchSettingsPanel === 'function') {
+                        this.openResearchSettingsPanel();
+                    }
+                    setTimeout(() => root.scrollIntoView({behavior: 'smooth'}), 50);
+                });
             }
-            this._pullModel(target).catch(err => {
-                console.warn('model pull failed:', err);
+        }
+
+        // Refresh data + render every time.
+        await this._refreshModelData();
+    }
+
+    _wireModelTabs(root) {
+        root.querySelectorAll('.model-tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                if (!tab) return;
+                this._modelState().tab = tab;
+                root.querySelectorAll('.model-tab').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                root.querySelectorAll('.model-tab-panel').forEach(p => {
+                    const match = p.dataset.tabPanel === tab;
+                    p.classList.toggle('active', match);
+                    p.hidden = !match;
+                });
             });
-        });
-
-        // Pressing Enter in the custom-tag input also triggers Pull.
-        customInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                pullBtn?.click();
-            }
         });
     }
 
-    async _loadModelCatalogue() {
-        const select = document.getElementById('aiModelSelect');
-        if (!select) return;
-        let data;
+    _wireModelScope(root) {
+        root.querySelectorAll('.model-scope-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const scope = btn.dataset.scope || '__all__';
+                this._modelState().scope = scope;
+                root.querySelectorAll('.model-scope-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                // Re-render so per-mode "is_preferred" reflects the new scope.
+                this._refreshModelData().catch(err =>
+                    console.warn('model scope refresh failed:', err));
+            });
+        });
+    }
+
+    /**
+     * Hit /api/models?mode=<scope> and re-render Installed / Pull tabs.
+     * Falls back gracefully if Ollama is unreachable.
+     */
+    async _refreshModelData() {
+        const state = this._modelState();
+        const url = `/api/models?mode=${encodeURIComponent(state.scope)}&effort=medium`;
         try {
-            const resp = await this._authFetch('/api/code/models');
-            if (!resp.ok) throw new Error(`status ${resp.status}`);
-            data = await resp.json();
-        } catch (e) {
-            console.warn('model catalogue fetch failed:', e);
+            const resp = await this._authFetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.installed = Array.isArray(data.installed) ? data.installed : [];
+            state.catalogue = Array.isArray(data.catalogue) ? data.catalogue : [];
+            state.autoSelect = data.auto_select || null;
+            state.ollamaUp = !!data.ollama_available;
+            // Keep `preferences` in sync with what the server says is
+            // active for THIS scope — used by the rendering pass.
+            state.preferences = state.preferences || {};
+            state.preferences[state.scope] = data.active_preference || {};
+        } catch (err) {
+            console.warn('model list fetch failed:', err);
+            state.ollamaUp = false;
+        }
+        this._renderInstalledTab();
+        this._renderCatalogueTab();
+        this._renderPanelFooter();
+        this._renderModelChip();
+        this._syncLegacySelect();
+    }
+
+    /** Keep the (now-hidden) <select id="aiModelSelect"> in sync so
+     *  any code path still reading from it via DOM gets the right value. */
+    _syncLegacySelect() {
+        const sel = document.getElementById('aiModelSelect');
+        if (!sel) return;
+        const tag = this._readPreferredModel();
+        // Inject an option for the current tag if missing.
+        if (tag && !Array.from(sel.options).some(o => o.value === tag)) {
+            const opt = document.createElement('option');
+            opt.value = tag; opt.textContent = tag;
+            sel.appendChild(opt);
+        }
+        sel.value = tag || '';
+    }
+
+    _renderInstalledTab() {
+        const state = this._modelState();
+        const list = document.getElementById('modelInstalledList');
+        const empty = document.getElementById('modelInstalledEmpty');
+        const count = document.getElementById('modelTabCountInstalled');
+        const autoCard = document.getElementById('modelAutoCard');
+        const autoMeta = document.getElementById('modelAutoMeta');
+        if (!list) return;
+
+        if (count) count.textContent = String(state.installed.length);
+        if (autoMeta) {
+            const auto = state.autoSelect;
+            autoMeta.textContent = auto?.tag
+                ? `Will pick ${auto.tag} — ${auto.reason || ''}`.trim()
+                : 'Server picks the best installed model for each request.';
+        }
+        const activeTag = (state.preferences[state.scope]?.tag || '').toLowerCase();
+        if (autoCard) {
+            const isAuto = !activeTag;
+            autoCard.classList.toggle('active', isAuto);
+            autoCard.setAttribute('aria-pressed', isAuto ? 'true' : 'false');
+            if (!autoCard.dataset.wired) {
+                autoCard.dataset.wired = '1';
+                autoCard.addEventListener('click', () => this._clearPreference());
+            }
+        }
+
+        list.innerHTML = '';
+        if (!state.installed.length) {
+            if (empty) empty.hidden = false;
             return;
         }
+        if (empty) empty.hidden = true;
 
-        // Reset to just the Auto option.
-        const autoOpt = select.querySelector('option[value=""]');
-        select.innerHTML = '';
-        if (autoOpt) select.appendChild(autoOpt);
-        else {
-            const o = document.createElement('option');
-            o.value = ''; o.textContent = 'Auto · best per role (recommended)';
-            o.selected = true;
-            select.appendChild(o);
-        }
-
-        const installed = new Set(data.installed || []);
-        const catalogue = data.catalogue || [];
-        // Group by tier.
-        const tiers = { flagship: [], balanced: [], lightweight: [] };
-        catalogue.forEach(m => {
-            (tiers[m.tier] || tiers.balanced).push(m);
-        });
-        const labels = {
-            flagship: 'flagship · ≥ 16 GB VRAM',
-            balanced: 'balanced · 8–15 GB',
-            lightweight: 'lightweight · < 8 GB',
-        };
-        ['flagship', 'balanced', 'lightweight'].forEach(tier => {
-            const list = tiers[tier];
-            if (!list.length) return;
-            const group = document.createElement('optgroup');
-            group.label = labels[tier];
-            list.forEach(m => {
-                const opt = document.createElement('option');
-                opt.value = m.tag;
-                const isInstalled = installed.has(m.tag) || m.installed;
-                const bench = m.swebench_pct
-                    ? `${m.swebench_pct.toFixed(0)}% SWE-bench`
-                    : (m.humaneval_pct
-                        ? `${m.humaneval_pct.toFixed(0)}% HumanEval` : '');
-                const tail = isInstalled ? '· installed'
-                                         : (m.vram_gb ? `· ${m.vram_gb} GB pull` : '');
-                opt.textContent = `${m.display_name} ${tail ? '— ' + tail : ''} ${bench ? '· ' + bench : ''}`.trim();
-                if (!isInstalled) {
-                    // Not blocked — picking it sends preferred_model;
-                    // backend tries to pull on first call as fallback.
-                    opt.dataset.installed = 'false';
-                }
-                group.appendChild(opt);
-            });
-            select.appendChild(group);
+        state.installed.forEach(m => {
+            const card = this._makeModelCard(m, {pullable: false});
+            const isPref = (m.tag || '').toLowerCase() === activeTag;
+            if (isPref) card.classList.add('active');
+            list.appendChild(card);
         });
     }
 
-    _refreshModelCurrentLabel(el, tag) {
+    _renderCatalogueTab() {
+        const state = this._modelState();
+        const list = document.getElementById('modelCatalogueList');
+        const count = document.getElementById('modelTabCountPull');
+        if (!list) return;
+
+        const installable = state.catalogue.filter(m => !m.is_installed);
+        if (count) count.textContent = String(installable.length);
+
+        list.innerHTML = '';
+        installable.forEach(m => {
+            const card = this._makeModelCard(m, {pullable: true});
+            list.appendChild(card);
+        });
+    }
+
+    /** Build one .model-card. The card is a button that either picks
+     *  the tag (installed) or pulls it (catalogue). */
+    _makeModelCard(model, {pullable}) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'model-card';
+        if (model.is_custom) card.classList.add('model-card-custom');
+        if (model.is_auto_selected) card.classList.add('model-card-auto-pick');
+
+        const spec = model.spec || {};
+        const tier = spec.tier || (model.is_custom ? 'custom' : 'unknown');
+        const bench = spec.swebench_pct
+            ? `${Math.round(spec.swebench_pct)}% SWE-bench`
+            : (spec.humaneval_pct ? `${Math.round(spec.humaneval_pct)}% HumanEval` : '');
+        const sizeChip = model.size_bytes
+            ? `${(model.size_bytes / 1024**3).toFixed(1)} GB`
+            : (spec.vram_gb ? `${spec.vram_gb} GB VRAM` : '');
+
+        const badge = pullable
+            ? `<span class="model-card-badge model-card-badge-pull">Pull</span>`
+            : (model.is_custom
+                ? `<span class="model-card-badge model-card-badge-custom">custom</span>`
+                : (model.is_auto_selected
+                    ? `<span class="model-card-badge model-card-badge-auto">auto pick</span>`
+                    : ''));
+
+        card.innerHTML = `
+            <div class="model-card-head">
+                <span class="model-card-icon"><i class="fas fa-${pullable ? 'cloud-download-alt' : 'cube'}"></i></span>
+                <span class="model-card-name">${this.escapeHtml(model.display_name || model.tag)}</span>
+                ${badge}
+            </div>
+            <div class="model-card-meta">
+                <code class="model-card-tag">${this.escapeHtml(model.tag)}</code>
+                ${tier ? `<span class="model-card-tier">${this.escapeHtml(tier)}</span>` : ''}
+                ${sizeChip ? `<span class="model-card-size">${this.escapeHtml(sizeChip)}</span>` : ''}
+                ${bench ? `<span class="model-card-bench">${this.escapeHtml(bench)}</span>` : ''}
+            </div>
+        `;
+
+        card.addEventListener('click', () => {
+            if (pullable) {
+                this._pullModel(model.tag).catch(err =>
+                    console.warn('model pull failed:', err));
+            } else {
+                this._savePreference(
+                    model.tag,
+                    model.is_custom ? 'gguf_upload' : 'ollama_registry',
+                    model.display_name || model.tag,
+                );
+            }
+        });
+
+        // Custom models get a delete affordance.
+        if (!pullable && model.is_custom) {
+            const del = document.createElement('span');
+            del.className = 'model-card-delete';
+            del.title = 'Delete this custom model';
+            del.innerHTML = '<i class="fas fa-trash-alt"></i>';
+            del.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._deleteCustomModel(model.tag).catch(err =>
+                    console.warn('model delete failed:', err));
+            });
+            card.appendChild(del);
+        }
+
+        return card;
+    }
+
+    _renderPanelFooter() {
+        const el = document.getElementById('panelModelCurrent');
         if (!el) return;
-        if (!tag) {
+        const state = this._modelState();
+        const active = state.preferences[state.scope]?.tag;
+        if (!active) {
             el.classList.add('is-auto');
-            el.innerHTML = 'Currently: <strong>Auto</strong>';
+            el.innerHTML = `Currently: <strong>Auto</strong> · <span>${this.escapeHtml(state.autoSelect?.tag || 'server-picked')}</span>`;
         } else {
             el.classList.remove('is-auto');
-            el.innerHTML = `Currently: <strong>${this.escapeHtml(tag)}</strong>`;
+            const scopeLabel = state.scope === '__all__' ? 'all modes' : state.scope;
+            el.innerHTML = `Currently: <strong>${this.escapeHtml(active)}</strong> · ${this.escapeHtml(scopeLabel)}`;
         }
     }
 
     /**
-     * Render or hide the topbar chip showing the active non-default model.
-     * Called whenever the selection changes + once at boot.
+     * Render or hide the topbar chip showing the active model. Reads
+     * localStorage so it works on first paint without an HTTP call.
      */
     _renderModelChip() {
         const chip = document.getElementById('topBarModelChip');
@@ -1825,47 +1963,97 @@ class ChatController {
         }
         tagEl.textContent = tag;
         chip.hidden = false;
-        // Click → open the settings panel scrolled to the picker.
-        if (!chip._wired) {
-            chip._wired = true;
-            chip.addEventListener('click', () => {
-                if (typeof this.openResearchSettingsPanel === 'function') {
-                    this.openResearchSettingsPanel();
-                }
-                setTimeout(() => {
-                    document.getElementById('aiModelSelect')?.focus();
-                }, 50);
-            });
-        }
     }
 
     /**
-     * Pull a model tag via the existing SSE endpoint. Drives the
-     * `#modelPullProgress` bar and refreshes the catalogue on success.
+     * PUT /api/models/preference + sync localStorage + re-render.
+     */
+    async _savePreference(tag, source, displayName) {
+        const state = this._modelState();
+        const body = {
+            mode: state.scope,
+            model_tag: tag,
+            model_source: source || 'ollama_registry',
+            display_name: displayName || tag,
+        };
+        try {
+            const resp = await this._authFetch('/api/models/preference', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            // localStorage tracks the user's most recent pick across
+            // ANY scope — this drives the topbar chip + the outbound
+            // body's `preferred_model` field for clients on this tab.
+            this._writePreferredModel(tag);
+            this._toast?.(`Model set: ${tag}`);
+        } catch (err) {
+            console.warn('save preference failed:', err);
+            this._toast?.(`Failed to save preference: ${err.message}`, 'error');
+        }
+        await this._refreshModelData();
+    }
+
+    /** DELETE /api/models/preference/{mode} for the active scope. */
+    async _clearPreference() {
+        const state = this._modelState();
+        try {
+            await this._authFetch(
+                `/api/models/preference/${encodeURIComponent(state.scope)}`,
+                {method: 'DELETE'},
+            );
+            // Only nuke localStorage if no preference remains for any scope.
+            this._writePreferredModel('');
+        } catch (err) {
+            console.warn('clear preference failed:', err);
+        }
+        await this._refreshModelData();
+    }
+
+    _wireModelPullButton() {
+        const btn = document.getElementById('pullModelBtn');
+        const input = document.getElementById('customModelTag');
+        btn?.addEventListener('click', () => {
+            const tag = (input?.value || '').trim();
+            if (!tag) { input?.focus(); return; }
+            this._pullModel(tag).catch(err =>
+                console.warn('model pull failed:', err));
+        });
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); btn?.click(); }
+        });
+    }
+
+    /**
+     * POST /api/models/pull (SSE). Drives #modelPullProgress and re-
+     * fetches the catalogue when complete; auto-saves the just-pulled
+     * tag as the active preference on success.
      */
     async _pullModel(tag) {
+        const state = this._modelState();
+        if (!tag || state.pulling) return;
+
         const progress = document.getElementById('modelPullProgress');
         const fill = document.getElementById('pullFill');
         const pct = document.getElementById('pullPct');
         const status = document.getElementById('pullStatus');
         const pullBtn = document.getElementById('pullModelBtn');
 
-        if (!tag) return;
-        if (progress) {
-            progress.hidden = false;
-            progress.classList.remove('error');
-        }
+        if (progress) { progress.hidden = false; progress.classList.remove('error'); }
         if (pct) pct.textContent = '0%';
         if (fill) fill.style.width = '0%';
         if (status) status.textContent = 'Starting…';
         if (pullBtn) pullBtn.disabled = true;
+        state.pulling = true;
 
-        const url = `/api/code/models/${encodeURIComponent(tag)}/pull`;
-        // EventSource doesn't support POST; use fetch + body reader so
-        // we can stream the SSE manually.
         let resp;
         try {
-            resp = await this._authFetch(url, { method: 'POST' });
+            resp = await this._authFetch('/api/models/pull', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({tag}),
+            });
             if (!resp.ok || !resp.body) {
                 throw new Error(`pull start failed (${resp.status})`);
             }
@@ -1873,12 +2061,14 @@ class ChatController {
             if (status) status.textContent = `Failed: ${e.message}`;
             if (progress) progress.classList.add('error');
             if (pullBtn) pullBtn.disabled = false;
+            state.pulling = false;
             return;
         }
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let success = false;
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -1902,22 +2092,7 @@ class ChatController {
                         if (fill) fill.style.width = '100%';
                         if (pct) pct.textContent = '100%';
                         if (status) status.textContent = 'Done';
-                        // Refresh catalogue + auto-select the just-pulled tag.
-                        await this._loadModelCatalogue();
-                        const select = document.getElementById('aiModelSelect');
-                        if (select) {
-                            const opt = Array.from(select.options).find(o => o.value === tag);
-                            if (opt) {
-                                select.value = tag;
-                                this._writePreferredModel(tag);
-                                this._refreshModelCurrentLabel(
-                                    document.getElementById('panelModelCurrent'),
-                                    tag,
-                                );
-                                this._renderModelChip();
-                            }
-                        }
-                        setTimeout(() => { if (progress) progress.hidden = true; }, 1500);
+                        success = true;
                     } else if (evt.type === 'pull_error') {
                         if (status) status.textContent = `Failed: ${evt.error || 'unknown'}`;
                         if (progress) progress.classList.add('error');
@@ -1926,7 +2101,236 @@ class ChatController {
             }
         } finally {
             if (pullBtn) pullBtn.disabled = false;
+            state.pulling = false;
         }
+
+        if (success) {
+            // Refresh catalogue, then save the just-pulled tag for the
+            // current scope so the next request actually uses it.
+            await this._refreshModelData();
+            await this._savePreference(tag, 'ollama_registry', tag);
+            setTimeout(() => { if (progress) progress.hidden = true; }, 1500);
+            // Clear the custom-tag input.
+            const input = document.getElementById('customModelTag');
+            if (input) input.value = '';
+        }
+    }
+
+    // ── Tab 3 — GGUF upload ────────────────────────────────────────────
+
+    _wireModelUpload() {
+        const dropZone = document.getElementById('modelDropZone');
+        const fileInput = document.getElementById('modelUploadInput');
+        const cancelBtn = document.getElementById('modelUploadCancel');
+        const submitBtn = document.getElementById('modelUploadSubmit');
+        const limitEl = document.getElementById('modelUploadLimit');
+
+        // The server-side limit is exposed via .env; we don't have a
+        // dedicated endpoint, so the badge stays at the default 50 GB
+        // unless overridden by the operator.
+        if (limitEl) limitEl.textContent = '50';
+
+        if (!dropZone || !fileInput) return;
+
+        const handleFile = (file) => {
+            if (!file) return;
+            if (!/\.gguf$/i.test(file.name)) {
+                this._toast?.('Pick a .gguf file', 'error');
+                return;
+            }
+            this._stageUploadFile(file);
+        };
+
+        fileInput.addEventListener('change', () => handleFile(fileInput.files?.[0]));
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInput.click();
+            }
+        });
+        ['dragenter', 'dragover'].forEach(evt =>
+            dropZone.addEventListener(evt, (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dropZone.classList.add('dragging');
+            })
+        );
+        ['dragleave', 'drop'].forEach(evt =>
+            dropZone.addEventListener(evt, (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dropZone.classList.remove('dragging');
+            })
+        );
+        dropZone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer?.files?.[0];
+            handleFile(file);
+        });
+
+        cancelBtn?.addEventListener('click', () => this._resetUploadForm());
+        submitBtn?.addEventListener('click', () => this._submitUpload().catch(err =>
+            console.warn('upload failed:', err)));
+    }
+
+    _stageUploadFile(file) {
+        const state = this._modelState();
+        state.pendingFile = file;
+        state.pendingFileBytes = file.size;
+        const form = document.getElementById('modelUploadForm');
+        const dz = document.getElementById('modelDropZone');
+        const fname = document.getElementById('modelUploadFname');
+        const fsize = document.getElementById('modelUploadFsize');
+        if (form) form.hidden = false;
+        if (dz) dz.hidden = true;
+        if (fname) fname.textContent = file.name;
+        if (fsize) fsize.textContent = `${(file.size / 1024**3).toFixed(2)} GB`;
+    }
+
+    _resetUploadForm() {
+        const state = this._modelState();
+        state.pendingFile = null;
+        state.pendingFileBytes = 0;
+        state.uploading = false;
+        const form = document.getElementById('modelUploadForm');
+        const dz = document.getElementById('modelDropZone');
+        const progress = document.getElementById('modelUploadProgress');
+        const fileInput = document.getElementById('modelUploadInput');
+        const display = document.getElementById('modelUploadDisplay');
+        if (form) form.hidden = true;
+        if (dz) dz.hidden = false;
+        if (progress) progress.hidden = true;
+        if (fileInput) fileInput.value = '';
+        if (display) display.value = '';
+    }
+
+    async _submitUpload() {
+        const state = this._modelState();
+        if (!state.pendingFile || state.uploading) return;
+        const file = state.pendingFile;
+        const display = (document.getElementById('modelUploadDisplay')?.value || '').trim();
+
+        const progress = document.getElementById('modelUploadProgress');
+        const fill = document.getElementById('modelUploadFill');
+        const pct = document.getElementById('modelUploadPct');
+        const status = document.getElementById('modelUploadStatus');
+        const submit = document.getElementById('modelUploadSubmit');
+        if (progress) { progress.hidden = false; progress.classList.remove('error'); }
+        if (fill) fill.style.width = '0%';
+        if (pct) pct.textContent = '0%';
+        if (status) status.textContent = 'Uploading…';
+        if (submit) submit.disabled = true;
+        state.uploading = true;
+
+        const fd = new FormData();
+        fd.append('file', file);
+        if (display) fd.append('display_name', display);
+
+        try {
+            // We use XMLHttpRequest because fetch() doesn't expose
+            // upload progress events in the browser.
+            const result = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/api/models/upload', true);
+                // Mirror _authFetch's headers (token + X-Client-Id) so
+                // the server-side identity logic works for uploads too.
+                const headers = (this._authHeaders ? this._authHeaders() : {});
+                Object.entries(headers || {}).forEach(([k, v]) => {
+                    if (v != null) xhr.setRequestHeader(k, v);
+                });
+                xhr.upload.onprogress = (e) => {
+                    if (!e.lengthComputable) return;
+                    const p = Math.round((e.loaded / e.total) * 100);
+                    if (fill) fill.style.width = `${p}%`;
+                    if (pct) pct.textContent = `${p}%`;
+                    if (status && p < 100) status.textContent = 'Uploading…';
+                    if (status && p >= 100) status.textContent = 'Registering with Ollama…';
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try { resolve(JSON.parse(xhr.responseText)); }
+                        catch (_) { resolve({ok: true}); }
+                    } else {
+                        let detail = `HTTP ${xhr.status}`;
+                        try {
+                            const body = JSON.parse(xhr.responseText);
+                            detail = body.detail || detail;
+                        } catch (_) {}
+                        reject(new Error(detail));
+                    }
+                };
+                xhr.onerror = () => reject(new Error('Network error'));
+                xhr.send(fd);
+            });
+            if (status) status.textContent = `Registered as ${result.tag}`;
+            if (fill) fill.style.width = '100%';
+            // Auto-save as the active preference for the current scope.
+            await this._refreshModelData();
+            await this._savePreference(
+                result.tag, 'gguf_upload',
+                result.display_name || file.name,
+            );
+            setTimeout(() => this._resetUploadForm(), 1800);
+            // Switch to Installed tab so the user sees the new model.
+            document.querySelector('.model-tab[data-tab="installed"]')?.click();
+        } catch (err) {
+            if (status) status.textContent = `Failed: ${err.message}`;
+            if (progress) progress.classList.add('error');
+        } finally {
+            if (submit) submit.disabled = false;
+            state.uploading = false;
+        }
+    }
+
+    /** DELETE /api/models/custom/{tag} for an uploaded model. */
+    async _deleteCustomModel(tag) {
+        if (!tag.startsWith('custom/')) return;
+        // No native confirm() in some testing harnesses; gate behind a
+        // typed confirmation.
+        const proceed = window.confirm?.(
+            `Delete custom model ${tag}? This cannot be undone.`,
+        );
+        if (proceed === false) return;
+        try {
+            const resp = await this._authFetch(
+                `/api/models/custom/${encodeURIComponent(tag)}`,
+                {method: 'DELETE'},
+            );
+            if (!resp.ok) {
+                const body = await resp.json().catch(() => ({}));
+                throw new Error(body.detail || `HTTP ${resp.status}`);
+            }
+            this._toast?.(`Deleted ${tag}`);
+        } catch (err) {
+            console.warn('custom model delete failed:', err);
+            this._toast?.(`Delete failed: ${err.message}`, 'error');
+        }
+        await this._refreshModelData();
+    }
+
+    /** Optional toast helper — falls back to console.log. */
+    _toast(msg, kind) {
+        try {
+            const el = document.createElement('div');
+            el.className = `model-toast model-toast-${kind || 'info'}`;
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.classList.add('show'), 10);
+            setTimeout(() => el.classList.remove('show'), 2400);
+            setTimeout(() => el.remove(), 2700);
+        } catch (_) {
+            console.log('[model]', msg);
+        }
+    }
+
+    /** Headers used by XHR upload (mirrors _authFetch behaviour). */
+    _authHeaders() {
+        const headers = {};
+        try {
+            const token = localStorage.getItem('amor.accessToken');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const cid = localStorage.getItem('amor.clientId');
+            if (cid) headers['X-Client-Id'] = cid;
+        } catch (_) {}
+        return headers;
     }
 
     // ── localStorage active-code persistence (mirrors active-research) ──

@@ -223,50 +223,214 @@
                         </select>
                     </div>
 
-                    <!-- Optional AI Model picker (More settings → AI Model).
-                         Default "Auto" preserves today's behaviour exactly.
-                         Picking a tag sends `preferred_model` on every
-                         outbound request body and flips the topbar chip on. -->
-                    <div class="panel-setting-section">
+                    <!-- AI Model picker — three-tab surface backed by
+                         /api/models/*. Tab 1 lists installed tags, tab
+                         2 lets you pull from Ollama Hub (catalogue +
+                         custom tag), tab 3 accepts a .gguf upload.
+                         Per-mode scope selector at the top binds the
+                         choice to either *all modes* or just the
+                         active one.
+
+                         Default state ("Auto") sends no preferred_model
+                         on the wire — backend resolves via auto-select
+                         exactly as today. -->
+                    <div class="panel-setting-section model-picker" id="modelPicker">
                         <div class="panel-section-title">
                             <i class="fas fa-microchip"></i>
-                            <span>AI Model (optional)</span>
+                            <span>AI Model</span>
                             <span class="panel-section-hint">leave on Auto for the best per-task pick</span>
                         </div>
-                        <div class="panel-setting-row">
-                            <label class="panel-setting-label" for="aiModelSelect">
-                                <i class="fas fa-microchip"></i>
-                                <span>Model</span>
-                            </label>
-                            <select id="aiModelSelect" class="panel-setting-select">
-                                <option value="" selected>Auto · best per role (recommended)</option>
-                                <!-- catalogue groups injected by JS on panel open -->
-                            </select>
-                        </div>
-                        <div class="panel-setting-row panel-model-pull">
-                            <input
-                                id="customModelTag"
-                                type="text"
-                                class="panel-setting-input"
-                                placeholder="custom-org/model:7b"
-                                maxlength="120"
-                                autocomplete="off"
-                                spellcheck="false" />
-                            <button id="pullModelBtn" class="panel-action-btn" type="button">
-                                <i class="fas fa-cloud-download-alt"></i>
-                                <span>Pull</span>
-                            </button>
-                        </div>
-                        <div class="panel-pull-progress" id="modelPullProgress" hidden>
-                            <div class="pull-bar"><div class="pull-fill" id="pullFill"></div></div>
-                            <div class="pull-meta">
-                                <span class="pull-pct" id="pullPct">0%</span>
-                                <span class="pull-status" id="pullStatus">Starting…</span>
+
+                        <!-- Per-mode scope: applies the choice across
+                             all modes (default) or just the current one. -->
+                        <div class="model-scope-row">
+                            <span class="model-scope-label">Apply to:</span>
+                            <div class="model-scope-toggle" role="tablist" aria-label="Preference scope">
+                                <button
+                                    type="button"
+                                    class="model-scope-btn active"
+                                    data-scope="__all__"
+                                    role="tab"
+                                    aria-selected="true">All modes</button>
+                                <button
+                                    type="button"
+                                    class="model-scope-btn"
+                                    data-scope="research"
+                                    role="tab">Research</button>
+                                <button
+                                    type="button"
+                                    class="model-scope-btn"
+                                    data-scope="thinking"
+                                    role="tab">Thinking</button>
+                                <button
+                                    type="button"
+                                    class="model-scope-btn"
+                                    data-scope="code"
+                                    role="tab">Code</button>
                             </div>
                         </div>
+
+                        <!-- Three-tab surface -->
+                        <div class="model-tabs" role="tablist" aria-label="Model source">
+                            <button
+                                type="button"
+                                class="model-tab active"
+                                data-tab="installed"
+                                role="tab"
+                                aria-selected="true">
+                                <i class="fas fa-server"></i>
+                                <span>Installed</span>
+                                <span class="model-tab-count" id="modelTabCountInstalled">0</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="model-tab"
+                                data-tab="pull"
+                                role="tab">
+                                <i class="fas fa-cloud-download-alt"></i>
+                                <span>Pull</span>
+                                <span class="model-tab-count" id="modelTabCountPull">0</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="model-tab"
+                                data-tab="upload"
+                                role="tab">
+                                <i class="fas fa-upload"></i>
+                                <span>Upload .gguf</span>
+                            </button>
+                        </div>
+
+                        <!-- Tab 1 — Installed -->
+                        <div
+                            class="model-tab-panel active"
+                            data-tab-panel="installed"
+                            role="tabpanel">
+                            <button
+                                type="button"
+                                class="model-card model-card-auto"
+                                id="modelAutoCard"
+                                data-tag=""
+                                aria-pressed="true">
+                                <div class="model-card-head">
+                                    <span class="model-card-icon"><i class="fas fa-magic"></i></span>
+                                    <span class="model-card-name">Auto · best per task</span>
+                                    <span class="model-card-badge model-card-badge-active">recommended</span>
+                                </div>
+                                <div class="model-card-meta" id="modelAutoMeta">
+                                    Server picks the best installed model for each request.
+                                </div>
+                            </button>
+                            <div class="model-card-list" id="modelInstalledList">
+                                <!-- populated by JS -->
+                            </div>
+                            <div class="model-empty" id="modelInstalledEmpty" hidden>
+                                <i class="fas fa-info-circle"></i>
+                                <span>No models installed yet — try the Pull tab.</span>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2 — Pull -->
+                        <div
+                            class="model-tab-panel"
+                            data-tab-panel="pull"
+                            role="tabpanel"
+                            hidden>
+                            <div class="model-pull-custom">
+                                <input
+                                    id="customModelTag"
+                                    type="text"
+                                    class="panel-setting-input"
+                                    placeholder="hf.co/Org/Model:Q4_K_M  or  qwen2.5-coder:7b"
+                                    maxlength="160"
+                                    autocomplete="off"
+                                    spellcheck="false" />
+                                <button id="pullModelBtn" class="panel-action-btn" type="button">
+                                    <i class="fas fa-cloud-download-alt"></i>
+                                    <span>Pull</span>
+                                </button>
+                            </div>
+                            <div class="panel-pull-progress" id="modelPullProgress" hidden>
+                                <div class="pull-bar"><div class="pull-fill" id="pullFill"></div></div>
+                                <div class="pull-meta">
+                                    <span class="pull-pct" id="pullPct">0%</span>
+                                    <span class="pull-status" id="pullStatus">Starting…</span>
+                                </div>
+                            </div>
+                            <div class="model-card-list" id="modelCatalogueList">
+                                <!-- populated by JS -->
+                            </div>
+                        </div>
+
+                        <!-- Tab 3 — Upload -->
+                        <div
+                            class="model-tab-panel"
+                            data-tab-panel="upload"
+                            role="tabpanel"
+                            hidden>
+                            <label
+                                class="model-drop-zone"
+                                id="modelDropZone"
+                                for="modelUploadInput"
+                                tabindex="0">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <span class="model-drop-title">Drop a .gguf file or click to browse</span>
+                                <span class="model-drop-hint">
+                                    Up to <strong id="modelUploadLimit">50</strong> GB
+                                    · auto-registered as <code>custom/&lt;name&gt;:&lt;hash&gt;</code>
+                                </span>
+                                <input
+                                    type="file"
+                                    id="modelUploadInput"
+                                    accept=".gguf,application/octet-stream"
+                                    hidden />
+                            </label>
+                            <div class="model-upload-form" id="modelUploadForm" hidden>
+                                <div class="model-upload-file">
+                                    <i class="fas fa-file-archive"></i>
+                                    <span class="model-upload-fname" id="modelUploadFname"></span>
+                                    <span class="model-upload-fsize" id="modelUploadFsize"></span>
+                                </div>
+                                <input
+                                    type="text"
+                                    id="modelUploadDisplay"
+                                    class="panel-setting-input"
+                                    placeholder="Display name (optional)"
+                                    maxlength="120" />
+                                <div class="model-upload-actions">
+                                    <button
+                                        type="button"
+                                        class="panel-action-btn panel-action-btn-ghost"
+                                        id="modelUploadCancel">Cancel</button>
+                                    <button
+                                        type="button"
+                                        class="panel-action-btn"
+                                        id="modelUploadSubmit">
+                                        <i class="fas fa-rocket"></i>
+                                        <span>Upload &amp; register</span>
+                                    </button>
+                                </div>
+                                <div class="panel-pull-progress" id="modelUploadProgress" hidden>
+                                    <div class="pull-bar"><div class="pull-fill" id="modelUploadFill"></div></div>
+                                    <div class="pull-meta">
+                                        <span class="pull-pct" id="modelUploadPct">0%</span>
+                                        <span class="pull-status" id="modelUploadStatus">Uploading…</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Footer summary -->
                         <div class="panel-model-current" id="panelModelCurrent">
                             Currently: <strong>Auto</strong>
                         </div>
+
+                        <!-- Hidden legacy select kept for code-paths that
+                             read aiModelSelect directly until the new
+                             initModelSelector replaces them. -->
+                        <select id="aiModelSelect" class="panel-setting-select" hidden>
+                            <option value="" selected>Auto</option>
+                        </select>
                     </div>
                 </div>
                 <div class="settings-panel-footer">
