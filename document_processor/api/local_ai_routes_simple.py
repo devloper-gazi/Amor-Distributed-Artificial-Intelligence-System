@@ -1196,9 +1196,12 @@ async def _call_ollama_ensemble(
             for t in tasks:
                 if not t.done():
                     t.cancel()
-        # Fallback — all failed; raise the last exception we saw.
+        # Fallback — all members either failed or returned empty.
+        # Raise the first non-cancellation exception we can find;
+        # cancelled tasks raise CancelledError from .exception() which
+        # would mask the real error, so skip them.
         for t in tasks:
-            if t.done():
+            if t.done() and not t.cancelled():
                 exc = t.exception()
                 if exc:
                     raise exc

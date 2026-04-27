@@ -274,6 +274,17 @@ class ConsortiumOrchestrator:
                 "type": "consortium_phase_complete",
                 "phase": "research", "research": self.research.to_dict(),
             })
+            # Emit a synthetic "skipped" gate so every phase has a
+            # verification entry — keeps the bundle + UI consistent.
+            skipped_gate = VerificationGate(
+                phase="research",
+                status="passed_warn",
+                score=50.0,
+                findings=["Web research disabled by scope"],
+                summary="research skipped (allow_external_research=False)",
+            )
+            self.verifications.append(skipped_gate)
+            await self._emit({"type": "consortium_gate", "gate": skipped_gate.to_dict()})
             return self.research
 
         relay = self._make_inner_event_relay("research")
