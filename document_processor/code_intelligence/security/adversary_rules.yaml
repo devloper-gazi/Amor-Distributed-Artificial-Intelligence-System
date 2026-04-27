@@ -1,0 +1,88 @@
+# Adversarial Reviewer rule pack.
+#
+# Each rule has:
+#   id          — short SCREAMING_SNAKE identifier (logged on hit)
+#   severity    — critical | high | medium | low
+#   description — one line
+#   pattern     — Python regex (compiled with re.MULTILINE | re.IGNORECASE
+#                 unless `case_sensitive: true`)
+#   targets     — list of event types this rule should be checked against;
+#                 when omitted, the rule applies to all events.
+
+rules:
+  # ── Prompt injection ─────────────────────────────────────────────
+  - id: PROMPT_INJECTION_IGNORE_PREVIOUS
+    severity: high
+    description: Classic prompt-injection ("ignore previous instructions").
+    pattern: 'ignore (?:all |the )?(?:previous|prior|above) (?:instructions|prompts|rules|context)'
+    targets: [code_ready, test_ready, deliverable_ready]
+
+  - id: PROMPT_INJECTION_NEW_PERSONA
+    severity: high
+    description: Persona-hijack via "you are now".
+    pattern: 'you are now (?:[a-z]+ )?(?:assistant|agent|model|system|root)'
+    targets: [code_ready, test_ready, deliverable_ready]
+
+  - id: PROMPT_INJECTION_SYSTEM_LEAK
+    severity: medium
+    description: Attempted system-prompt impersonation.
+    pattern: '^\s*(?:system|assistant|user)\s*:\s*'
+    targets: [code_ready, test_ready, deliverable_ready]
+
+  # ── Secret leakage ───────────────────────────────────────────────
+  - id: SECRET_AWS_ACCESS_KEY
+    severity: critical
+    description: AWS access key id.
+    pattern: '\bAKIA[0-9A-Z]{16}\b'
+    case_sensitive: true
+
+  - id: SECRET_ANTHROPIC_KEY
+    severity: critical
+    description: Anthropic API key.
+    pattern: '\bsk-ant-[A-Za-z0-9_-]{20,}\b'
+    case_sensitive: true
+
+  - id: SECRET_OPENAI_KEY
+    severity: critical
+    description: OpenAI API key.
+    pattern: '\bsk-[A-Za-z0-9]{32,}\b'
+    case_sensitive: true
+
+  - id: SECRET_GITHUB_PAT
+    severity: critical
+    description: GitHub personal-access token.
+    pattern: '\bghp_[A-Za-z0-9]{36,}\b'
+    case_sensitive: true
+
+  - id: SECRET_GENERIC_BEARER
+    severity: high
+    description: Bearer token > 30 chars (loose heuristic; suppress within JSON web tokens that stay short).
+    pattern: '\bBearer\s+[A-Za-z0-9_\-\.]{30,}\b'
+    case_sensitive: true
+
+  # ── Suspicious shell forms ───────────────────────────────────────
+  - id: SHELL_CURL_PIPE_SH
+    severity: critical
+    description: '`curl ... | sh` / `wget ... | bash` remote-execution.'
+    pattern: '(?:curl|wget|fetch)\s+[^|;\n]+\|\s*(?:sh|bash|zsh|fish|sudo\s+sh)'
+
+  - id: SHELL_EVAL_INJECTION
+    severity: high
+    description: '`eval $(...)` / `eval "$..."` arbitrary execution.'
+    pattern: '\beval\s+[\(\$"]'
+
+  - id: SHELL_RM_RF_ROOT
+    severity: critical
+    description: '`rm -rf /` and friends.'
+    pattern: '\brm\s+-[rRf]+\s+(?:/|\$HOME|~)\s'
+
+  - id: SHELL_PYTHON_EXEC_NETWORK
+    severity: high
+    description: 'Python `exec(open(...).read())` against a URL fetch.'
+    pattern: '\bexec\s*\(\s*(?:requests|urllib|httpx|urlopen)\b'
+
+  # ── Untrusted runtime URLs ───────────────────────────────────────
+  - id: UNTRUSTED_DOWNLOAD_AND_RUN
+    severity: high
+    description: 'Pattern of fetching a URL into a runtime exec.'
+    pattern: '(?:requests\.get|httpx\.get|urlopen|fetch)\s*\([^)]*https?://[^)]+\)\s*\.\s*text\s*[^a-z]*\s*exec'
