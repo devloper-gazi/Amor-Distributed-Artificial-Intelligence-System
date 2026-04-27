@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -25,7 +25,7 @@ def _candidate(**kwargs) -> CapabilityCandidate:
         package_or_endpoint="https://github.com/example/repo",
         spdx_license="MIT",
         stars=120,
-        last_commit_iso=datetime.now(timezone.utc).isoformat(),
+        last_commit_iso=datetime.now(UTC).isoformat(),
         description="A demo",
     )
     base.update(kwargs)
@@ -86,9 +86,8 @@ def test_metadata_gate_rejects_low_stars():
 
 
 def test_metadata_gate_rejects_old_commit():
-    old = (datetime.now(timezone.utc) - timedelta(days=900)).isoformat()
-    res = metadata_gate(_candidate(last_commit_iso=old),
-                        max_commit_age_days=540)
+    old = (datetime.now(UTC) - timedelta(days=900)).isoformat()
+    res = metadata_gate(_candidate(last_commit_iso=old), max_commit_age_days=540)
     assert res.passed is False
     assert "last_commit" in res.detail
 
@@ -114,8 +113,11 @@ def test_metadata_gate_skips_star_check_for_non_github():
 async def test_registry_in_process_fallback_register_and_list():
     reg = CapabilityRegistry()
     record = CapabilityRecord(
-        id="abc-123", kind="tool", name="acme/example",
-        package_or_endpoint="https://example", spdx_license="MIT",
+        id="abc-123",
+        kind="tool",
+        name="acme/example",
+        package_or_endpoint="https://example",
+        spdx_license="MIT",
         registered_at="2026-01-01T00:00:00+00:00",
     )
     await reg.register(record)
@@ -128,8 +130,11 @@ async def test_registry_in_process_fallback_register_and_list():
 async def test_registry_unregister():
     reg = CapabilityRegistry()
     record = CapabilityRecord(
-        id="def-456", kind="tool", name="acme/another",
-        package_or_endpoint="https://x", spdx_license="MIT",
+        id="def-456",
+        kind="tool",
+        name="acme/another",
+        package_or_endpoint="https://x",
+        spdx_license="MIT",
         registered_at="2026-01-01T00:00:00+00:00",
     )
     await reg.register(record)
@@ -141,8 +146,11 @@ async def test_registry_unregister():
 async def test_registry_get_returns_record():
     reg = CapabilityRegistry()
     record = CapabilityRecord(
-        id="ghi-789", kind="model", name="acme/embedder",
-        package_or_endpoint="acme/embedder", spdx_license="Apache-2.0",
+        id="ghi-789",
+        kind="model",
+        name="acme/embedder",
+        package_or_endpoint="acme/embedder",
+        spdx_license="Apache-2.0",
         registered_at="2026-01-01T00:00:00+00:00",
     )
     await reg.register(record)
@@ -161,6 +169,7 @@ async def test_run_once_returns_report_even_with_no_sources(monkeypatch):
 
     async def _empty(*args, **kwargs):
         return []
+
     monkeypatch.setattr(cd, "_discover_hugging_face", _empty)
     monkeypatch.setattr(cd, "_discover_github", _empty)
     monkeypatch.setattr(cd, "_discover_arxiv", _empty)
@@ -178,14 +187,19 @@ async def test_run_once_registers_passing_candidate(monkeypatch):
     from document_processor.code_intelligence import capability_discoverer as cd
 
     async def _one_hf(*args, **kwargs):
-        return [_candidate(
-            kind=CapabilityKind.MODEL, name="hf/test-model",
-            source="huggingface", package_or_endpoint="hf/test-model",
-            spdx_license="Apache-2.0",
-        )]
+        return [
+            _candidate(
+                kind=CapabilityKind.MODEL,
+                name="hf/test-model",
+                source="huggingface",
+                package_or_endpoint="hf/test-model",
+                spdx_license="Apache-2.0",
+            )
+        ]
 
     async def _empty(*args, **kwargs):
         return []
+
     monkeypatch.setattr(cd, "_discover_hugging_face", _one_hf)
     monkeypatch.setattr(cd, "_discover_github", _empty)
     monkeypatch.setattr(cd, "_discover_arxiv", _empty)
@@ -203,13 +217,18 @@ async def test_run_once_rejects_bad_license(monkeypatch):
     from document_processor.code_intelligence import capability_discoverer as cd
 
     async def _gpl(*args, **kwargs):
-        return [_candidate(
-            name="evil/agpl", source="github", spdx_license="AGPL-3.0",
-            package_or_endpoint="https://github.com/evil/agpl",
-        )]
+        return [
+            _candidate(
+                name="evil/agpl",
+                source="github",
+                spdx_license="AGPL-3.0",
+                package_or_endpoint="https://github.com/evil/agpl",
+            )
+        ]
 
     async def _empty(*args, **kwargs):
         return []
+
     monkeypatch.setattr(cd, "_discover_hugging_face", _empty)
     monkeypatch.setattr(cd, "_discover_github", _gpl)
     monkeypatch.setattr(cd, "_discover_arxiv", _empty)
@@ -227,13 +246,18 @@ async def test_strict_mode_marks_sandbox_install_unimplemented(monkeypatch):
     monkeypatch.setenv("CODE_CAPABILITY_STRICT", "true")
 
     async def _ok(*args, **kwargs):
-        return [_candidate(
-            name="mit/cool-tool", source="github",
-            spdx_license="MIT", stars=200,
-        )]
+        return [
+            _candidate(
+                name="mit/cool-tool",
+                source="github",
+                spdx_license="MIT",
+                stars=200,
+            )
+        ]
 
     async def _empty(*args, **kwargs):
         return []
+
     monkeypatch.setattr(cd, "_discover_hugging_face", _empty)
     monkeypatch.setattr(cd, "_discover_github", _ok)
     monkeypatch.setattr(cd, "_discover_arxiv", _empty)
@@ -241,5 +265,4 @@ async def test_strict_mode_marks_sandbox_install_unimplemented(monkeypatch):
     d = CapabilityDiscoverer(interval_s=3600)
     report = await d.run_once()
     assert report["accepted"] == []
-    assert any(r["stage"] == "sandbox_install"
-               for r in report["rejected"])
+    assert any(r["stage"] == "sandbox_install" for r in report["rejected"])

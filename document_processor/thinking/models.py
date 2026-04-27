@@ -127,6 +127,14 @@ class ThinkRequest(BaseModel):
         description="Dedupe key for the assistant message",
     )
 
+    # Optional Ollama tag override (More settings → AI Model). When
+    # null / empty, the engine's local llm_call falls through to
+    # OLLAMA_MODEL — current default behaviour preserved.
+    preferred_model: Optional[str] = Field(
+        None, max_length=120,
+        description="Override Ollama tag for this run (else OLLAMA_MODEL)",
+    )
+
 
 class ThinkResponse(BaseModel):
     success: bool

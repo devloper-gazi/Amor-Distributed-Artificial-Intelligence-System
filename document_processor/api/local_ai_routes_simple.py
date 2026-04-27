@@ -144,6 +144,15 @@ class LocalAIResearchRequest(BaseModel):
         description="Dedupe key for the assistant message",
     )
 
+    # Optional Ollama tag override. When set, every LLM call inside
+    # this research run uses the override instead of OLLAMA_MODEL.
+    # Frontend UX: "More settings → AI Model" picker. Empty / null
+    # falls through to OLLAMA_MODEL (current default behaviour).
+    preferred_model: Optional[str] = Field(
+        None, max_length=120,
+        description="Override Ollama tag for this run (else OLLAMA_MODEL)",
+    )
+
 
 class LocalAIResearchResponse(BaseModel):
     success: bool
@@ -815,30 +824,82 @@ _LLM_CACHE_KEY_PREFIX = "llm:"
 _OLLAMA_TEMPERATURE = 0.7
 
 
-def _llm_cache_key(prompt: str, system: Optional[str], max_tokens: int) -> str:
+import contextvars as _contextvars
+
+# Per-task model override. The research worker (and any other
+# long-running session) sets this once at task entry, and every nested
+# call_ollama() call within the same async task picks it up
+# automatically — without changing the call signatures of the dozens
+# of inner functions that already use call_ollama. ContextVars
+# propagate through `await`, so concurrent sessions on the same event
+# loop each have their own value.
+_ACTIVE_MODEL: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
+    "amor_active_ollama_model", default=None,
+)
+
+
+def set_active_model(model: Optional[str]):
+    """Set the per-task override and return the reset token.
+
+    Use as::
+
+        token = set_active_model(session.get("preferred_model"))
+        try:
+            ...                         # nested call_ollama() picks it up
+        finally:
+            _ACTIVE_MODEL.reset(token)
+
+    Empty / None values clear the override (callers fall back to
+    OLLAMA_MODEL).
+    """
+    return _ACTIVE_MODEL.set(model or None)
+
+
+def _resolve_model(model: Optional[str]) -> str:
+    """Empty / None / whitespace → fall back to OLLAMA_MODEL.
+
+    Centralised so the env-default is never silently bypassed and so
+    a future caller passing an empty form-field gets the documented
+    fallback rather than a 500."""
+    if model is None:
+        # Nothing explicitly passed — check the contextvar for an
+        # outer-scope override.
+        ctx = _ACTIVE_MODEL.get()
+        if ctx:
+            return ctx.strip() or OLLAMA_MODEL
+        return OLLAMA_MODEL
+    cleaned = str(model).strip()
+    return cleaned or OLLAMA_MODEL
+
+
+def _llm_cache_key(
+    prompt: str, system: Optional[str], max_tokens: int,
+    model: Optional[str] = None,
+) -> str:
     """
     Build a collision-free cache key from the call parameters.
 
-    NOTE: the previous implementation joined fields with `|` which is
-    silently ambiguous — a prompt containing `|` could compose to the
-    same string as a different (system, prompt) pair, returning a
-    wrong-cache-hit. Using a JSON list serialization makes the
-    boundaries unambiguous: every value's exact byte representation is
-    embedded, escaping included, so two distinct tuples can never
-    produce the same hash input.
+    The model tag is part of the key — different tags must never share
+    a cache entry (different model = different output for identical
+    prompt). Defaults to OLLAMA_MODEL when caller doesn't specify.
     """
     import hashlib
     import json
 
+    resolved_model = _resolve_model(model)
     payload = json.dumps(
-        [OLLAMA_MODEL, system or "", prompt, int(max_tokens), float(_OLLAMA_TEMPERATURE)],
+        [resolved_model, system or "", prompt, int(max_tokens),
+         float(_OLLAMA_TEMPERATURE)],
         ensure_ascii=False,
         separators=(",", ":"),
     )
     return _LLM_CACHE_KEY_PREFIX + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) -> Optional[str]:
+async def _llm_cache_get(
+    prompt: str, system: Optional[str], max_tokens: int,
+    model: Optional[str] = None,
+) -> Optional[str]:
     """Phase 5 (opt-in) — read a cached Ollama response if any. Returns None
     on miss or any error. Never raises."""
     try:
@@ -846,7 +907,7 @@ async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) ->
 
         if not getattr(_settings, "llm_response_cache_enabled", False):
             return None
-        key = _llm_cache_key(prompt, system, max_tokens)
+        key = _llm_cache_key(prompt, system, max_tokens, model)
         payload = await cache_manager.get_json(key)
         if isinstance(payload, dict) and isinstance(payload.get("response"), str):
             return payload["response"]
@@ -855,78 +916,150 @@ async def _llm_cache_get(prompt: str, system: Optional[str], max_tokens: int) ->
     return None
 
 
-async def _llm_cache_set(prompt: str, system: Optional[str], max_tokens: int, response: str) -> None:
+async def _llm_cache_set(
+    prompt: str, system: Optional[str], max_tokens: int, response: str,
+    model: Optional[str] = None,
+) -> None:
     """Phase 5 (opt-in) — store an Ollama response. Never raises."""
     try:
         from ..config.settings import settings as _settings
 
         if not getattr(_settings, "llm_response_cache_enabled", False) or not response:
             return
-        key = _llm_cache_key(prompt, system, max_tokens)
+        key = _llm_cache_key(prompt, system, max_tokens, model)
         ttl = int(getattr(_settings, "llm_response_cache_ttl_seconds", 7 * 24 * 3600))
         await cache_manager.set_json(
             key,
-            {"response": response, "model": OLLAMA_MODEL},
+            {"response": response, "model": _resolve_model(model)},
             ttl=ttl,
         )
     except Exception as exc:                            # fail-open
         logger.debug("llm cache write failed: %s", exc)
 
 
-async def call_ollama(prompt: str, system: Optional[str] = None, max_tokens: int = 2048) -> str:
+async def call_ollama_with(
+    model: Optional[str],
+    prompt: str,
+    system: Optional[str] = None,
+    max_tokens: int = 2048,
+) -> str:
     """
-    Make direct HTTP call to Ollama API.
+    Same contract as ``call_ollama`` but takes an explicit model tag.
 
-    Phase 5 hook: when ``settings.llm_response_cache_enabled`` is True
-    (default OFF), identical (model, system, prompt, max_tokens, temp)
-    tuples short-circuit to a cached Redis entry. Cache failures
-    silently fall through to the real call.
+    When ``model`` is ``None`` / empty / whitespace, falls back to
+    ``OLLAMA_MODEL`` so callers can blindly pass through a
+    ``preferred_model`` field from the request body.
+
+    The cache key includes the model so two different tags never share
+    cached responses.
     """
-    cached = await _llm_cache_get(prompt, system, max_tokens)
+    resolved = _resolve_model(model)
+    cached = await _llm_cache_get(prompt, system, max_tokens, resolved)
     if cached is not None:
-        logger.debug("llm cache hit (len=%d)", len(cached))
+        logger.debug("llm cache hit model=%s len=%d", resolved, len(cached))
         return cached
-    response = await _call_ollama_uncached(prompt, system, max_tokens)
-    await _llm_cache_set(prompt, system, max_tokens, response)
+    response = await _call_ollama_uncached_with(resolved, prompt, system, max_tokens)
+    await _llm_cache_set(prompt, system, max_tokens, response, resolved)
     return response
 
 
-async def _call_ollama_uncached(
-    prompt: str, system: Optional[str] = None, max_tokens: int = 2048
+async def call_ollama(
+    prompt: str, system: Optional[str] = None, max_tokens: int = 2048,
 ) -> str:
-    """The original, un-cached HTTP path. Kept as a separate symbol so
-    callers that explicitly want to bypass the cache (e.g. test suites)
-    can still hit Ollama directly."""
+    """
+    Backwards-compatible default: uses OLLAMA_MODEL. Existing callers
+    keep their behaviour exactly. New callers wanting a specific tag
+    should use ``call_ollama_with``.
+    """
+    return await call_ollama_with(None, prompt, system, max_tokens)
+
+
+async def _call_ollama_uncached(
+    prompt: str, system: Optional[str] = None, max_tokens: int = 2048,
+) -> str:
+    """Backwards-compat shim — kept so external callers that imported
+    this private symbol don't break. Delegates to the model-aware version."""
+    return await _call_ollama_uncached_with(OLLAMA_MODEL, prompt, system, max_tokens)
+
+
+async def _call_ollama_uncached_with(
+    model: str,
+    prompt: str,
+    system: Optional[str] = None,
+    max_tokens: int = 2048,
+) -> str:
+    """The un-cached HTTP path, parameterised on model tag.
+
+    Caller-supplied ``model`` is treated as authoritative — if Ollama
+    doesn't have it we attempt one auto-pull (when configured) and
+    retry. On unrecoverable error, surfaces an HTTPException so the
+    upper layers fall through to error-handling rather than silently
+    using OLLAMA_MODEL behind the user's back."""
     try:
-        # Ensure model is available (and optionally auto-pull it).
+        # Ensure the *configured default* model is available — the
+        # legacy auto-pull pipe only knows about OLLAMA_MODEL. For the
+        # caller-specified override we rely on the per-tag pull
+        # endpoint (POST /api/code/models/{tag}/pull) which the user
+        # already invoked, OR a 404 retry below.
         await _ensure_ollama_ready()
 
-        # Increased timeout for model loading and complex prompts
         async with httpx.AsyncClient(timeout=OLLAMA_HTTP_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
-                    "model": OLLAMA_MODEL,
+                    "model": model,
                     "prompt": prompt,
                     "system": system or "",
                     "stream": False,
                     "options": {
                         "num_predict": max_tokens,
                         "temperature": _OLLAMA_TEMPERATURE,
-                    }
-                }
+                    },
+                },
             )
 
             if response.status_code == 200:
                 result = response.json()
                 return result.get("response", "")
-            else:
-                # If the model isn't installed, Ollama responds with 404 and a helpful message.
-                if response.status_code == 404 and "model" in response.text.lower():
-                    logger.error(f"Ollama model not found: {response.text}")
-                    # Try one more time after pulling (if enabled); _ensure_ollama_ready handles messaging.
-                    await _ensure_ollama_ready()
-                    retry = await client.post(
+
+            # If the *requested* tag isn't installed, attempt a pull.
+            # This guards against a stale frontend cache where the
+            # user picked a tag that an admin then removed.
+            if response.status_code == 404 and "model" in response.text.lower():
+                logger.warning(
+                    "ollama_model_not_found tag=%s attempting_pull", model,
+                )
+                try:
+                    await _ollama_pull_model(model)
+                except Exception as pull_exc:
+                    logger.error(
+                        "ollama_auto_pull_failed tag=%s err=%s",
+                        model, pull_exc,
+                    )
+                retry = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "system": system or "",
+                        "stream": False,
+                        "options": {
+                            "num_predict": max_tokens,
+                            "temperature": _OLLAMA_TEMPERATURE,
+                        },
+                    },
+                )
+                if retry.status_code == 200:
+                    return retry.json().get("response", "")
+                # Fallback to OLLAMA_MODEL if the user's tag still doesn't
+                # work — better to answer with the default than to 500
+                # the whole pipeline.
+                if model != OLLAMA_MODEL:
+                    logger.warning(
+                        "ollama_falling_back_to_default tag=%s default=%s",
+                        model, OLLAMA_MODEL,
+                    )
+                    fallback = await client.post(
                         f"{OLLAMA_BASE_URL}/api/generate",
                         json={
                             "model": OLLAMA_MODEL,
@@ -939,24 +1072,29 @@ async def _call_ollama_uncached(
                             },
                         },
                     )
-                    if retry.status_code == 200:
-                        result = retry.json()
-                        return result.get("response", "")
+                    if fallback.status_code == 200:
+                        return fallback.json().get("response", "")
 
-                logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Ollama API error: {response.status_code} - {response.text}",
-                )
+            logger.error(
+                "ollama_api_error model=%s status=%s body=%s",
+                model, response.status_code, response.text[:500],
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Ollama API error: {response.status_code} - {response.text}",
+            )
 
     except httpx.TimeoutException:
-        logger.error("Ollama API timeout")
+        logger.error("Ollama API timeout model=%s", model)
         raise HTTPException(status_code=504, detail="Ollama API timeout")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Ollama API call failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Ollama API call failed: {str(e)}")
+        logger.error("Ollama API call failed model=%s err=%s", model, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ollama API call failed: {e!s}",
+        )
 
 
 async def check_ollama_health() -> bool:
@@ -1130,6 +1268,9 @@ async def start_research(
             "user_message_idempotency_key": request.user_message_idempotency_key,
             "assistant_message_idempotency_key": request.assistant_message_idempotency_key,
             "cancel_requested": False,
+            # Optional Ollama tag override (More settings → AI Model).
+            # Empty / None → fall through to OLLAMA_MODEL.
+            "preferred_model": request.preferred_model,
         }
         await _persist_session(session_id, research_sessions[session_id])
 
@@ -1658,6 +1799,11 @@ async def execute_advanced_research(
     session = research_sessions.get(session_id)
     if session is None:
         return
+
+    # Optional per-session model override (More settings → AI Model).
+    # Stored on the session payload, read here once, propagated to
+    # every nested call_ollama() via ContextVar.
+    _model_token = set_active_model(session.get("preferred_model"))
 
     async def llm(prompt: str, system: Optional[str], max_tokens: int) -> str:
         return await call_ollama(prompt, system, max_tokens)

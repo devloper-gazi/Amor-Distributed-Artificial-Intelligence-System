@@ -20,7 +20,6 @@ from document_processor.code_intelligence.schema import (
     schema_version_of,
 )
 
-
 # ── PhaseHooks protocol ────────────────────────────────────────────────
 
 
@@ -118,11 +117,7 @@ async def test_telemetry_hooks_emits_jsonl_spans(tmp_path, monkeypatch):
     assert len(files) == 1
     import json
 
-    spans = [
-        json.loads(line)
-        for line in files[0].read_text().splitlines()
-        if line.strip()
-    ]
+    spans = [json.loads(line) for line in files[0].read_text().splitlines() if line.strip()]
     names = [s["name"] for s in spans]
     assert names == ["phase_start", "phase_complete", "phase_failed"]
 
@@ -131,8 +126,13 @@ async def test_telemetry_hooks_emits_jsonl_spans(tmp_path, monkeypatch):
 
 
 def test_current_schema_versions_has_required_kinds():
-    for kind in ("code_session", "capability_record", "adversarial_event",
-                 "trace_span", "query_record"):
+    for kind in (
+        "code_session",
+        "capability_record",
+        "adversarial_event",
+        "trace_span",
+        "query_record",
+    ):
         assert kind in CURRENT_SCHEMA_VERSIONS
         assert CURRENT_SCHEMA_VERSIONS[kind] >= 1
 

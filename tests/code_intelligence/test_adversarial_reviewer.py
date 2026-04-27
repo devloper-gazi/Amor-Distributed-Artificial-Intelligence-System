@@ -36,8 +36,7 @@ def test_aws_access_key_blocked_critical(reviewer):
     assert allow is False  # critical → blocked
     assert alert is not None
     assert alert["severity"] == "critical"
-    assert any(h["rule_id"] == "SECRET_AWS_ACCESS_KEY"
-               for h in alert["hits"])
+    assert any(h["rule_id"] == "SECRET_AWS_ACCESS_KEY" for h in alert["hits"])
 
 
 def test_anthropic_key_blocked_critical(reviewer):
@@ -57,8 +56,7 @@ def test_curl_pipe_sh_blocked_critical(reviewer):
     }
     allow, alert = reviewer.inspect_event("sid-4", event)
     assert allow is False
-    assert any(h["rule_id"] == "SHELL_CURL_PIPE_SH"
-               for h in alert["hits"])
+    assert any(h["rule_id"] == "SHELL_CURL_PIPE_SH" for h in alert["hits"])
 
 
 def test_prompt_injection_high_severity_does_not_block(reviewer):
@@ -87,8 +85,7 @@ def test_target_filter_skips_non_matching_event_type(reviewer):
     # rule should not contribute. We assert the prompt-injection rule is
     # not in the hits if we got an alert.
     if alert is not None:
-        assert not any(h["rule_id"] == "PROMPT_INJECTION_IGNORE_PREVIOUS"
-                       for h in alert["hits"])
+        assert not any(h["rule_id"] == "PROMPT_INJECTION_IGNORE_PREVIOUS" for h in alert["hits"])
 
 
 def test_match_excerpt_truncated(reviewer):

@@ -17,7 +17,6 @@ from document_processor.code_intelligence.registries import (
     register_defaults,
 )
 
-
 # ── Generic Registry primitive ─────────────────────────────────────────
 
 
@@ -129,8 +128,7 @@ def test_sandbox_tier_register_defaults_has_three_tiers() -> None:
 
 def test_sandbox_tier_lookup_by_number_returns_none_for_unknown() -> None:
     reg = SandboxTierRegistry()
-    reg.register_tier(SandboxTier(tier=1, name="a", description="",
-                                   isolation="container"))
+    reg.register_tier(SandboxTier(tier=1, name="a", description="", isolation="container"))
     assert reg.by_tier_number(99) is None
 
 

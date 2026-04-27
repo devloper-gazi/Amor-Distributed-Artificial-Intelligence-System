@@ -18,7 +18,8 @@ from document_processor.code_intelligence.repomap import (
 def tiny_workspace(tmp_path: Path) -> Path:
     # Build a minimal workspace mimicking the AMOR layout.
     (tmp_path / "document_processor").mkdir()
-    (tmp_path / "document_processor" / "engine.py").write_text(textwrap.dedent("""
+    (tmp_path / "document_processor" / "engine.py").write_text(
+        textwrap.dedent("""
         import os
         from typing import Dict
 
@@ -28,13 +29,18 @@ def tiny_workspace(tmp_path: Path) -> Path:
 
         async def helper_fn(x: int) -> int:
             return x + 1
-    """).strip(), encoding="utf-8")
-    (tmp_path / "document_processor" / "store.py").write_text(textwrap.dedent("""
+    """).strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "document_processor" / "store.py").write_text(
+        textwrap.dedent("""
         from .engine import Engine
 
         class Store:
             def save(self, e: Engine): pass
-    """).strip(), encoding="utf-8")
+    """).strip(),
+        encoding="utf-8",
+    )
     (tmp_path / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
     return tmp_path
 
