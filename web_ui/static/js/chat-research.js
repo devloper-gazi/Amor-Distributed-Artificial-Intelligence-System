@@ -1675,13 +1675,25 @@ class ChatController {
                 tab: 'installed',         // active source tab
                 installed: [],            // list of {tag, display_name, ...}
                 catalogue: [],            // pullable catalogue entries
-                preferences: {},          // { mode: {model_tag, ...} }
+                preferences: {},          // { mode: {model_tag, profile, ...} }
                 autoSelect: null,         // {tag, reason}
                 ollamaUp: true,
                 pendingFile: null,        // currently-staged upload File
                 pendingFileBytes: 0,
                 uploading: false,
                 pulling: false,
+                // ── v3 additions ────────────────────────────────────────
+                hardware: null,           // /api/models/hardware payload
+                hardwarePref: 'auto',     // auto | gpu | gpu_partial | cpu
+                gpuLayers: 999,           // Ollama num_gpu, used when hardwarePref=gpu_partial
+                strategy: 'single',       // single | per_mode | per_role | ensemble
+                routing: null,            // /api/models/routing payload
+                discoverResults: [],      // search results
+                discoverQuery: '',
+                discoverSource: 'all',
+                expandedTag: null,        // currently-expanded card's tag (one at a time)
+                tested: {},               // tag → {output, elapsed_ms} cache
+                ensembleMembers: [],      // selected tags for ensemble strategy
             };
         }
         return this._modelStateObj;
@@ -1708,6 +1720,11 @@ class ChatController {
             this._wireModelScope(root);
             this._wireModelPullButton();
             this._wireModelUpload();
+            // v3 — additional surfaces.
+            this._wireHardwarePanel(root);
+            this._wireModelStrategy(root);
+            this._wireDiscoverTab(root);
+            this._wireEnsembleConfig(root);
             // Topbar chip wiring — opens the panel + jumps to picker.
             const chip = document.getElementById('topBarModelChip');
             if (chip && !chip.dataset.wired) {
@@ -1723,6 +1740,12 @@ class ChatController {
 
         // Refresh data + render every time.
         await this._refreshModelData();
+        // v3 — async hardware probe + routing fetch run in parallel
+        // with the main render so the panel never blocks on them.
+        this._refreshHardware().catch(err =>
+            console.warn('hardware probe failed:', err));
+        this._refreshRouting().catch(err =>
+            console.warn('routing fetch failed:', err));
     }
 
     _wireModelTabs(root) {
@@ -1863,12 +1886,15 @@ class ChatController {
         });
     }
 
-    /** Build one .model-card. The card is a button that either picks
-     *  the tag (installed) or pulls it (catalogue). */
+    /** Build one .model-card. Installed cards expose an Advanced
+     *  expansion (sliders + system prompt + Save / Try-it / Reset).
+     *  Pullable cards click-to-pull; installed cards click-to-select. */
     _makeModelCard(model, {pullable}) {
-        const card = document.createElement('button');
-        card.type = 'button';
+        const card = document.createElement('div');
         card.className = 'model-card';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        card.dataset.tag = model.tag;
         if (model.is_custom) card.classList.add('model-card-custom');
         if (model.is_auto_selected) card.classList.add('model-card-auto-pick');
 
@@ -1889,11 +1915,26 @@ class ChatController {
                     ? `<span class="model-card-badge model-card-badge-auto">auto pick</span>`
                     : ''));
 
+        // Build the head + meta block. For installed cards we add an
+        // Advanced toggle (chevron) on the right. For pullable cards
+        // we keep the lean look.
+        const advancedToggleHtml = pullable
+            ? ''
+            : `<button type="button" class="model-card-advanced-toggle"
+                       title="Advanced options"
+                       aria-label="Advanced options"
+                       aria-expanded="false">
+                   <i class="fas fa-chevron-down"></i>
+               </button>`;
+
         card.innerHTML = `
-            <div class="model-card-head">
-                <span class="model-card-icon"><i class="fas fa-${pullable ? 'cloud-download-alt' : 'cube'}"></i></span>
-                <span class="model-card-name">${this.escapeHtml(model.display_name || model.tag)}</span>
-                ${badge}
+            <div class="model-card-row">
+                <div class="model-card-head">
+                    <span class="model-card-icon"><i class="fas fa-${pullable ? 'cloud-download-alt' : 'cube'}"></i></span>
+                    <span class="model-card-name">${this.escapeHtml(model.display_name || model.tag)}</span>
+                    ${badge}
+                </div>
+                ${advancedToggleHtml}
             </div>
             <div class="model-card-meta">
                 <code class="model-card-tag">${this.escapeHtml(model.tag)}</code>
@@ -1903,7 +1944,13 @@ class ChatController {
             </div>
         `;
 
-        card.addEventListener('click', () => {
+        // Main click handler — select or pull. Keyboard activates too.
+        const primaryAction = (e) => {
+            // Don't trigger when the user clicked the chevron, delete,
+            // or any nested button (handled by their own listeners).
+            if (e.target.closest('.model-card-advanced-toggle, .model-card-delete, .model-advanced')) {
+                return;
+            }
             if (pullable) {
                 this._pullModel(model.tag).catch(err =>
                     console.warn('model pull failed:', err));
@@ -1914,7 +1961,30 @@ class ChatController {
                     model.display_name || model.tag,
                 );
             }
+        };
+        card.addEventListener('click', primaryAction);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                primaryAction(e);
+            }
         });
+
+        // Advanced expansion (installed cards only).
+        if (!pullable) {
+            const toggleBtn = card.querySelector('.model-card-advanced-toggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._toggleAdvanced(card, model);
+                });
+            }
+            // Auto-expand if this is the currently-active expanded card.
+            if (this._modelState().expandedTag === model.tag) {
+                // Defer so the DOM has the card attached first.
+                setTimeout(() => this._toggleAdvanced(card, model, true), 0);
+            }
+        }
 
         // Custom models get a delete affordance.
         if (!pullable && model.is_custom) {
@@ -1927,10 +1997,172 @@ class ChatController {
                 this._deleteCustomModel(model.tag).catch(err =>
                     console.warn('model delete failed:', err));
             });
-            card.appendChild(del);
+            // Insert into the head row so it's flush right of the toggle.
+            card.querySelector('.model-card-row')?.appendChild(del);
         }
 
         return card;
+    }
+
+    // ── v3 — Advanced expansion (per-card profile editor) ──────────────
+
+    /** Expand or collapse a card's Advanced panel. ``forceOpen`` forces
+     *  the open state (used when restoring after re-render). */
+    _toggleAdvanced(card, model, forceOpen) {
+        const state = this._modelState();
+        const existing = card.querySelector(':scope > .model-advanced');
+        const toggleBtn = card.querySelector('.model-card-advanced-toggle');
+        if (existing && !forceOpen) {
+            // Collapse.
+            existing.remove();
+            card.classList.remove('model-card-expanded');
+            toggleBtn?.setAttribute('aria-expanded', 'false');
+            toggleBtn?.querySelector('i')?.classList.replace('fa-chevron-up', 'fa-chevron-down');
+            if (state.expandedTag === model.tag) state.expandedTag = null;
+            return;
+        }
+        if (existing && forceOpen) return;  // already open
+
+        // Collapse any other expanded card (one at a time).
+        document.querySelectorAll('.model-card.model-card-expanded')
+            .forEach(c => {
+                if (c !== card) {
+                    c.classList.remove('model-card-expanded');
+                    c.querySelector(':scope > .model-advanced')?.remove();
+                    c.querySelector('.model-card-advanced-toggle')
+                        ?.setAttribute('aria-expanded', 'false');
+                }
+            });
+
+        const tpl = document.getElementById('modelAdvancedTemplate');
+        if (!tpl) return;
+        const node = tpl.content.firstElementChild.cloneNode(true);
+
+        // Hydrate values from saved profile (if any).
+        const profile = (model.profile)
+            || (state.preferences[state.scope]?.profile)
+            || {};
+        this._hydrateAdvancedForm(node, profile);
+
+        // Wire the form's controls.
+        this._wireAdvancedForm(node, model);
+
+        card.appendChild(node);
+        card.classList.add('model-card-expanded');
+        toggleBtn?.setAttribute('aria-expanded', 'true');
+        toggleBtn?.querySelector('i')?.classList.replace('fa-chevron-down', 'fa-chevron-up');
+        state.expandedTag = model.tag;
+    }
+
+    _hydrateAdvancedForm(root, profile) {
+        const setRange = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            const out = root.querySelector(`[data-out="${key}"]`);
+            if (!el) return;
+            const v = (profile && profile[key] != null)
+                ? profile[key]
+                : fallback;
+            el.value = v;
+            if (out) out.textContent = String(v);
+        };
+        const setNumber = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            if (!el) return;
+            el.value = (profile && profile[key] != null) ? profile[key] : fallback;
+        };
+        const setSelect = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            if (!el) return;
+            const v = (profile && profile[key] != null)
+                ? String(profile[key])
+                : String(fallback);
+            const opt = Array.from(el.options).find(o => o.value === v);
+            el.value = opt ? v : String(fallback);
+        };
+        setRange('temperature', 0.7);
+        setRange('top_p', 0.9);
+        setNumber('top_k', 40);
+        setRange('repeat_penalty', 1.1);
+        setSelect('num_ctx', 4096);
+        setRange('num_gpu', 999);
+        setNumber('num_thread', 8);
+        setNumber('seed', -1);
+        const sp = root.querySelector('[data-key="system_prompt"]');
+        if (sp) sp.value = profile?.system_prompt || '';
+    }
+
+    _wireAdvancedForm(root, model) {
+        // Live-update value labels next to ranges.
+        root.querySelectorAll('.adv-range').forEach(input => {
+            input.addEventListener('input', () => {
+                const out = root.querySelector(
+                    `[data-out="${input.dataset.key}"]`,
+                );
+                if (out) out.textContent = input.value;
+            });
+        });
+
+        const collect = () => {
+            const out = {};
+            root.querySelectorAll('[data-key]').forEach(el => {
+                const k = el.dataset.key;
+                let v = el.value;
+                if (el.tagName === 'TEXTAREA') {
+                    if (v.trim()) out[k] = v.trim();
+                    return;
+                }
+                if (el.type === 'range' || el.type === 'number') {
+                    const num = Number(v);
+                    if (!Number.isNaN(num)) out[k] = num;
+                    return;
+                }
+                if (el.tagName === 'SELECT') {
+                    const num = Number(v);
+                    out[k] = Number.isNaN(num) ? v : num;
+                }
+            });
+            return out;
+        };
+
+        // Save profile.
+        root.querySelector('.adv-save-btn')?.addEventListener('click', () => {
+            const profile = collect();
+            this._savePreference(
+                model.tag,
+                model.is_custom ? 'gguf_upload' : 'ollama_registry',
+                model.display_name || model.tag,
+                profile,
+            );
+        });
+
+        // Reset to template defaults.
+        root.querySelector('.adv-reset-btn')?.addEventListener('click', () => {
+            this._hydrateAdvancedForm(root, {});
+            // Trigger range output refresh.
+            root.querySelectorAll('.adv-range').forEach(input =>
+                input.dispatchEvent(new Event('input')),
+            );
+        });
+
+        // Try it — streams a tiny generation.
+        root.querySelector('.adv-test-btn')?.addEventListener('click', () => {
+            const promptInput = root.querySelector('.adv-test-prompt');
+            const prompt = (promptInput?.value || '').trim()
+                || 'Reply in one short sentence.';
+            const profile = collect();
+            const out = root.querySelector('.adv-test-output');
+            if (out) {
+                out.hidden = false;
+                out.textContent = '…';
+            }
+            this._testGenerate(model.tag, prompt, profile, out)
+                .catch(err => {
+                    if (out) {
+                        out.classList.add('adv-test-error');
+                        out.textContent = `Failed: ${err.message}`;
+                    }
+                });
+        });
     }
 
     _renderPanelFooter() {
@@ -1967,15 +2199,22 @@ class ChatController {
 
     /**
      * PUT /api/models/preference + sync localStorage + re-render.
+     * v3 — accepts an optional ``profile`` dict (advanced options).
      */
-    async _savePreference(tag, source, displayName) {
+    async _savePreference(tag, source, displayName, profile) {
         const state = this._modelState();
+        // Layer the global hardware preference into the per-model profile
+        // when one isn't already set there — this lets the picker's top
+        // toggle ("Run on GPU/CPU") propagate into every saved model.
+        const merged = this._mergeHardwareIntoProfile(profile);
         const body = {
             mode: state.scope,
             model_tag: tag,
             model_source: source || 'ollama_registry',
             display_name: displayName || tag,
         };
+        if (merged && Object.keys(merged).length) body.profile = merged;
+
         try {
             const resp = await this._authFetch('/api/models/preference', {
                 method: 'PUT',
@@ -1987,12 +2226,36 @@ class ChatController {
             // ANY scope — this drives the topbar chip + the outbound
             // body's `preferred_model` field for clients on this tab.
             this._writePreferredModel(tag);
-            this._toast?.(`Model set: ${tag}`);
+            this._toast?.(
+                merged && Object.keys(merged).length
+                    ? `Saved ${tag} with custom profile`
+                    : `Model set: ${tag}`,
+            );
         } catch (err) {
             console.warn('save preference failed:', err);
             this._toast?.(`Failed to save preference: ${err.message}`, 'error');
         }
         await this._refreshModelData();
+    }
+
+    /** Translate the hardware-pref toggle into Ollama options that are
+     *  layered into the saved profile. ``hardwarePref`` of "auto" leaves
+     *  whatever the user set in the Advanced sliders alone. */
+    _mergeHardwareIntoProfile(profile) {
+        const state = this._modelState();
+        const out = profile ? {...profile} : {};
+        const pref = state.hardwarePref || 'auto';
+        if (pref === 'cpu') {
+            out.num_gpu = 0;
+        } else if (pref === 'gpu') {
+            // 999 = "all layers on GPU" (Ollama clamps to model's actual layer count).
+            if (out.num_gpu == null) out.num_gpu = 999;
+        } else if (pref === 'gpu_partial') {
+            // Only override if the user didn't already pick something explicit.
+            if (out.num_gpu == null) out.num_gpu = state.gpuLayers || 32;
+            else out.num_gpu = state.gpuLayers || out.num_gpu;
+        }
+        return out;
     }
 
     /** DELETE /api/models/preference/{mode} for the active scope. */
@@ -2319,6 +2582,502 @@ class ChatController {
         } catch (_) {
             console.log('[model]', msg);
         }
+    }
+
+    // ── v3 — Hardware panel ────────────────────────────────────────────
+
+    _wireHardwarePanel(root) {
+        const refreshBtn = root.querySelector('#modelHwRefresh');
+        refreshBtn?.addEventListener('click', () => {
+            this._refreshHardware().catch(err =>
+                console.warn('hardware refresh failed:', err));
+        });
+        const slider = root.querySelector('#modelHwGpuLayers');
+        const sliderVal = root.querySelector('#modelHwGpuLayersValue');
+        slider?.addEventListener('input', () => {
+            const n = Number(slider.value);
+            this._modelState().gpuLayers = n;
+            if (sliderVal) sliderVal.textContent = String(n);
+        });
+        slider?.addEventListener('change', () => {
+            this._saveRouting().catch(err =>
+                console.warn('routing save failed:', err));
+        });
+        root.querySelectorAll('.hw-pref-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pref = btn.dataset.hw || 'auto';
+                this._modelState().hardwarePref = pref;
+                root.querySelectorAll('.hw-pref-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                const slideRow = root.querySelector('#modelHwGpuLayersRow');
+                if (slideRow) slideRow.hidden = (pref !== 'gpu_partial');
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+        });
+    }
+
+    async _refreshHardware() {
+        try {
+            const resp = await this._authFetch('/api/models/hardware');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this._modelState().hardware = data;
+            this._renderHardwarePanel();
+        } catch (err) {
+            console.warn('hardware probe failed:', err);
+            const line = document.getElementById('modelHwLine');
+            const sub = document.getElementById('modelHwSub');
+            const icon = document.getElementById('modelHwIcon');
+            if (icon) icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            if (line) line.textContent = 'Hardware probe failed';
+            if (sub) sub.textContent = err.message;
+        }
+    }
+
+    _renderHardwarePanel() {
+        const state = this._modelState();
+        const hw = state.hardware || {};
+        const line = document.getElementById('modelHwLine');
+        const sub = document.getElementById('modelHwSub');
+        const icon = document.getElementById('modelHwIcon');
+        if (!line || !sub || !icon) return;
+        if (hw.gpu_available) {
+            icon.innerHTML = '<i class="fas fa-microchip" style="color: #6ddfb5"></i>';
+            const name = hw.gpu_name || `${hw.gpu_count || 1}× GPU`;
+            const vram = hw.vram_total_gb
+                ? ` · ${hw.vram_total_gb} GB VRAM`
+                : '';
+            line.textContent = `GPU detected: ${name}${vram}`;
+            const free = hw.vram_free_gb != null
+                ? `${hw.vram_free_gb} GB free`
+                : 'live VRAM unknown';
+            const ver = hw.ollama_version
+                ? ` · Ollama ${hw.ollama_version}`
+                : '';
+            sub.textContent = `${free}${ver} · CPU threads: ${hw.cpu_threads ?? '?'}`;
+        } else {
+            icon.innerHTML = '<i class="fas fa-microchip" style="color: #8a8aa0"></i>';
+            line.textContent = 'CPU only';
+            sub.textContent = `No GPU detected${hw.ollama_version ? ` · Ollama ${hw.ollama_version}` : ''} · CPU threads: ${hw.cpu_threads ?? '?'}`;
+        }
+    }
+
+    // ── v3 — Strategy toggle (Single | Per-mode | Per-role | Ensemble) ─
+
+    _wireModelStrategy(root) {
+        root.querySelectorAll('.model-mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const strategy = btn.dataset.strategy || 'single';
+                this._modelState().strategy = strategy;
+                root.querySelectorAll('.model-mode-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                this._renderStrategyHint();
+                this._renderRoleMatrix();
+                this._renderEnsembleConfig();
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+        });
+    }
+
+    _renderStrategyHint() {
+        const hint = document.getElementById('modelModeHint');
+        if (!hint) return;
+        const map = {
+            single:   'One model for everything.',
+            per_mode: 'Pick a different model per mode (Research / Thinking / Code).',
+            per_role: 'Code Intelligence: planner / coder / critic / reviewer can each have their own model.',
+            ensemble: 'Run multiple models in parallel; pick the answer by voting.',
+        };
+        hint.textContent = map[this._modelState().strategy] || '';
+    }
+
+    _renderRoleMatrix() {
+        const wrap = document.getElementById('modelRoleMatrix');
+        const grid = document.getElementById('modelRoleGrid');
+        if (!wrap || !grid) return;
+        if (this._modelState().strategy !== 'per_role') {
+            wrap.hidden = true;
+            return;
+        }
+        wrap.hidden = false;
+        const state = this._modelState();
+        const installed = state.installed || [];
+        const routes = (state.routing?.role_routes) || {};
+        const roles = [
+            {key: 'planner',  label: 'Planner',  icon: 'fa-route'},
+            {key: 'coder',    label: 'Coder',    icon: 'fa-code'},
+            {key: 'tester',   label: 'Tester',   icon: 'fa-vial'},
+            {key: 'debugger', label: 'Debugger', icon: 'fa-bug'},
+            {key: 'critic',   label: 'Critic',   icon: 'fa-balance-scale'},
+            {key: 'reviewer', label: 'Reviewer', icon: 'fa-user-shield'},
+        ];
+        grid.innerHTML = '';
+        roles.forEach(r => {
+            const row = document.createElement('div');
+            row.className = 'role-matrix-row';
+            row.innerHTML = `
+                <span class="role-matrix-icon"><i class="fas ${r.icon}"></i></span>
+                <span class="role-matrix-name">${r.label}</span>
+                <select class="role-matrix-select panel-setting-select">
+                    <option value="">Auto</option>
+                    ${installed.map(m =>
+                        `<option value="${this.escapeHtml(m.tag)}"${m.tag === routes[r.key] ? ' selected' : ''}>${this.escapeHtml(m.display_name || m.tag)}</option>`
+                    ).join('')}
+                </select>
+            `;
+            const sel = row.querySelector('select');
+            sel.addEventListener('change', () => {
+                if (!state.routing) state.routing = {};
+                state.routing.role_routes = {
+                    ...(state.routing.role_routes || {}),
+                    [r.key]: sel.value || null,
+                };
+                if (!sel.value) delete state.routing.role_routes[r.key];
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+            grid.appendChild(row);
+        });
+    }
+
+    // ── v3 — Ensemble config ───────────────────────────────────────────
+
+    _wireEnsembleConfig(root) {
+        const sel = root.querySelector('#ensembleVotingSelect');
+        sel?.addEventListener('change', () => {
+            const state = this._modelState();
+            if (!state.routing) state.routing = {};
+            state.routing.ensemble = {
+                ...(state.routing.ensemble || {}),
+                voting: sel.value,
+            };
+            this._saveRouting().catch(err =>
+                console.warn('routing save failed:', err));
+        });
+    }
+
+    _renderEnsembleConfig() {
+        const wrap = document.getElementById('modelEnsembleConfig');
+        const list = document.getElementById('ensembleMembersList');
+        const sel = document.getElementById('ensembleVotingSelect');
+        if (!wrap || !list) return;
+        const state = this._modelState();
+        if (state.strategy !== 'ensemble') {
+            wrap.hidden = true;
+            return;
+        }
+        wrap.hidden = false;
+
+        const members = state.routing?.ensemble?.members || [];
+        const installed = state.installed || [];
+        list.innerHTML = '';
+        installed.forEach(m => {
+            const row = document.createElement('label');
+            row.className = 'ensemble-member-row';
+            const checked = members.includes(m.tag) ? 'checked' : '';
+            row.innerHTML = `
+                <input type="checkbox" data-tag="${this.escapeHtml(m.tag)}" ${checked} />
+                <span class="ensemble-member-name">${this.escapeHtml(m.display_name || m.tag)}</span>
+                <code class="ensemble-member-tag">${this.escapeHtml(m.tag)}</code>
+            `;
+            const cb = row.querySelector('input');
+            cb.addEventListener('change', () => {
+                if (!state.routing) state.routing = {};
+                const ens = state.routing.ensemble = state.routing.ensemble || {};
+                const cur = new Set(ens.members || []);
+                if (cb.checked) cur.add(m.tag);
+                else cur.delete(m.tag);
+                ens.members = Array.from(cur);
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+            list.appendChild(row);
+        });
+
+        if (sel) sel.value = state.routing?.ensemble?.voting || 'majority';
+    }
+
+    // ── v3 — Discover tab ──────────────────────────────────────────────
+
+    _wireDiscoverTab(root) {
+        const input = root.querySelector('#discoverSearchInput');
+        const btn = root.querySelector('#discoverSearchBtn');
+        const sel = root.querySelector('#discoverSourceSelect');
+        const trigger = () => {
+            const q = (input?.value || '').trim();
+            const src = sel?.value || 'all';
+            if (!q) { input?.focus(); return; }
+            this._modelState().discoverQuery = q;
+            this._modelState().discoverSource = src;
+            this._runDiscoverSearch().catch(err =>
+                console.warn('discover failed:', err));
+        };
+        btn?.addEventListener('click', trigger);
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); trigger(); }
+        });
+    }
+
+    async _runDiscoverSearch() {
+        const state = this._modelState();
+        const list = document.getElementById('modelDiscoverList');
+        const empty = document.getElementById('modelDiscoverEmpty');
+        const count = document.getElementById('modelTabCountDiscover');
+        if (!list) return;
+
+        list.innerHTML = `<div class="model-empty"><i class="fas fa-spinner fa-spin"></i><span>Searching…</span></div>`;
+        try {
+            const url = `/api/models/search?q=${encodeURIComponent(state.discoverQuery)}&source=${encodeURIComponent(state.discoverSource)}&limit=24`;
+            const resp = await this._authFetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.discoverResults = data.results || [];
+        } catch (err) {
+            state.discoverResults = [];
+            list.innerHTML = `<div class="model-empty model-empty-error"><i class="fas fa-exclamation-triangle"></i><span>Search failed: ${this.escapeHtml(err.message)}</span></div>`;
+            return;
+        }
+
+        if (count) count.textContent = String(state.discoverResults.length);
+        list.innerHTML = '';
+        if (!state.discoverResults.length) {
+            list.innerHTML = '';
+            if (empty) {
+                empty.hidden = false;
+                empty.innerHTML = `<i class="fas fa-search"></i><span>No matches for "${this.escapeHtml(state.discoverQuery)}".</span>`;
+            }
+            return;
+        }
+        if (empty) empty.hidden = true;
+
+        state.discoverResults.forEach(r => {
+            list.appendChild(this._makeDiscoverCard(r));
+        });
+    }
+
+    _makeDiscoverCard(result) {
+        const card = document.createElement('div');
+        card.className = 'model-card model-card-discover';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+
+        const stars = result.stars != null
+            ? `<span class="model-card-stars"><i class="fas fa-star"></i> ${result.stars.toLocaleString()}</span>`
+            : '';
+        const dl = result.downloads != null
+            ? `<span class="model-card-dl"><i class="fas fa-download"></i> ${result.downloads.toLocaleString()}</span>`
+            : '';
+        const license = result.license
+            ? `<span class="model-card-tier">${this.escapeHtml(result.license)}</span>`
+            : '';
+        const sourceBadge = result.source === 'hf'
+            ? `<span class="model-card-badge model-card-badge-custom">Hugging Face</span>`
+            : `<span class="model-card-badge model-card-badge-active">Curated</span>`;
+
+        card.innerHTML = `
+            <div class="model-card-row">
+                <div class="model-card-head">
+                    <span class="model-card-icon"><i class="fas fa-cloud"></i></span>
+                    <span class="model-card-name">${this.escapeHtml(result.display_name || result.tag)}</span>
+                    ${sourceBadge}
+                </div>
+                <button type="button" class="panel-action-btn model-discover-load" title="Load this model">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    <span>Install</span>
+                </button>
+            </div>
+            <div class="model-card-meta">
+                <code class="model-card-tag">${this.escapeHtml(result.tag)}</code>
+                ${license}
+                ${stars}
+                ${dl}
+            </div>
+            ${result.description
+                ? `<div class="model-card-description">${this.escapeHtml(result.description)}</div>`
+                : ''}
+        `;
+
+        const installBtn = card.querySelector('.model-discover-load');
+        const loadFlow = (e) => {
+            e?.stopPropagation?.();
+            // Drop the tag into the Pull tab's custom input + switch tabs
+            // so the user gets a clear "loaded for install" state, then
+            // immediately fire a pull.
+            const pullInput = document.getElementById('customModelTag');
+            if (pullInput) pullInput.value = result.tag;
+            this._setActiveTab('pull');
+            this._pullModel(result.tag).catch(err =>
+                console.warn('discover install failed:', err));
+        };
+        installBtn?.addEventListener('click', loadFlow);
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.model-discover-load')) return;
+            // Click anywhere else on the card → fill the Pull input
+            // without auto-pulling, so the user can review before
+            // committing.
+            const pullInput = document.getElementById('customModelTag');
+            if (pullInput) pullInput.value = result.tag;
+            this._setActiveTab('pull');
+            this._toast?.(`Loaded ${result.tag} — review and click Pull to install`);
+        });
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); loadFlow(e); }
+        });
+        return card;
+    }
+
+    /** Programmatically activate one of the picker tabs. */
+    _setActiveTab(tab) {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        const btn = root.querySelector(`.model-tab[data-tab="${tab}"]`);
+        if (btn) btn.click();
+    }
+
+    // ── v3 — Test generation ───────────────────────────────────────────
+
+    /** POST /api/models/test — streams a tiny generation into ``outEl``. */
+    async _testGenerate(tag, prompt, profile, outEl) {
+        const body = {
+            model_tag: tag,
+            prompt: prompt || 'Reply in one short sentence.',
+            profile: profile && Object.keys(profile).length ? profile : null,
+            max_tokens: 256,
+        };
+        const resp = await this._authFetch('/api/models/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok || !resp.body) {
+            throw new Error(`test start failed (${resp.status})`);
+        }
+        if (outEl) {
+            outEl.textContent = '';
+            outEl.classList.remove('adv-test-error');
+            outEl.classList.add('adv-test-streaming');
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let acc = '';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                const chunk = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 2);
+                const dataLine = chunk.split('\n').find(l => l.startsWith('data:'));
+                if (!dataLine) continue;
+                let evt;
+                try { evt = JSON.parse(dataLine.slice(5).trim()); } catch (_) { continue; }
+                if (evt.type === 'test_chunk' && evt.delta) {
+                    acc += evt.delta;
+                    if (outEl) outEl.textContent = acc;
+                } else if (evt.type === 'test_done') {
+                    if (outEl) {
+                        outEl.classList.remove('adv-test-streaming');
+                        const meta = document.createElement('div');
+                        meta.className = 'adv-test-meta';
+                        meta.textContent = `${evt.tokens || 0} tokens · ${evt.elapsed_ms || 0} ms`;
+                        outEl.appendChild(meta);
+                    }
+                } else if (evt.type === 'test_error') {
+                    if (outEl) {
+                        outEl.classList.remove('adv-test-streaming');
+                        outEl.classList.add('adv-test-error');
+                        outEl.textContent = `Failed: ${evt.error || 'unknown'}`;
+                    }
+                }
+            }
+        }
+        return acc;
+    }
+
+    // ── v3 — Routing persistence ───────────────────────────────────────
+
+    async _refreshRouting() {
+        try {
+            const resp = await this._authFetch('/api/models/routing');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const state = this._modelState();
+            state.routing = data || {};
+            state.strategy = data?.strategy || 'single';
+            state.hardwarePref = data?.hardware_pref || 'auto';
+            if (typeof data?.gpu_layers === 'number') {
+                state.gpuLayers = data.gpu_layers;
+            }
+            this._reflectRoutingToUI();
+        } catch (err) {
+            console.warn('routing fetch failed:', err);
+        }
+    }
+
+    /** Reflect server-state into the UI controls. Idempotent. */
+    _reflectRoutingToUI() {
+        const state = this._modelState();
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        // Strategy tab.
+        root.querySelectorAll('.model-mode-btn').forEach(btn => {
+            const on = btn.dataset.strategy === state.strategy;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        this._renderStrategyHint();
+        this._renderRoleMatrix();
+        this._renderEnsembleConfig();
+        // Hardware pref toggle.
+        root.querySelectorAll('.hw-pref-btn').forEach(btn => {
+            const on = btn.dataset.hw === state.hardwarePref;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        const slideRow = root.querySelector('#modelHwGpuLayersRow');
+        if (slideRow) slideRow.hidden = (state.hardwarePref !== 'gpu_partial');
+        const slider = root.querySelector('#modelHwGpuLayers');
+        const sliderVal = root.querySelector('#modelHwGpuLayersValue');
+        if (slider && state.gpuLayers != null) {
+            slider.value = state.gpuLayers;
+            if (sliderVal) sliderVal.textContent = String(state.gpuLayers);
+        }
+    }
+
+    /** PUT the current routing state. Debounced so a flurry of slider
+     *  drags doesn't spam the server. */
+    async _saveRouting() {
+        if (this._routingSaveTimer) clearTimeout(this._routingSaveTimer);
+        this._routingSaveTimer = setTimeout(async () => {
+            const state = this._modelState();
+            const body = {
+                strategy: state.strategy || 'single',
+                hardware_pref: state.hardwarePref || 'auto',
+                gpu_layers: state.gpuLayers,
+                role_routes: state.routing?.role_routes || {},
+                mode_routes: state.routing?.mode_routes || {},
+                ensemble: state.routing?.ensemble || {},
+                fallback_chain: state.routing?.fallback_chain || [],
+            };
+            try {
+                const resp = await this._authFetch('/api/models/routing', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            } catch (err) {
+                console.warn('routing save failed:', err);
+            }
+        }, 350);
     }
 
     /** Headers used by XHR upload (mirrors _authFetch behaviour). */

@@ -241,6 +241,109 @@
                             <span class="panel-section-hint">leave on Auto for the best per-task pick</span>
                         </div>
 
+                        <!-- v3 — Hardware panel + mode + scope all live in
+                             the picker header so the user sees what's on
+                             this host *before* committing to a model. -->
+                        <div class="model-hardware-panel" id="modelHardwarePanel">
+                            <div class="hw-row hw-row-status">
+                                <span class="hw-icon" id="modelHwIcon"><i class="fas fa-spinner fa-spin"></i></span>
+                                <div class="hw-meta">
+                                    <span class="hw-line hw-line-primary" id="modelHwLine">Probing hardware…</span>
+                                    <span class="hw-line hw-line-secondary" id="modelHwSub"></span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="hw-refresh"
+                                    id="modelHwRefresh"
+                                    title="Re-probe hardware"
+                                    aria-label="Re-probe hardware">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                            <div class="hw-row hw-row-toggle">
+                                <span class="hw-label">Run on</span>
+                                <div class="hw-pref-toggle" role="tablist" aria-label="Hardware preference">
+                                    <button
+                                        type="button"
+                                        class="hw-pref-btn active"
+                                        data-hw="auto"
+                                        role="tab"
+                                        aria-selected="true">Auto</button>
+                                    <button
+                                        type="button"
+                                        class="hw-pref-btn"
+                                        data-hw="gpu"
+                                        role="tab">GPU full</button>
+                                    <button
+                                        type="button"
+                                        class="hw-pref-btn"
+                                        data-hw="gpu_partial"
+                                        role="tab">GPU partial</button>
+                                    <button
+                                        type="button"
+                                        class="hw-pref-btn"
+                                        data-hw="cpu"
+                                        role="tab">CPU only</button>
+                                </div>
+                            </div>
+                            <div
+                                class="hw-row hw-row-slider"
+                                id="modelHwGpuLayersRow"
+                                hidden>
+                                <span class="hw-label">GPU layers</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="999"
+                                    step="1"
+                                    value="999"
+                                    id="modelHwGpuLayers"
+                                    class="hw-range" />
+                                <span class="hw-range-value" id="modelHwGpuLayersValue">999</span>
+                            </div>
+                        </div>
+
+                        <!-- Single-vs-Multi toggle (v3 routing strategy). -->
+                        <div class="model-mode-row" id="modelModeRow">
+                            <span class="model-mode-label">Strategy</span>
+                            <div class="model-mode-toggle" role="tablist" aria-label="Model strategy">
+                                <button
+                                    type="button"
+                                    class="model-mode-btn active"
+                                    data-strategy="single"
+                                    role="tab"
+                                    aria-selected="true">
+                                    <i class="fas fa-cube"></i>
+                                    <span>Single model</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="model-mode-btn"
+                                    data-strategy="per_mode"
+                                    role="tab">
+                                    <i class="fas fa-th-large"></i>
+                                    <span>Per mode</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="model-mode-btn"
+                                    data-strategy="per_role"
+                                    role="tab">
+                                    <i class="fas fa-users-cog"></i>
+                                    <span>Per role</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="model-mode-btn"
+                                    data-strategy="ensemble"
+                                    role="tab">
+                                    <i class="fas fa-layer-group"></i>
+                                    <span>Ensemble</span>
+                                </button>
+                            </div>
+                            <span class="model-mode-hint" id="modelModeHint">One model for everything.</span>
+                        </div>
+
                         <!-- Per-mode scope: applies the choice across
                              all modes (default) or just the current one. -->
                         <div class="model-scope-row">
@@ -270,7 +373,37 @@
                             </div>
                         </div>
 
-                        <!-- Three-tab surface -->
+                        <!-- Per-role matrix shown only when strategy=per_role -->
+                        <div class="model-role-matrix" id="modelRoleMatrix" hidden>
+                            <div class="role-matrix-title">
+                                <i class="fas fa-users-cog"></i>
+                                <span>Per-role models (Code Intelligence)</span>
+                            </div>
+                            <div class="role-matrix-grid" id="modelRoleGrid">
+                                <!-- One row per role injected by JS:
+                                     planner / coder / critic / reviewer / tester / debugger -->
+                            </div>
+                        </div>
+
+                        <!-- Ensemble configuration (strategy=ensemble) -->
+                        <div class="model-ensemble-config" id="modelEnsembleConfig" hidden>
+                            <div class="ensemble-title">
+                                <i class="fas fa-layer-group"></i>
+                                <span>Ensemble members</span>
+                                <span class="ensemble-hint">runs every member, picks via voting</span>
+                            </div>
+                            <div class="ensemble-members" id="ensembleMembersList"></div>
+                            <div class="ensemble-voting">
+                                <span class="ensemble-voting-label">Voting:</span>
+                                <select id="ensembleVotingSelect" class="panel-setting-select">
+                                    <option value="majority">Majority</option>
+                                    <option value="weighted">Weighted</option>
+                                    <option value="first">First to finish</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Four-tab surface — Installed / Pull / Discover / Upload -->
                         <div class="model-tabs" role="tablist" aria-label="Model source">
                             <button
                                 type="button"
@@ -290,6 +423,15 @@
                                 <i class="fas fa-cloud-download-alt"></i>
                                 <span>Pull</span>
                                 <span class="model-tab-count" id="modelTabCountPull">0</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="model-tab"
+                                data-tab="discover"
+                                role="tab">
+                                <i class="fas fa-search"></i>
+                                <span>Discover</span>
+                                <span class="model-tab-count" id="modelTabCountDiscover">0</span>
                             </button>
                             <button
                                 type="button"
@@ -362,7 +504,49 @@
                             </div>
                         </div>
 
-                        <!-- Tab 3 — Upload -->
+                        <!-- Tab 3 — Discover (search Hugging Face + curated) -->
+                        <div
+                            class="model-tab-panel"
+                            data-tab-panel="discover"
+                            role="tabpanel"
+                            hidden>
+                            <div class="model-discover-search">
+                                <div class="discover-search-row">
+                                    <i class="fas fa-search discover-search-icon"></i>
+                                    <input
+                                        type="text"
+                                        id="discoverSearchInput"
+                                        class="panel-setting-input discover-search-input"
+                                        placeholder="qwen, llama, deepseek-coder, …"
+                                        maxlength="120"
+                                        autocomplete="off"
+                                        spellcheck="false" />
+                                    <select id="discoverSourceSelect" class="panel-setting-select discover-source-select">
+                                        <option value="all" selected>All sources</option>
+                                        <option value="ollama_curated">Curated</option>
+                                        <option value="hf">Hugging Face</option>
+                                    </select>
+                                    <button
+                                        id="discoverSearchBtn"
+                                        class="panel-action-btn"
+                                        type="button">
+                                        <i class="fas fa-search"></i>
+                                        <span>Search</span>
+                                    </button>
+                                </div>
+                                <div class="discover-search-hint">
+                                    Click any result to <strong>Load this model</strong> — the tag fills the Pull box and you can
+                                    Install with one click.
+                                </div>
+                            </div>
+                            <div class="model-card-list" id="modelDiscoverList"></div>
+                            <div class="model-empty" id="modelDiscoverEmpty" hidden>
+                                <i class="fas fa-search"></i>
+                                <span>Type a query above and press Search.</span>
+                            </div>
+                        </div>
+
+                        <!-- Tab 4 — Upload -->
                         <div
                             class="model-tab-panel"
                             data-tab-panel="upload"
@@ -431,6 +615,100 @@
                         <select id="aiModelSelect" class="panel-setting-select" hidden>
                             <option value="" selected>Auto</option>
                         </select>
+
+                        <!-- v3 — Advanced parameters template. JS clones
+                             this into each model card's expansion panel
+                             so every card has its own slider/input set. -->
+                        <template id="modelAdvancedTemplate">
+                            <div class="model-advanced">
+                                <div class="adv-grid">
+                                    <label class="adv-field">
+                                        <span class="adv-label">Temperature</span>
+                                        <input type="range" min="0" max="2" step="0.05" value="0.7"
+                                               class="adv-range" data-key="temperature" />
+                                        <span class="adv-value" data-out="temperature">0.7</span>
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">Top-p</span>
+                                        <input type="range" min="0" max="1" step="0.01" value="0.9"
+                                               class="adv-range" data-key="top_p" />
+                                        <span class="adv-value" data-out="top_p">0.9</span>
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">Top-k</span>
+                                        <input type="number" min="1" max="200" value="40"
+                                               class="adv-number" data-key="top_k" />
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">Repeat penalty</span>
+                                        <input type="range" min="1" max="2" step="0.05" value="1.1"
+                                               class="adv-range" data-key="repeat_penalty" />
+                                        <span class="adv-value" data-out="repeat_penalty">1.1</span>
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">Context (num_ctx)</span>
+                                        <select class="adv-select" data-key="num_ctx">
+                                            <option value="2048">2k</option>
+                                            <option value="4096" selected>4k</option>
+                                            <option value="8192">8k</option>
+                                            <option value="16384">16k</option>
+                                            <option value="32768">32k</option>
+                                            <option value="65536">64k</option>
+                                            <option value="131072">128k</option>
+                                        </select>
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">GPU layers</span>
+                                        <input type="range" min="0" max="999" step="1" value="999"
+                                               class="adv-range" data-key="num_gpu" />
+                                        <span class="adv-value" data-out="num_gpu">999</span>
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">CPU threads</span>
+                                        <input type="number" min="1" max="128" value="8"
+                                               class="adv-number" data-key="num_thread" />
+                                    </label>
+                                    <label class="adv-field">
+                                        <span class="adv-label">Seed (-1 = random)</span>
+                                        <input type="number" min="-1" value="-1"
+                                               class="adv-number" data-key="seed" />
+                                    </label>
+                                </div>
+                                <label class="adv-field adv-field-block">
+                                    <span class="adv-label">System prompt (optional)</span>
+                                    <textarea
+                                        class="adv-textarea"
+                                        data-key="system_prompt"
+                                        rows="2"
+                                        maxlength="4096"
+                                        placeholder="You are a helpful assistant…"></textarea>
+                                </label>
+                                <div class="adv-actions">
+                                    <div class="adv-test-row">
+                                        <input
+                                            type="text"
+                                            class="adv-test-prompt"
+                                            placeholder="Test prompt"
+                                            value="Reply in one short sentence." />
+                                        <button type="button" class="panel-action-btn panel-action-btn-ghost adv-test-btn">
+                                            <i class="fas fa-play"></i>
+                                            <span>Try it</span>
+                                        </button>
+                                    </div>
+                                    <div class="adv-button-row">
+                                        <button type="button" class="panel-action-btn panel-action-btn-ghost adv-reset-btn">
+                                            <i class="fas fa-undo"></i>
+                                            <span>Reset</span>
+                                        </button>
+                                        <button type="button" class="panel-action-btn adv-save-btn">
+                                            <i class="fas fa-save"></i>
+                                            <span>Save profile</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="adv-test-output" hidden></div>
+                            </div>
+                        </template>
                     </div>
                 </div>
                 <div class="settings-panel-footer">
