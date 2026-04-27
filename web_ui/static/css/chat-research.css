@@ -3703,3 +3703,211 @@ body.dark-mode .depth-menu {
     .discover-search-row { flex-wrap: wrap; }
     .discover-source-select { flex-basis: 100%; width: auto; }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────
+   v4 Model picker — fit/usage badges, presets, recommendation banner,
+   live tok/s overlay, quantization picker
+   ───────────────────────────────────────────────────────────────────── */
+
+/* ── VRAM-fit + usage badges on model cards ─────────────────────────── */
+
+.model-card-fit,
+.model-card-usage {
+    flex-shrink: 0;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.model-card-fit-fits {
+    background: rgba(96, 220, 175, 0.18);
+    color: #6ddfb5;
+}
+.model-card-fit-tight {
+    background: rgba(255, 200, 96, 0.18);
+    color: #ffc860;
+}
+.model-card-fit-too_big {
+    background: rgba(220, 110, 110, 0.18);
+    color: #ff8a8a;
+}
+.model-card-fit-cpu {
+    background: rgba(125, 207, 255, 0.12);
+    color: rgba(125, 207, 255, 0.85);
+}
+.model-card-usage {
+    background: var(--mono-bg-secondary, #1f2433);
+    color: var(--mono-text-tertiary, #8a8aa0);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 600;
+}
+
+/* ── Profile presets row in Advanced expansion ──────────────────────── */
+
+.adv-presets-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed rgba(125, 207, 255, 0.2);
+}
+.adv-presets-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-weight: 600;
+    margin-right: 4px;
+    flex-basis: 60px;
+    flex-shrink: 0;
+}
+.adv-preset-btn {
+    background: var(--mono-bg-primary, #14141f);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 6px;
+    color: var(--mono-text-secondary, #b0b0c0);
+    padding: 4px 8px;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.adv-preset-btn i { font-size: 10px; opacity: 0.85; }
+.adv-preset-btn:hover {
+    border-color: rgba(125, 207, 255, 0.55);
+    color: var(--mono-text-primary, #e8e8e8);
+}
+.adv-preset-btn.active {
+    background: rgba(125, 207, 255, 0.18);
+    border-color: rgba(125, 207, 255, 0.6);
+    color: rgba(125, 207, 255, 1);
+}
+
+/* ── Smart recommendation banner ────────────────────────────────────── */
+
+.model-recommend-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin: 0 0 10px;
+    background: linear-gradient(135deg,
+        rgba(255, 200, 96, 0.10),
+        rgba(180, 130, 255, 0.06) 75%);
+    border: 1px solid rgba(255, 200, 96, 0.4);
+    border-radius: 10px;
+    position: relative;
+    animation: recommendSlideIn 0.25s ease-out;
+}
+@keyframes recommendSlideIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.model-recommend-banner[hidden] { display: none; }
+.recommend-icon {
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255, 200, 96, 0.2);
+    border-radius: 7px;
+    color: #ffc860;
+    flex-shrink: 0;
+    font-size: 14px;
+}
+.recommend-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.recommend-title {
+    font-size: 12px;
+    color: var(--mono-text-secondary, #b0b0c0);
+}
+.recommend-title strong {
+    color: rgba(125, 207, 255, 1);
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+}
+.recommend-reason {
+    font-size: 10.5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.recommend-apply-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.recommend-dismiss {
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.recommend-dismiss:hover {
+    background: rgba(255, 200, 96, 0.15);
+    color: #ffc860;
+}
+
+/* ── Live tok/s overlay during Try-it streaming ─────────────────────── */
+
+.adv-test-tps {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px;
+    background: rgba(96, 220, 175, 0.15);
+    color: #6ddfb5;
+    border-radius: 999px;
+    font-size: 10px;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+    vertical-align: middle;
+    animation: tpsPulse 1s ease-in-out infinite;
+}
+@keyframes tpsPulse {
+    50% { opacity: 0.6; }
+}
+
+/* ── Discover quantization picker ───────────────────────────────────── */
+
+.discover-quant-picker {
+    flex-shrink: 0;
+    background: var(--mono-bg-primary, #14141f);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 5px;
+    color: var(--mono-text-primary, #e8e8e8);
+    padding: 3px 6px;
+    font-size: 10.5px;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-weight: 600;
+    margin-right: 6px;
+    cursor: pointer;
+}
+.discover-quant-picker:focus { outline: none; border-color: rgba(125, 207, 255, 0.6); }
+
+/* ── Mobile narrow ──────────────────────────────────────────────────── */
+
+@media (max-width: 540px) {
+    .model-recommend-banner { flex-wrap: wrap; }
+    .recommend-body { flex-basis: 100%; order: -1; }
+    .adv-presets-row { gap: 4px; }
+    .adv-presets-label { flex-basis: 100%; }
+}

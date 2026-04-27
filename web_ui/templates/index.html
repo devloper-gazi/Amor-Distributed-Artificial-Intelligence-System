@@ -616,11 +616,58 @@
                             <option value="" selected>Auto</option>
                         </select>
 
+                        <!-- v4 — Smart recommendation banner. Visible
+                             when the picker has a prompt-based suggestion
+                             different from the active selection. -->
+                        <div class="model-recommend-banner" id="modelRecommendBanner" hidden>
+                            <span class="recommend-icon"><i class="fas fa-lightbulb"></i></span>
+                            <div class="recommend-body">
+                                <span class="recommend-title">
+                                    Suggested:
+                                    <strong id="recommendTag">qwen2.5:7b</strong>
+                                </span>
+                                <span class="recommend-reason" id="recommendReason"></span>
+                            </div>
+                            <button
+                                type="button"
+                                class="panel-action-btn recommend-apply-btn"
+                                id="recommendApplyBtn">
+                                <i class="fas fa-check"></i>
+                                <span>Use it</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="recommend-dismiss"
+                                id="recommendDismissBtn"
+                                aria-label="Dismiss">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
                         <!-- v3 — Advanced parameters template. JS clones
                              this into each model card's expansion panel
-                             so every card has its own slider/input set. -->
+                             so every card has its own slider/input set.
+                             v4 adds a presets row at the top. -->
                         <template id="modelAdvancedTemplate">
                             <div class="model-advanced">
+                                <div class="adv-presets-row">
+                                    <span class="adv-presets-label">Preset</span>
+                                    <button type="button" class="adv-preset-btn" data-preset="creative">
+                                        <i class="fas fa-paint-brush"></i> Creative
+                                    </button>
+                                    <button type="button" class="adv-preset-btn" data-preset="precise">
+                                        <i class="fas fa-bullseye"></i> Precise
+                                    </button>
+                                    <button type="button" class="adv-preset-btn" data-preset="coding">
+                                        <i class="fas fa-code"></i> Coding
+                                    </button>
+                                    <button type="button" class="adv-preset-btn" data-preset="long_form">
+                                        <i class="fas fa-feather"></i> Long-form
+                                    </button>
+                                    <button type="button" class="adv-preset-btn" data-preset="deterministic">
+                                        <i class="fas fa-lock"></i> Deterministic
+                                    </button>
+                                </div>
                                 <div class="adv-grid">
                                     <label class="adv-field">
                                         <span class="adv-label">Temperature</span>

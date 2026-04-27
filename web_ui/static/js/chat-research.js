@@ -68,6 +68,12 @@ class ChatController {
             }
         });
         this.chatInput?.addEventListener('input', () => this.updateCharacterCount());
+        // v4 — debounced model recommendation as the user types.
+        // Idempotent (the method handles short prompts + dismissed state).
+        this.chatInput?.addEventListener('input', () => {
+            try { this._refreshRecommendation?.(this.chatInput.value || ''); }
+            catch (_) {}
+        });
         this.useClaudeAPI?.addEventListener('change', () => this.updateAIMode());
 
         // Auto-resize textarea
@@ -1694,9 +1700,54 @@ class ChatController {
                 expandedTag: null,        // currently-expanded card's tag (one at a time)
                 tested: {},               // tag → {output, elapsed_ms} cache
                 ensembleMembers: [],      // selected tags for ensemble strategy
+                // ── v4 additions ────────────────────────────────────────
+                usage: {},                // tag → {count_total, by_mode, last_used_at}
+                recommendation: null,     // {tag, reason, score, candidates}
+                recommendDismissed: false,
+                recommendQueryToken: 0,   // debounce token for /recommend
+                liveTokRate: 0,           // streaming tok/s during Try it
             };
         }
         return this._modelStateObj;
+    }
+
+    // ── v4 — Preset library (Advanced expansion) ────────────────────────
+
+    /** Hand-tuned slider preset library. Each value is what gets loaded
+     *  when the user clicks a preset button in the Advanced panel. */
+    _modelPresets() {
+        return {
+            creative: {
+                temperature: 1.0, top_p: 0.95, top_k: 60,
+                repeat_penalty: 1.05, num_ctx: 8192, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'High variance, broad sampling — good for ideation, brainstorms, marketing copy.',
+            },
+            precise: {
+                temperature: 0.2, top_p: 0.7, top_k: 20,
+                repeat_penalty: 1.1, num_ctx: 8192, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Tight sampling — factual Q&A, summarisation, instruction following.',
+            },
+            coding: {
+                temperature: 0.15, top_p: 0.95, top_k: 40,
+                repeat_penalty: 1.05, num_ctx: 16384, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Low temperature + larger context — code generation, refactoring, bug fixes.',
+            },
+            long_form: {
+                temperature: 0.7, top_p: 0.9, top_k: 40,
+                repeat_penalty: 1.15, num_ctx: 32768, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Balanced sampling + 32k context — essays, deep research, multi-page docs.',
+            },
+            deterministic: {
+                temperature: 0.0, top_p: 1.0, top_k: 1,
+                repeat_penalty: 1.0, num_ctx: 4096, num_gpu: 999,
+                num_thread: 8, seed: 42,
+                _description: 'Greedy decoding + fixed seed — reproducible outputs, regression tests.',
+            },
+        };
     }
 
     /** Lazy-init the picker on first panel-open. */
@@ -1786,6 +1837,10 @@ class ChatController {
     /**
      * Hit /api/models?mode=<scope> and re-render Installed / Pull tabs.
      * Falls back gracefully if Ollama is unreachable.
+     *
+     * v4 — also captures the embedded `hardware` envelope (so the
+     * picker doesn't need a separate /hardware roundtrip on first
+     * paint) and the per-tag `usage` counts.
      */
     async _refreshModelData() {
         const state = this._modelState();
@@ -1802,6 +1857,17 @@ class ChatController {
             // active for THIS scope — used by the rendering pass.
             state.preferences = state.preferences || {};
             state.preferences[state.scope] = data.active_preference || {};
+            // v4 — hardware envelope embedded in the list response.
+            if (data.hardware) {
+                state.hardware = data.hardware;
+                this._renderHardwarePanel();
+            }
+            // v4 — collect usage map from card-level `usage` fields.
+            const usage = {};
+            for (const m of state.installed) {
+                if (m.usage && m.usage.count_total) usage[m.tag] = m.usage;
+            }
+            state.usage = usage;
         } catch (err) {
             console.warn('model list fetch failed:', err);
             state.ollamaUp = false;
@@ -1811,6 +1877,7 @@ class ChatController {
         this._renderPanelFooter();
         this._renderModelChip();
         this._syncLegacySelect();
+        this._renderRecommendBanner();
     }
 
     /** Keep the (now-hidden) <select id="aiModelSelect"> in sync so
@@ -1915,6 +1982,27 @@ class ChatController {
                     ? `<span class="model-card-badge model-card-badge-auto">auto pick</span>`
                     : ''));
 
+        // v4 — VRAM-fit badge (fits / tight / too_big / cpu / unknown).
+        const fitBadge = (() => {
+            const fit = model.fit;
+            if (!fit || fit === 'unknown') return '';
+            const labels = {
+                fits: '✓ fits',
+                tight: '⚠ tight',
+                too_big: '✗ too big',
+                cpu: 'CPU',
+            };
+            return `<span class="model-card-fit model-card-fit-${fit}">${labels[fit] || fit}</span>`;
+        })();
+
+        // v4 — usage counter chip ("used 47×").
+        const usageBadge = (() => {
+            const u = model.usage || {};
+            const c = u.count_total || 0;
+            if (c <= 0) return '';
+            return `<span class="model-card-usage" title="${c} prior uses">used ${c}×</span>`;
+        })();
+
         // Build the head + meta block. For installed cards we add an
         // Advanced toggle (chevron) on the right. For pullable cards
         // we keep the lean look.
@@ -1941,6 +2029,8 @@ class ChatController {
                 ${tier ? `<span class="model-card-tier">${this.escapeHtml(tier)}</span>` : ''}
                 ${sizeChip ? `<span class="model-card-size">${this.escapeHtml(sizeChip)}</span>` : ''}
                 ${bench ? `<span class="model-card-bench">${this.escapeHtml(bench)}</span>` : ''}
+                ${fitBadge}
+                ${usageBadge}
             </div>
         `;
 
@@ -2102,6 +2192,25 @@ class ChatController {
             });
         });
 
+        // v4 — preset buttons load known-good slider configs.
+        root.querySelectorAll('.adv-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const presets = this._modelPresets();
+                const preset = presets[btn.dataset.preset];
+                if (!preset) return;
+                this._hydrateAdvancedForm(root, preset);
+                root.querySelectorAll('.adv-range').forEach(i =>
+                    i.dispatchEvent(new Event('input')),
+                );
+                root.querySelectorAll('.adv-preset-btn').forEach(b =>
+                    b.classList.toggle('active', b === btn),
+                );
+                if (preset._description) {
+                    this._toast?.(preset._description);
+                }
+            });
+        });
+
         const collect = () => {
             const out = {};
             root.querySelectorAll('[data-key]').forEach(el => {
@@ -2231,11 +2340,26 @@ class ChatController {
                     ? `Saved ${tag} with custom profile`
                     : `Model set: ${tag}`,
             );
+            // v4 — fire-and-forget warmup so the next real request
+            // doesn't pay the cold-load penalty. Failure is silent
+            // (warmup is purely an optimisation).
+            this._warmupModel(tag);
         } catch (err) {
             console.warn('save preference failed:', err);
             this._toast?.(`Failed to save preference: ${err.message}`, 'error');
         }
         await this._refreshModelData();
+    }
+
+    /** POST /api/models/warmup — fire-and-forget. */
+    async _warmupModel(tag) {
+        try {
+            await this._authFetch('/api/models/warmup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({tag}),
+            });
+        } catch (_) { /* best-effort */ }
     }
 
     /** Translate the hardware-pref toggle into Ollama options that are
@@ -2880,6 +3004,24 @@ class ChatController {
             ? `<span class="model-card-badge model-card-badge-custom">Hugging Face</span>`
             : `<span class="model-card-badge model-card-badge-active">Curated</span>`;
 
+        // v4 — quantization picker for HF results. Ollama supports
+        // every common GGUF quant on a model with the `:Q4_K_M` /
+        // `:Q5_K_M` / etc. suffix. We default to whatever the search
+        // returned (typically Q4_K_M) and let the user switch.
+        const isHf = result.source === 'hf';
+        const quants = ['Q3_K_M', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'F16'];
+        // Extract the quant suffix from the result tag (after the colon).
+        const colonIdx = (result.tag || '').lastIndexOf(':');
+        const baseTag = colonIdx >= 0 ? result.tag.slice(0, colonIdx) : result.tag;
+        const currentQuant = colonIdx >= 0 ? result.tag.slice(colonIdx + 1) : 'Q4_K_M';
+        const quantPicker = isHf
+            ? `<select class="discover-quant-picker" title="Quantization">
+                ${quants.map(q =>
+                    `<option value="${q}"${q === currentQuant ? ' selected' : ''}>${q}</option>`
+                ).join('')}
+               </select>`
+            : '';
+
         card.innerHTML = `
             <div class="model-card-row">
                 <div class="model-card-head">
@@ -2887,6 +3029,7 @@ class ChatController {
                     <span class="model-card-name">${this.escapeHtml(result.display_name || result.tag)}</span>
                     ${sourceBadge}
                 </div>
+                ${quantPicker}
                 <button type="button" class="panel-action-btn model-discover-load" title="Load this model">
                     <i class="fas fa-cloud-download-alt"></i>
                     <span>Install</span>
@@ -2903,28 +3046,36 @@ class ChatController {
                 : ''}
         `;
 
+        // Live-update the displayed tag when quant changes.
+        const qSelect = card.querySelector('.discover-quant-picker');
+        const tagEl = card.querySelector('.model-card-tag');
+        const resolveTag = () => {
+            if (!qSelect) return result.tag;
+            return `${baseTag}:${qSelect.value}`;
+        };
+        qSelect?.addEventListener('change', () => {
+            if (tagEl) tagEl.textContent = resolveTag();
+        });
+        qSelect?.addEventListener('click', (e) => e.stopPropagation());
+
         const installBtn = card.querySelector('.model-discover-load');
         const loadFlow = (e) => {
             e?.stopPropagation?.();
-            // Drop the tag into the Pull tab's custom input + switch tabs
-            // so the user gets a clear "loaded for install" state, then
-            // immediately fire a pull.
+            const tag = resolveTag();
             const pullInput = document.getElementById('customModelTag');
-            if (pullInput) pullInput.value = result.tag;
+            if (pullInput) pullInput.value = tag;
             this._setActiveTab('pull');
-            this._pullModel(result.tag).catch(err =>
+            this._pullModel(tag).catch(err =>
                 console.warn('discover install failed:', err));
         };
         installBtn?.addEventListener('click', loadFlow);
         card.addEventListener('click', (e) => {
-            if (e.target.closest('.model-discover-load')) return;
-            // Click anywhere else on the card → fill the Pull input
-            // without auto-pulling, so the user can review before
-            // committing.
+            if (e.target.closest('.model-discover-load, .discover-quant-picker')) return;
+            const tag = resolveTag();
             const pullInput = document.getElementById('customModelTag');
-            if (pullInput) pullInput.value = result.tag;
+            if (pullInput) pullInput.value = tag;
             this._setActiveTab('pull');
-            this._toast?.(`Loaded ${result.tag} — review and click Pull to install`);
+            this._toast?.(`Loaded ${tag} — review and click Pull to install`);
         });
         card.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); loadFlow(e); }
@@ -2981,13 +3132,25 @@ class ChatController {
                 try { evt = JSON.parse(dataLine.slice(5).trim()); } catch (_) { continue; }
                 if (evt.type === 'test_chunk' && evt.delta) {
                     acc += evt.delta;
-                    if (outEl) outEl.textContent = acc;
+                    if (outEl) {
+                        // Render text + (when present) live tok/s overlay.
+                        outEl.textContent = acc;
+                        if (evt.tokens_per_second != null) {
+                            const tps = document.createElement('span');
+                            tps.className = 'adv-test-tps';
+                            tps.textContent = ` ${evt.tokens_per_second} tok/s`;
+                            outEl.appendChild(tps);
+                        }
+                    }
                 } else if (evt.type === 'test_done') {
                     if (outEl) {
                         outEl.classList.remove('adv-test-streaming');
                         const meta = document.createElement('div');
                         meta.className = 'adv-test-meta';
-                        meta.textContent = `${evt.tokens || 0} tokens · ${evt.elapsed_ms || 0} ms`;
+                        const tps = evt.tokens_per_second
+                            ? ` · ${evt.tokens_per_second} tok/s`
+                            : '';
+                        meta.textContent = `${evt.tokens || 0} tokens · ${evt.elapsed_ms || 0} ms${tps}`;
                         outEl.appendChild(meta);
                     }
                 } else if (evt.type === 'test_error') {
@@ -3078,6 +3241,88 @@ class ChatController {
                 console.warn('routing save failed:', err);
             }
         }, 350);
+    }
+
+    // ── v4 — Smart recommendation banner ────────────────────────────────
+
+    /** Run a debounced recommendation for the prompt currently in the
+     *  active chat input. Called from chat input listeners. */
+    async _refreshRecommendation(prompt) {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        const state = this._modelState();
+        if (state.recommendDismissed) return;
+        const trimmed = (prompt || '').trim();
+        if (trimmed.length < 12) {
+            this._hideRecommendBanner();
+            return;
+        }
+        // Debounce — only the latest call wins.
+        const myToken = ++state.recommendQueryToken;
+        // Fire after 500ms of typing inactivity.
+        if (this._recommendDebounceTimer) clearTimeout(this._recommendDebounceTimer);
+        this._recommendDebounceTimer = setTimeout(async () => {
+            if (myToken !== state.recommendQueryToken) return;
+            try {
+                const resp = await this._authFetch('/api/models/recommend', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({prompt: trimmed, mode: state.scope}),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                if (myToken !== state.recommendQueryToken) return;
+                state.recommendation = await resp.json();
+                this._renderRecommendBanner();
+            } catch (err) {
+                console.warn('recommend failed:', err);
+            }
+        }, 500);
+    }
+
+    _renderRecommendBanner() {
+        const banner = document.getElementById('modelRecommendBanner');
+        const tagEl = document.getElementById('recommendTag');
+        const reasonEl = document.getElementById('recommendReason');
+        const applyBtn = document.getElementById('recommendApplyBtn');
+        const dismissBtn = document.getElementById('recommendDismissBtn');
+        if (!banner || !tagEl || !reasonEl) return;
+        const state = this._modelState();
+        const rec = state.recommendation;
+        if (!rec || !rec.tag) {
+            banner.hidden = true;
+            return;
+        }
+        // Don't suggest the model that's already active.
+        const activeTag = (state.preferences[state.scope]?.tag || '').toLowerCase();
+        if (rec.tag.toLowerCase() === activeTag) {
+            banner.hidden = true;
+            return;
+        }
+        tagEl.textContent = rec.display_name || rec.tag;
+        reasonEl.textContent = rec.reason || '';
+        banner.hidden = false;
+        if (applyBtn && !applyBtn.dataset.wired) {
+            applyBtn.dataset.wired = '1';
+            applyBtn.addEventListener('click', () => {
+                this._savePreference(
+                    rec.tag, 'ollama_registry',
+                    rec.display_name || rec.tag,
+                ).catch(err => console.warn(err));
+                this._hideRecommendBanner();
+            });
+        }
+        if (dismissBtn && !dismissBtn.dataset.wired) {
+            dismissBtn.dataset.wired = '1';
+            dismissBtn.addEventListener('click', () => {
+                this._modelState().recommendDismissed = true;
+                this._hideRecommendBanner();
+            });
+        }
+    }
+
+    _hideRecommendBanner() {
+        const banner = document.getElementById('modelRecommendBanner');
+        if (banner) banner.hidden = true;
     }
 
     /** Headers used by XHR upload (mirrors _authFetch behaviour). */
