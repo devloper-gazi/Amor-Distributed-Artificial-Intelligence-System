@@ -25,7 +25,6 @@ Design notes
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import json
@@ -251,7 +250,7 @@ class ModelManager:
             scored.append((score, m))
 
         if scored:
-            best_score, best = max(scored, key=lambda x: x[0])
+            _best_score, best = max(scored, key=lambda x: x[0])
             label = best.display_name or best.tag
             return (
                 best.tag,

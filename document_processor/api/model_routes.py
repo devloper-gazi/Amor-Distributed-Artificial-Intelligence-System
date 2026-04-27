@@ -50,7 +50,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..auth.dependencies import get_optional_user
 from ..auth.models import User
@@ -141,6 +141,11 @@ class ModelProfile(BaseModel):
 class PreferenceWriteRequest(BaseModel):
     """Body for ``PUT /preference`` — write a per-mode override."""
 
+    # `model_tag` and `model_source` collide with Pydantic v2's
+    # protected `model_` namespace; opt out so the noisy UserWarning
+    # stops spamming the logs.
+    model_config = ConfigDict(protected_namespaces=())
+
     mode: str = Field(..., description="research | thinking | coding | code | __all__")
     model_tag: str = Field(..., min_length=1, max_length=160)
     model_source: str = Field(
@@ -162,6 +167,9 @@ class PullModelRequest(BaseModel):
 
 class TestGenerateRequest(BaseModel):
     """Body for ``POST /test`` — quick generation to validate a model."""
+
+    # See PreferenceWriteRequest for the protected_namespaces rationale.
+    model_config = ConfigDict(protected_namespaces=())
 
     model_tag: str = Field(..., min_length=1, max_length=160)
     prompt: str = Field("Hello! Reply in one short sentence.", max_length=4000)
