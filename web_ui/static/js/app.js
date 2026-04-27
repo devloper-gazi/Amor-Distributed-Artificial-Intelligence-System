@@ -486,6 +486,14 @@ function setupWelcomeCards() {
         if (!card) return;
 
         const cardMode = card.dataset.mode;
+        // v5 — Consortium isn't a normal "mode"; it's a meta-pipeline
+        // launched via a dedicated modal. Don't try to switchMode() to it.
+        if (cardMode === 'consortium') {
+            if (window.consortiumController?.openLauncher) {
+                window.consortiumController.openLauncher();
+            }
+            return;
+        }
         if (cardMode && cardMode !== state.currentMode) {
             switchMode(cardMode).catch(console.error);
         }

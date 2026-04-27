@@ -155,6 +155,12 @@
                         <h3>Quick Code Chat</h3>
                         <p>Single-shot code generation and technical assistance</p>
                     </div>
+                    <div class="capability-card capability-card-consortium" data-mode="consortium">
+                        <div class="card-icon">🏛️</div>
+                        <h3>Consortium</h3>
+                        <p>Scope → Research → Analyze → Implement &amp; verify — fully automated end-to-end pipeline · 100% local</p>
+                        <span class="capability-card-badge">v5</span>
+                    </div>
                 </div>
 
                 <div class="welcome-footer">
@@ -1149,6 +1155,114 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
+    <!-- Consortium launcher modal — opens when the Consortium
+         capability card is clicked. Submitting the form starts a
+         pipeline session and the live view streams progress. -->
+    <div class="consortium-modal" id="consortiumModal" hidden>
+        <div class="consortium-modal-backdrop" id="consortiumModalBackdrop"></div>
+        <div class="consortium-modal-card" role="dialog" aria-modal="true" aria-labelledby="consortiumModalTitle">
+            <div class="consortium-modal-header">
+                <h2 id="consortiumModalTitle">
+                    <i class="fas fa-landmark"></i>
+                    Consortium pipeline
+                </h2>
+                <button type="button" class="consortium-modal-close" id="consortiumModalClose" aria-label="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="consortium-modal-body">
+                <p class="consortium-modal-hint">
+                    Define a project goal. The pipeline will scope it, research the topic,
+                    analyse alternatives, and implement &amp; verify the deliverable —
+                    100% local, no paid APIs.
+                </p>
+                <label class="consortium-field">
+                    <span class="consortium-field-label">Goal</span>
+                    <textarea
+                        id="consortiumGoal"
+                        rows="4"
+                        maxlength="8000"
+                        placeholder="e.g. Build a Python module that diffs two CSV files row-by-row, with tests."></textarea>
+                </label>
+                <div class="consortium-grid">
+                    <label class="consortium-field">
+                        <span class="consortium-field-label">Depth</span>
+                        <select id="consortiumDepth">
+                            <option value="basic">Basic · ~10 min</option>
+                            <option value="medium" selected>Medium · ~30 min</option>
+                            <option value="deep">Deep · ~90 min</option>
+                            <option value="expert">Expert · ~3 h</option>
+                            <option value="ultra">Ultra · 6+ h</option>
+                        </select>
+                    </label>
+                    <label class="consortium-field">
+                        <span class="consortium-field-label">Language</span>
+                        <input type="text" id="consortiumLanguage" placeholder="python" />
+                    </label>
+                    <label class="consortium-field consortium-field-checkbox">
+                        <input type="checkbox" id="consortiumAllowResearch" checked />
+                        <span>Web research</span>
+                    </label>
+                </div>
+            </div>
+            <div class="consortium-modal-footer">
+                <button type="button" class="panel-action-btn panel-action-btn-ghost" id="consortiumCancelBtn">Cancel</button>
+                <button type="button" class="panel-action-btn" id="consortiumStartBtn">
+                    <i class="fas fa-play"></i>
+                    <span>Start pipeline</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Consortium live view — populated by chat-research.js as events
+         arrive on the SSE stream. Slot lives inside the messages area
+         and replaces the welcome card while a session is running. -->
+    <template id="consortiumViewTemplate">
+        <div class="consortium-view" data-session-id="">
+            <div class="consortium-view-header">
+                <div class="consortium-view-title">
+                    <i class="fas fa-landmark"></i>
+                    <span class="consortium-view-name">Consortium pipeline</span>
+                    <span class="consortium-view-status" data-status>started</span>
+                </div>
+                <div class="consortium-view-actions">
+                    <button type="button" class="panel-action-btn panel-action-btn-ghost consortium-cancel" hidden>
+                        <i class="fas fa-stop"></i> Cancel
+                    </button>
+                    <a class="panel-action-btn consortium-download" href="#" hidden>
+                        <i class="fas fa-download"></i> Download artifact
+                    </a>
+                </div>
+            </div>
+            <div class="consortium-phase-list" data-phase-list>
+                <div class="consortium-phase" data-phase="scope">
+                    <span class="consortium-phase-icon"><i class="fas fa-bullseye"></i></span>
+                    <span class="consortium-phase-name">Scope</span>
+                    <span class="consortium-phase-state" data-state>pending</span>
+                </div>
+                <div class="consortium-phase" data-phase="research">
+                    <span class="consortium-phase-icon"><i class="fas fa-search"></i></span>
+                    <span class="consortium-phase-name">Research</span>
+                    <span class="consortium-phase-state" data-state>pending</span>
+                </div>
+                <div class="consortium-phase" data-phase="thinking">
+                    <span class="consortium-phase-icon"><i class="fas fa-brain"></i></span>
+                    <span class="consortium-phase-name">Analyze &amp; Think</span>
+                    <span class="consortium-phase-state" data-state>pending</span>
+                </div>
+                <div class="consortium-phase" data-phase="implementation">
+                    <span class="consortium-phase-icon"><i class="fas fa-cogs"></i></span>
+                    <span class="consortium-phase-name">Implement &amp; verify</span>
+                    <span class="consortium-phase-state" data-state>pending</span>
+                </div>
+            </div>
+            <div class="consortium-gates" data-gates></div>
+            <div class="consortium-log" data-log></div>
+            <div class="consortium-readme" data-readme hidden></div>
+        </div>
+    </template>
+
     <!-- highlight.js for code blocks in the Code Intelligence view -->
     <link rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css">
@@ -1161,5 +1275,6 @@
     <script src="/static/js/thinking-view.js?v={{ static_version }}"></script>
     <script src="/static/js/code-view.js?v={{ static_version }}"></script>
     <script src="/static/js/chat-research.js?v={{ static_version }}"></script>
+    <script src="/static/js/consortium.js?v={{ static_version }}"></script>
 </body>
 </html>
