@@ -456,6 +456,327 @@ class ModelManager:
         logger.info("model_manager_gguf_registered tag=%s", tag)
         return {"tag": tag, "display_name": display}
 
+    # ── 7. SEARCH MODELS (v3 — Discover tab) ─────────────────────────────
+
+    async def search_models(
+        self,
+        query: str,
+        *,
+        source: str = "all",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """
+        Search for installable models matching ``query``. Returns a list
+        of dicts shaped like:
+
+            {
+              "tag": "qwen2.5:7b" | "hf.co/Org/Model:Q4_K_M",
+              "display_name": "Qwen2.5 7B",
+              "source": "ollama_curated" | "hf",
+              "description": "...",
+              "license": "Apache-2.0",
+              "size_bytes": 4400000000,
+              "stars": 1234,
+              "downloads": 56789,
+              "spec": {...} | None,   # CodeModelRegistry match if known
+            }
+
+        ``source`` is one of:
+          - ``ollama_curated`` — search just the curated CODE_MODEL_CATALOGUE
+          - ``hf``             — search Hugging Face Hub for GGUF models
+          - ``all``             — both, deduped
+
+        Failure-quiet: HF unreachable → returns just the curated matches.
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        results: list[dict[str, Any]] = []
+        seen_tags: set[str] = set()
+
+        # 1) Curated catalogue — fast in-process filter.
+        if source in {"all", "ollama_curated"}:
+            for spec in CODE_MODEL_CATALOGUE:
+                hay = " ".join([
+                    spec.ollama_tag, spec.display_name,
+                    " ".join(spec.strengths), spec.tier, spec.license,
+                ]).lower()
+                if q in hay:
+                    if spec.ollama_tag.lower() in seen_tags:
+                        continue
+                    seen_tags.add(spec.ollama_tag.lower())
+                    results.append({
+                        "tag": spec.ollama_tag,
+                        "display_name": spec.display_name,
+                        "source": "ollama_curated",
+                        "description": (
+                            f"{spec.tier.title()} tier · {spec.params_b}B params · "
+                            f"{spec.context_k}k context · {spec.license}"
+                        ),
+                        "license": spec.license,
+                        "size_bytes": int(spec.vram_gb * 1024**3),
+                        "stars": None,
+                        "downloads": None,
+                        "spec": spec.to_dict(),
+                    })
+
+        # 2) Hugging Face Hub — only when GGUF library exists. We
+        # intentionally don't pull `huggingface_hub` (heavy dep) — the
+        # public REST API works fine over httpx.
+        if source in {"all", "hf"} and len(results) < limit:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        "https://huggingface.co/api/models",
+                        params={
+                            "search": query,
+                            "filter": "gguf",
+                            "limit": str(min(limit, 50)),
+                            "sort": "downloads",
+                            "direction": "-1",
+                        },
+                    )
+                    resp.raise_for_status()
+                    raw = resp.json()
+            except Exception as exc:
+                logger.warning("model_manager_hf_search_failed: %s", exc)
+                raw = []
+
+            for entry in (raw or []):
+                model_id = str(entry.get("id") or entry.get("modelId") or "")
+                if not model_id:
+                    continue
+                # Default Ollama hf.co tag uses Q4_K_M as a reasonable
+                # quant; the picker can offer alt quants in a follow-up.
+                tag = f"hf.co/{model_id}:Q4_K_M"
+                if tag.lower() in seen_tags:
+                    continue
+                seen_tags.add(tag.lower())
+                results.append({
+                    "tag": tag,
+                    "display_name": model_id.split("/")[-1],
+                    "source": "hf",
+                    "description": (entry.get("pipeline_tag") or "GGUF model"),
+                    "license": (
+                        (entry.get("cardData") or {}).get("license")
+                        if isinstance(entry.get("cardData"), dict)
+                        else None
+                    ),
+                    "size_bytes": None,
+                    "stars": int(entry.get("likes") or 0),
+                    "downloads": int(entry.get("downloads") or 0),
+                    "spec": None,
+                })
+                if len(results) >= limit:
+                    break
+
+        return results[:limit]
+
+    # ── 8. HARDWARE DETECTION (v3) ───────────────────────────────────────
+
+    async def detect_hardware(self) -> dict[str, Any]:
+        """
+        Probe Ollama for runtime hardware info. Returns a dict shaped:
+
+            {
+              "gpu_available": bool,
+              "gpu_name": str | None,
+              "gpu_count": int,
+              "vram_total_gb": float | None,
+              "vram_free_gb": float | None,
+              "cpu_threads": int | None,
+              "ollama_version": str | None,
+              "platform": str | None,
+            }
+
+        Ollama exposes /api/version and /api/ps; the latter includes
+        loaded-model size. We additionally query Python's os.cpu_count
+        for a CPU-thread baseline.
+        """
+        out: dict[str, Any] = {
+            "gpu_available": False,
+            "gpu_name": None,
+            "gpu_count": 0,
+            "vram_total_gb": None,
+            "vram_free_gb": None,
+            "cpu_threads": os.cpu_count(),
+            "ollama_version": None,
+            "platform": None,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Version + platform.
+                v = await client.get(f"{OLLAMA_BASE_URL}/api/version")
+                if v.status_code == 200:
+                    j = v.json()
+                    out["ollama_version"] = str(j.get("version") or "")
+                # /api/ps gives currently-loaded models with size + GPU info.
+                p = await client.get(f"{OLLAMA_BASE_URL}/api/ps")
+                if p.status_code == 200:
+                    pj = p.json()
+                    models = pj.get("models") or []
+                    # If at least one model has details.size_vram > 0,
+                    # the host is GPU-capable (Ollama populates it only
+                    # when the model is on GPU).
+                    for m in models:
+                        details = m.get("details") or {}
+                        # Newer Ollama: top-level size_vram
+                        if int(m.get("size_vram") or 0) > 0:
+                            out["gpu_available"] = True
+                            out["gpu_count"] = max(out["gpu_count"], 1)
+                        # Legacy: details.size
+                        if isinstance(details, dict) and details.get("families"):
+                            out["platform"] = ",".join(details["families"])
+        except Exception as exc:
+            logger.warning("model_manager_hardware_probe_failed: %s", exc)
+
+        # Best-effort GPU detection beyond Ollama — pynvml if installed,
+        # otherwise CUDA_VISIBLE_DEVICES env hint.
+        try:
+            import pynvml  # type: ignore  # noqa: PLC0415
+            pynvml.nvmlInit()
+            count = pynvml.nvmlDeviceGetCount()
+            if count > 0:
+                out["gpu_available"] = True
+                out["gpu_count"] = max(out["gpu_count"], int(count))
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                out["gpu_name"] = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(out["gpu_name"], bytes):
+                    out["gpu_name"] = out["gpu_name"].decode("utf-8", "ignore")
+                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                out["vram_total_gb"] = round(meminfo.total / 1024**3, 2)
+                out["vram_free_gb"] = round(meminfo.free / 1024**3, 2)
+            with contextlib.suppress(Exception):
+                pynvml.nvmlShutdown()
+        except Exception:  # pragma: no cover — pynvml missing or no CUDA
+            cuda_env = os.getenv("CUDA_VISIBLE_DEVICES")
+            if cuda_env and cuda_env.strip() not in {"", "-1", "none"}:
+                out["gpu_available"] = True
+                out["gpu_count"] = max(
+                    out["gpu_count"],
+                    len([s for s in cuda_env.split(",") if s.strip()]),
+                )
+        return out
+
+    # ── 9. PROFILE → OLLAMA OPTIONS ──────────────────────────────────────
+
+    @staticmethod
+    def apply_profile_to_options(
+        profile: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """
+        Translate a saved profile dict to Ollama ``/api/generate``
+        ``options`` keys. Whitelisted to avoid passing arbitrary
+        client-supplied keys to the daemon.
+        """
+        if not profile:
+            return {}
+        whitelist = {
+            "temperature": float,
+            "top_p": float,
+            "top_k": int,
+            "repeat_penalty": float,
+            "num_ctx": int,
+            "num_gpu": int,
+            "num_thread": int,
+            "seed": int,
+            "mirostat": int,
+            "mirostat_tau": float,
+            "mirostat_eta": float,
+            "num_predict": int,
+        }
+        out: dict[str, Any] = {}
+        for k, caster in whitelist.items():
+            if k in profile and profile[k] is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    out[k] = caster(profile[k])
+        # `stop` is a list of strings — handled separately.
+        if isinstance(profile.get("stop"), list):
+            out["stop"] = [str(s) for s in profile["stop"] if s][:8]
+        return out
+
+    @staticmethod
+    def system_prompt_from_profile(
+        profile: dict[str, Any] | None,
+    ) -> str | None:
+        """Extract the user-defined system prompt from a profile dict."""
+        if not profile:
+            return None
+        sp = profile.get("system_prompt")
+        if isinstance(sp, str) and sp.strip():
+            # Cap at 4 KB to avoid prompt-bombing.
+            return sp.strip()[:4096]
+        return None
+
+    # ── 10. TEST GENERATION (v3 — "Try it" button) ───────────────────────
+
+    async def test_generate(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        profile: dict[str, Any] | None = None,
+        max_tokens: int = 256,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream a tiny test generation. Yields event dicts:
+
+          - {"type": "test_start", "model": "..."}
+          - {"type": "test_chunk", "delta": "..."}
+          - {"type": "test_done",  "elapsed_ms": int, "tokens": int}
+          - {"type": "test_error", "error": "..."}
+        """
+        yield {"type": "test_start", "model": model}
+        opts = self.apply_profile_to_options(profile)
+        opts["num_predict"] = int(min(max_tokens, 1024))
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": str(prompt or "")[:8000],
+            "stream": True,
+            "options": opts,
+        }
+        sysp = self.system_prompt_from_profile(profile)
+        if sysp:
+            body["system"] = sysp
+
+        import time as _time  # noqa: PLC0415
+        started = _time.time()
+        tokens = 0
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{OLLAMA_BASE_URL}/api/generate",
+                    json=body,
+                ) as resp:
+                    resp.raise_for_status()
+                    async for raw in resp.aiter_lines():
+                        if not raw.strip():
+                            continue
+                        try:
+                            chunk = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if chunk.get("error"):
+                            yield {
+                                "type": "test_error",
+                                "error": str(chunk["error"]),
+                            }
+                            return
+                        delta = chunk.get("response") or ""
+                        if delta:
+                            tokens += 1
+                            yield {"type": "test_chunk", "delta": delta}
+                        if chunk.get("done"):
+                            break
+            yield {
+                "type": "test_done",
+                "elapsed_ms": int((_time.time() - started) * 1000),
+                "tokens": tokens,
+            }
+        except Exception as exc:
+            yield {"type": "test_error", "error": str(exc)}
+
     # ── 6. DELETE CUSTOM MODEL ────────────────────────────────────────────
 
     async def delete_custom_model(

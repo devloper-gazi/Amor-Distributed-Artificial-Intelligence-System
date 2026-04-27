@@ -114,6 +114,30 @@ def _get_manager(request: Request) -> ModelManager:
 # ─── pydantic schemas ────────────────────────────────────────────────────────
 
 
+class ModelProfile(BaseModel):
+    """Advanced per-model options written by the picker's Advanced expand.
+
+    All fields are optional — unset fields fall back to Ollama defaults.
+    Stored verbatim and forwarded to Ollama's ``/api/generate.options`` at
+    request time after a whitelist filter.
+    """
+
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(None, ge=1, le=200)
+    repeat_penalty: Optional[float] = Field(None, ge=1.0, le=2.0)
+    num_ctx: Optional[int] = Field(None, ge=512, le=131072)
+    num_gpu: Optional[int] = Field(None, ge=0, le=999)
+    num_thread: Optional[int] = Field(None, ge=1, le=128)
+    seed: Optional[int] = Field(None, ge=-1)
+    mirostat: Optional[int] = Field(None, ge=0, le=2)
+    mirostat_tau: Optional[float] = Field(None, ge=0.0, le=10.0)
+    mirostat_eta: Optional[float] = Field(None, ge=0.0, le=1.0)
+    num_predict: Optional[int] = Field(None, ge=-2, le=8192)
+    system_prompt: Optional[str] = Field(None, max_length=4096)
+    stop: Optional[list[str]] = Field(None, max_length=8)
+
+
 class PreferenceWriteRequest(BaseModel):
     """Body for ``PUT /preference`` — write a per-mode override."""
 
@@ -125,12 +149,43 @@ class PreferenceWriteRequest(BaseModel):
         max_length=40,
     )
     display_name: Optional[str] = Field(None, max_length=120)
+    profile: Optional[ModelProfile] = Field(
+        None, description="Advanced per-model options (temperature, num_gpu, …)",
+    )
 
 
 class PullModelRequest(BaseModel):
     """Body for ``POST /pull`` — pull from Ollama Hub."""
 
     tag: str = Field(..., min_length=1, max_length=160)
+
+
+class TestGenerateRequest(BaseModel):
+    """Body for ``POST /test`` — quick generation to validate a model."""
+
+    model_tag: str = Field(..., min_length=1, max_length=160)
+    prompt: str = Field("Hello! Reply in one short sentence.", max_length=4000)
+    profile: Optional[ModelProfile] = None
+    max_tokens: int = Field(128, ge=1, le=1024)
+
+
+class RoutingWriteRequest(BaseModel):
+    """Body for ``PUT /routing`` — multi-model strategy selector."""
+
+    strategy: str = Field(
+        "single",
+        description="single | per_mode | per_role | ensemble",
+        max_length=20,
+    )
+    single_tag: Optional[str] = Field(None, max_length=160)
+    mode_routes: Optional[dict] = Field(default_factory=dict)
+    role_routes: Optional[dict] = Field(default_factory=dict)
+    fallback_chain: Optional[list[str]] = Field(default_factory=list)
+    hardware_pref: Optional[str] = Field(
+        "auto", description="auto | gpu | cpu | gpu_partial",
+    )
+    gpu_layers: Optional[int] = Field(None, ge=0, le=999)
+    ensemble: Optional[dict] = Field(default_factory=dict)
 
 
 # ─── 1. GET /api/models ──────────────────────────────────────────────────────
@@ -309,6 +364,10 @@ async def set_preference(
     user_id = user.id if user else None
     mode_n = _normalize_mode(body.mode)
 
+    profile_dict = None
+    if body.profile is not None:
+        profile_dict = body.profile.model_dump(exclude_none=True)
+
     await chat_store.set_model_preference(
         user_id=user_id,
         client_id=client_id,
@@ -316,12 +375,168 @@ async def set_preference(
         model_tag=body.model_tag.strip(),
         model_source=body.model_source,
         display_name=body.display_name,
+        profile=profile_dict,
     )
     logger.info(
-        "model_preference_set user_scoped=%s mode=%s tag=%s",
+        "model_preference_set user_scoped=%s mode=%s tag=%s profile_keys=%d",
         bool(user_id), mode_n, body.model_tag,
+        len(profile_dict or {}),
     )
-    return {"ok": True, "mode": mode_n, "model_tag": body.model_tag}
+    return {
+        "ok": True,
+        "mode": mode_n,
+        "model_tag": body.model_tag,
+        "profile": profile_dict or {},
+    }
+
+
+# ─── 9. GET /api/models/search ───────────────────────────────────────────────
+
+
+@router.get("/search")
+async def search_models(
+    request: Request,
+    q: str,
+    source: str = "all",
+    limit: int = 20,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Search Ollama curated catalogue + Hugging Face Hub for installable models.
+
+    Used by the picker's Discover tab. Failure-quiet: if HF is unreachable
+    we still return curated matches.
+    """
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="`q` is required")
+    src = (source or "all").strip().lower()
+    if src not in {"all", "ollama_curated", "hf"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid source (got {source!r}); use all|ollama_curated|hf",
+        )
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="`limit` must be 1..50")
+
+    manager = _get_manager(request)
+    results = await manager.search_models(q.strip(), source=src, limit=limit)
+    return {"query": q.strip(), "source": src, "results": results}
+
+
+# ─── 10. GET /api/models/hardware ───────────────────────────────────────────
+
+
+@router.get("/hardware")
+async def detect_hardware(
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Probe Ollama + (optionally) pynvml for GPU/CPU information.
+
+    Drives the picker's hardware panel: shows the user what they have,
+    and what running a model on this host means in practice."""
+    manager = _get_manager(request)
+    info = await manager.detect_hardware()
+    return info
+
+
+# ─── 11. POST /api/models/test ──────────────────────────────────────────────
+
+
+@router.post("/test")
+async def test_model(
+    body: TestGenerateRequest,
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """SSE stream of a tiny generation — drives the picker's "Try it"
+    button so users can verify a freshly-installed model works before
+    binding it as a preference."""
+    manager = _get_manager(request)
+    profile_dict = (
+        body.profile.model_dump(exclude_none=True) if body.profile else None
+    )
+
+    async def event_stream():
+        try:
+            async for event in manager.test_generate(
+                model=body.model_tag.strip(),
+                prompt=body.prompt,
+                profile=profile_dict,
+                max_tokens=body.max_tokens,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+                if await request.is_disconnected():
+                    return
+        except asyncio.CancelledError:  # pragma: no cover
+            raise
+        except Exception as exc:
+            logger.exception("model_test_stream_failed tag=%s", body.model_tag)
+            yield (
+                f"data: {json.dumps({'type': 'test_error', 'error': str(exc)})}\n\n"
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ─── 12-14. /api/models/routing — GET / PUT / DELETE ────────────────────────
+
+
+@router.get("/routing")
+async def get_routing(
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Return the user/client multi-model routing strategy. Returns the
+    default ``{strategy: "single", …}`` shape when nothing is set."""
+    client_id = _require_client_id(x_client_id)
+    user_id = user.id if user else None
+    routing = await chat_store.get_model_routing(
+        user_id=user_id, client_id=client_id,
+    )
+    return routing
+
+
+@router.put("/routing")
+async def set_routing(
+    body: RoutingWriteRequest,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Upsert the user/client multi-model routing strategy."""
+    client_id = _require_client_id(x_client_id)
+    user_id = user.id if user else None
+
+    payload = body.model_dump(exclude_none=True)
+    await chat_store.set_model_routing(
+        user_id=user_id, client_id=client_id, routing=payload,
+    )
+    logger.info(
+        "model_routing_set user_scoped=%s strategy=%s",
+        bool(user_id), payload.get("strategy"),
+    )
+    return {"ok": True, **payload}
+
+
+@router.delete("/routing")
+async def delete_routing(
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Reset to default (single-model) behaviour."""
+    client_id = _require_client_id(x_client_id)
+    user_id = user.id if user else None
+    deleted = await chat_store.delete_model_routing(
+        user_id=user_id, client_id=client_id,
+    )
+    return {"ok": True, "deleted": deleted}
 
 
 # ─── 5. DELETE /api/models/preference/{mode} ─────────────────────────────────

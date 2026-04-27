@@ -86,6 +86,58 @@ async def resolve_request_model(
         return None, "fallback to OLLAMA_MODEL"
 
 
+async def resolve_request_model_full(
+    *,
+    request: Request,
+    requested_model: Optional[str],
+    user_id: Optional[str],
+    client_id: str,
+    mode: str,
+    effort: str = "medium",
+) -> tuple[Optional[str], Optional[dict], str]:
+    """
+    v3 — like ``resolve_request_model`` but also returns the saved
+    advanced-options profile when one is bound to the resolved tag.
+
+    Returns ``(tag, profile, reason)``. ``profile`` is ``None`` unless
+    the resolved tag came from a stored user preference *and* that
+    preference has a non-empty profile dict.
+    """
+    # 1) Request override — no profile from MongoDB; the picker would
+    # have written the profile alongside before sending the request.
+    if requested_model and requested_model.strip():
+        return requested_model.strip(), None, "request override"
+
+    # 2) Persisted preference (full doc, including profile).
+    try:
+        full = await chat_store.get_model_preference_full(
+            user_id=user_id, client_id=client_id, mode=mode,
+        )
+        if full and full.get("model_tag"):
+            return (
+                str(full["model_tag"]),
+                full.get("profile") or None,
+                f"user preference ({full.get('mode') or mode})",
+            )
+    except Exception as exc:
+        logger.warning("resolve_request_model_full_pref_lookup_failed: %s", exc)
+
+    # 3) Fall through to auto-select (no stored profile).
+    manager: Optional[ModelManager] = getattr(
+        request.app.state, "model_manager", None,
+    )
+    if manager is None:
+        manager = ModelManager()
+        request.app.state.model_manager = manager
+
+    try:
+        tag, reason = await manager.auto_select(mode=mode, effort=effort)
+        return tag, None, reason
+    except Exception as exc:
+        logger.warning("resolve_request_model_auto_select_failed: %s", exc)
+        return None, None, "fallback to OLLAMA_MODEL"
+
+
 def header_client_id(headers) -> Optional[str]:
     """Extract X-Client-Id from a Starlette/FastAPI Headers object."""
     cid = headers.get("X-Client-Id") or headers.get("x-client-id")
