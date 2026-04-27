@@ -130,6 +130,7 @@
         _launchView(sessionId, scopePreview) {
             this._activeSessionId = sessionId;
             this._eventLog = [];
+            this._seenEventIds = new Set();
 
             const tpl = document.getElementById('consortiumViewTemplate');
             const messagesArea = document.getElementById('messagesArea');
@@ -216,6 +217,21 @@
         _renderEvent(event) {
             if (!this._activeViewEl) return;
             const t = String(event.type || '');
+            // v6 client-side dedup — a flaky reconnect could deliver
+            // the same event_id twice (snapshot + cache replay). Keep
+            // a per-session set; cap so it doesn't grow unbounded.
+            if (event.event_id) {
+                if (!this._seenEventIds) this._seenEventIds = new Set();
+                if (this._seenEventIds.has(event.event_id)) return;
+                this._seenEventIds.add(event.event_id);
+                if (this._seenEventIds.size > 1000) {
+                    // Evict the oldest by recreating the set with the
+                    // most recent ~500 entries.
+                    this._seenEventIds = new Set(
+                        Array.from(this._seenEventIds).slice(-500),
+                    );
+                }
+            }
             this._eventLog.push(event);
 
             if (t === 'consortium_snapshot') {
@@ -233,7 +249,20 @@
                 return;
             }
             if (t === 'consortium_gate') {
-                this._renderGate(event.gate || {});
+                const gate = event.gate || {};
+                this._renderGate(gate);
+                // v6 — reflect gate verdict back onto the phase chip so
+                // a failed gate doesn't leave a green ✓ next to red
+                // findings. Phase chip stays "completed" but gains a
+                // `data-gate-status` for CSS to render an amber/red dot.
+                if (gate.phase) {
+                    const node = this._activeViewEl.querySelector(
+                        `.consortium-phase[data-phase="${gate.phase}"]`,
+                    );
+                    if (node) {
+                        node.dataset.gateStatus = gate.status || '';
+                    }
+                }
                 return;
             }
             if (t === 'consortium_completed') {

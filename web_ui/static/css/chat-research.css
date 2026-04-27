@@ -4133,6 +4133,19 @@ body.dark-mode .depth-menu {
     border-color: rgba(220, 110, 110, 0.5);
     background: rgba(220, 110, 110, 0.05);
 }
+/* v6 — gate verdict overrides the chip border when the gate flagged
+   findings, even if the phase itself completed without an exception.
+   Keeps the user from missing that "DONE" doesn't always mean "good". */
+.consortium-phase[data-gate-status="failed"] {
+    border-color: rgba(220, 110, 110, 0.7);
+    background: rgba(220, 110, 110, 0.07);
+}
+.consortium-phase[data-gate-status="failed"] .consortium-phase-icon { color: #ff8a8a; }
+.consortium-phase[data-gate-status="passed_warn"] {
+    border-color: rgba(255, 200, 96, 0.55);
+    background: rgba(255, 200, 96, 0.05);
+}
+.consortium-phase[data-gate-status="passed_warn"] .consortium-phase-icon { color: #ffc860; }
 .consortium-phase-icon {
     color: rgba(125, 207, 255, 1);
     font-size: 11px;
