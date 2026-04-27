@@ -63,3 +63,15 @@ htmlcov/
 
 # Docker
 docker-compose.override.yml
+
+# Code Intelligence — runtime artifacts (regenerated each run)
+document_processor/code_intelligence/traces/
+document_processor/code_intelligence/cache/
+document_processor/code_intelligence/extensions/__pycache__/
+
+# pytest + coverage + ruff
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
