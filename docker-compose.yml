@@ -65,6 +65,15 @@ services:
       - OLLAMA_MODEL=qwen2.5:7b
       - OLLAMA_AUTO_PULL=true
 
+      # User-uploaded GGUF custom models (More settings → AI Model →
+      # Upload tab). Both the app container *and* the ollama container
+      # mount the `custom-models-data` volume at this path so Ollama's
+      # /api/create FROM-directive can read the .gguf files the app
+      # writes there. Capped at MAX_MODEL_UPLOAD_SIZE_GB to avoid the
+      # uploader filling the host disk.
+      - CUSTOM_MODELS_DIR=/data/custom_models
+      - MAX_MODEL_UPLOAD_SIZE_GB=${MAX_MODEL_UPLOAD_SIZE_GB:-50}
+
       # NLLB Translation Model
       - NLLB_MODEL_PATH=/models/nllb-200-distilled-600M-ct2
       - NLLB_DEVICE=cuda
@@ -125,6 +134,11 @@ services:
       - ./data:/data/documents
       - ./models:/models:ro
       - lancedb-data:/data/vectors
+      # User-uploaded custom GGUF models — written here by the
+      # /api/models/upload route, read back by the Ollama container
+      # via the same shared volume below. Read-write because the app
+      # writes new uploads + sidecar .meta.json files.
+      - custom-models-data:/data/custom_models
       # Bind-mount source tree so host edits are immediately live in both
       # replicas — no `docker cp` + restart cycle, no drift between app-1/app-2,
       # and nothing is lost when containers are recreated. Safe for dev;
@@ -238,6 +252,11 @@ services:
       - OLLAMA_HOST=0.0.0.0
     volumes:
       - ollama-data:/root/.ollama
+      # Shared with the app container so Ollama's /api/create can read
+      # GGUF files the app writes during user uploads. Read-only is
+      # enough — Ollama only reads the FROM path; copies bytes into
+      # its own ollama-data store.
+      - custom-models-data:/data/custom_models:ro
     deploy:
       resources:
         limits:
@@ -297,6 +316,10 @@ volumes:
   ollama-data:
   lancedb-data:
   redis-data:  # P2.2 — durable Redis state across `docker compose down`
+  # User-uploaded GGUF custom models (More settings → AI Model →
+  # Upload). Shared between app + ollama containers so the daemon can
+  # read FROM-paths the app writes. Survives compose down/up.
+  custom-models-data:
 
 networks:
   docprocessor-network:
