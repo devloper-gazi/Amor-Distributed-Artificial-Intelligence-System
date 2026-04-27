@@ -241,10 +241,28 @@ async def list_models(
 
     installed_tags = {m.tag.lower() for m in installed}
 
+    # v4 — fetch hardware once so we can decorate every card with
+    # VRAM-fit info ("fits" / "tight" / "too_big" / "cpu" / "unknown").
+    hw = await manager.detect_hardware()
+    vram_total = hw.get("vram_total_gb")
+    vram_free = hw.get("vram_free_gb")
+
+    # v4 — bring usage counts into the same payload so cards render
+    # "used N×" footers without a second round-trip on first paint.
+    try:
+        usage_map = await chat_store.get_model_usage(
+            user_id=user_id, client_id=client_id,
+        )
+    except Exception as exc:
+        logger.warning("model_list_usage_lookup_failed: %s", exc)
+        usage_map = {}
+
     # Decorate installed entries.
     installed_payload: list[dict[str, Any]] = []
     for m in installed:
         spec = m.spec
+        vram_req = ModelManager.estimate_vram_gb(m)
+        usage = usage_map.get(m.tag, {}) or {}
         installed_payload.append({
             "tag": m.tag,
             "display_name": m.display_name or m.tag,
@@ -257,6 +275,13 @@ async def list_models(
             "source": "gguf_upload" if m.is_custom else (
                 "ollama_registry" if spec else "ollama_local"
             ),
+            "vram_required_gb": vram_req,
+            "fit": ModelManager.fit_classification(vram_req, vram_total, vram_free),
+            "usage": {
+                "count_total": int(usage.get("count_total") or 0),
+                "by_mode": dict(usage.get("by_mode") or {}),
+                "last_used_at": usage.get("last_used_at"),
+            },
         })
 
     # Catalogue entries — anything from CODE_MODEL_CATALOGUE the user
@@ -265,6 +290,9 @@ async def list_models(
     catalogue_payload: list[dict[str, Any]] = []
     for spec in CODE_MODEL_CATALOGUE:
         is_installed = spec.ollama_tag.lower() in installed_tags
+        # For pullable catalogue entries we only have spec.vram_gb (the
+        # documented Q4_K_M footprint) — that's enough for a fit hint.
+        vram_req = float(spec.vram_gb) if spec.vram_gb else None
         catalogue_payload.append({
             "tag": spec.ollama_tag,
             "display_name": spec.display_name,
@@ -273,6 +301,8 @@ async def list_models(
             "is_auto_selected": (auto_tag or "").lower() == spec.ollama_tag.lower(),
             "spec": spec.to_dict(),
             "source": "ollama_registry",
+            "vram_required_gb": vram_req,
+            "fit": ModelManager.fit_classification(vram_req, vram_total, vram_free),
         })
 
     return {
@@ -291,7 +321,32 @@ async def list_models(
             "tag": auto_tag,
             "reason": auto_reason,
         },
+        # v4 — surface the hardware envelope alongside the model list so
+        # the UI can paint fit-badges and the Hardware panel from a single
+        # round-trip on first open.
+        "hardware": hw,
     }
+
+
+# ─── 15. POST /api/models/warmup ───────────────────────────────────────────
+
+
+class WarmupRequest(BaseModel):
+    tag: str = Field(..., min_length=1, max_length=160)
+
+
+@router.post("/warmup")
+async def warmup_model_endpoint(
+    body: WarmupRequest,
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Pre-load a model into VRAM (Ollama keep_alive) — the picker calls
+    this when the user clicks Save Profile so the next real request
+    doesn't pay the cold-load tax."""
+    manager = _get_manager(request)
+    ok = await manager.warmup_model(body.tag.strip())
+    return {"ok": bool(ok), "tag": body.tag.strip()}
 
 
 async def _ollama_reachable(manager: ModelManager) -> bool:
@@ -377,6 +432,18 @@ async def set_preference(
         display_name=body.display_name,
         profile=profile_dict,
     )
+    # v4 — bump the usage counter so the UI can show "used N×" and the
+    # smart-recommendation engine has data to work from.
+    try:
+        await chat_store.increment_model_usage(
+            user_id=user_id,
+            client_id=client_id,
+            tag=body.model_tag.strip(),
+            mode=mode_n,
+            kind="preference",
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.debug("model_usage_increment_failed: %s", exc)
     logger.info(
         "model_preference_set user_scoped=%s mode=%s tag=%s profile_keys=%d",
         bool(user_id), mode_n, body.model_tag,
@@ -388,6 +455,70 @@ async def set_preference(
         "model_tag": body.model_tag,
         "profile": profile_dict or {},
     }
+
+
+# ─── 16. GET /api/models/usage ─────────────────────────────────────────────
+
+
+@router.get("/usage")
+async def get_usage(
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Return per-tag usage stats for this user/client.
+
+    Used by the picker to render a small "used 47×" footer line on
+    every installed card and feed the smart-recommendation engine."""
+    client_id = _require_client_id(x_client_id)
+    user_id = user.id if user else None
+    usage = await chat_store.get_model_usage(
+        user_id=user_id, client_id=client_id,
+    )
+    return {"usage": usage}
+
+
+# ─── 17. POST /api/models/recommend ────────────────────────────────────────
+
+
+class RecommendRequest(BaseModel):
+    """Body for ``POST /recommend`` — prompt → suggested model."""
+
+    prompt: str = Field(..., min_length=1, max_length=8000)
+    mode: str = Field("__all__", max_length=20)
+
+
+@router.post("/recommend")
+async def recommend_model(
+    body: RecommendRequest,
+    request: Request,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """
+    Recommend an installed model for the given prompt + mode.
+
+    Pure heuristic — keyword matching against catalogue strengths,
+    layered with VRAM-fit scoring and the user's prior usage. The UI
+    calls this on a debounced timer as the user types in any chat
+    input and surfaces the result as an inline "Suggested: <model>"
+    banner inside the picker.
+    """
+    client_id = _require_client_id(x_client_id)
+    user_id = user.id if user else None
+    mode_n = _normalize_mode(body.mode)
+
+    manager = _get_manager(request)
+    try:
+        usage = await chat_store.get_model_usage(
+            user_id=user_id, client_id=client_id,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.debug("recommend_usage_lookup_failed: %s", exc)
+        usage = {}
+
+    return await manager.recommend_for_prompt(
+        body.prompt, mode=mode_n, usage=usage,
+    )
 
 
 # ─── 9. GET /api/models/search ───────────────────────────────────────────────

@@ -261,6 +261,20 @@ class ChatStore:
         await routing.create_index([("user_id", 1)], unique=True, sparse=True)
         await routing.create_index([("client_id", 1)], unique=True, sparse=True)
 
+        # v4 — Per-(user/client, tag, mode) usage counters. One doc per
+        # tuple, incremented every time a model is bound as a preference
+        # or actively dispatched. The picker reads aggregates to render
+        # "used X×" badges + drives smart-recommendation heuristics.
+        usage = db["user_model_usage"]
+        await usage.create_index(
+            [("user_id", 1), ("tag", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+        await usage.create_index(
+            [("client_id", 1), ("tag", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+
         self._indexes_ready = True
         logger.info("chat_store_indexes_ready")
 
@@ -591,6 +605,113 @@ class ChatStore:
         except Exception as exc:
             logger.warning("delete_model_routing_failed: %s", exc)
             return False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # v4 — Per-tag usage counters
+    #
+    # Incremented every time a model is bound as a preference or
+    # actively dispatched. The picker reads these to:
+    #   · render a "used 47×" badge on each installed model card
+    #   · feed the smart-recommendation engine ("you mostly use X for Y")
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _usage_filter(
+        user_id: Optional[str], client_id: str,
+        tag: str, mode: str,
+    ) -> Dict[str, Any]:
+        if user_id:
+            return {"user_id": str(user_id), "tag": tag, "mode": mode}
+        return {"user_id": None, "client_id": client_id,
+                "tag": tag, "mode": mode}
+
+    async def increment_model_usage(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        tag: str,
+        mode: str = "__all__",
+        kind: str = "dispatch",
+    ) -> None:
+        """Bump the (tag, mode) counter by 1 and stamp ``last_used_at``.
+
+        ``kind`` is a short string (``"dispatch"`` for a real LLM call,
+        ``"preference"`` for a Save Profile, ``"pull"`` for a download).
+        Distinct kinds get their own per-doc subcounter under
+        ``counts.<kind>`` so the UI can distinguish "47× dispatch · 3× pull".
+        """
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_usage"]
+        flt = self._usage_filter(user_id, client_id, tag, mode)
+        now = _utcnow()
+        try:
+            await _write_with_retry(
+                lambda: coll.update_one(
+                    flt,
+                    {
+                        "$inc": {
+                            "count_total": 1,
+                            f"counts.{kind}": 1,
+                        },
+                        "$set": {"last_used_at": now, "last_kind": kind},
+                        "$setOnInsert": {**flt, "first_used_at": now},
+                    },
+                    upsert=True,
+                ),
+                op_name="increment_model_usage",
+            )
+        except Exception as exc:
+            logger.debug("increment_model_usage_failed: %s", exc)
+
+    async def get_model_usage(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return ``{tag: {count_total, counts, last_used_at, …}}`` —
+        aggregated across all modes for this user/client."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_usage"]
+        flt: Dict[str, Any] = (
+            {"user_id": str(user_id)} if user_id
+            else {"user_id": None, "client_id": client_id}
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        try:
+            async for doc in coll.find(flt):
+                tag = str(doc.get("tag") or "")
+                if not tag:
+                    continue
+                bucket = out.setdefault(tag, {
+                    "count_total": 0,
+                    "counts": {},
+                    "by_mode": {},
+                    "first_used_at": None,
+                    "last_used_at": None,
+                })
+                bucket["count_total"] += int(doc.get("count_total") or 0)
+                for k, v in (doc.get("counts") or {}).items():
+                    bucket["counts"][k] = bucket["counts"].get(k, 0) + int(v)
+                mode = str(doc.get("mode") or self.PREFERENCE_MODE_ALL)
+                bucket["by_mode"][mode] = (
+                    bucket["by_mode"].get(mode, 0) + int(doc.get("count_total") or 0)
+                )
+                # Keep the most-recent timestamps.
+                last = doc.get("last_used_at")
+                first = doc.get("first_used_at")
+                if last and (bucket["last_used_at"] is None
+                             or last > bucket["last_used_at"]):
+                    bucket["last_used_at"] = last
+                if first and (bucket["first_used_at"] is None
+                              or first < bucket["first_used_at"]):
+                    bucket["first_used_at"] = first
+        except Exception as exc:
+            logger.warning("get_model_usage_failed: %s", exc)
+        return out
 
     async def create_session(
         self,

@@ -658,6 +658,253 @@ class ModelManager:
                 )
         return out
 
+    # ── 8a. SMART RECOMMENDATION (v4) ────────────────────────────────────
+
+    # Keywords → role hints; used by recommend_for_prompt to bias the
+    # mode away from a pure "research / thinking / code" tag and onto
+    # specific strengths (debugging, agentic, math, etc.). Tuned by hand
+    # — small enough to be readable, broad enough to land most prompts.
+    _RECOMMEND_KEYWORDS: dict[str, list[str]] = {
+        "code generation": [
+            "implement", "write a function", "build a", "code", "module",
+            "class ", "def ", "function", "script", "snippet", "endpoint",
+        ],
+        "debugging": [
+            "fix", "debug", "error", "exception", "traceback", "stack trace",
+            "broken", "doesn't work", "doesnt work", "why isn't",
+        ],
+        "explanation": [
+            "explain", "what does", "how does", "describe", "summarize",
+            "summarise", "tldr", "tl;dr", "overview",
+        ],
+        "math": [
+            "calculate", "compute", "math", "equation", "integral",
+            "derivative", "matrix", "vector", "probability",
+        ],
+        "agentic loops": [
+            "agent", "loop until", "iterate until", "self-correct",
+            "reasoning chain", "step by step",
+        ],
+        "multi-file editing": [
+            "across files", "refactor the project", "whole codebase",
+            "every occurrence", "global rename",
+        ],
+        "planning": [
+            "plan", "outline", "roadmap", "design", "blueprint", "approach",
+        ],
+        "fast inference": [
+            "quick", "fast", "short", "one-liner", "snappy",
+        ],
+    }
+
+    async def recommend_for_prompt(
+        self,
+        prompt: str,
+        *,
+        mode: str = "__all__",
+        usage: dict[str, Any] | None = None,
+        hardware: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Recommend a model for ``prompt``. Pure heuristic — no LLM call.
+
+        Strategy:
+          1. Score every installed model on:
+              · keyword → strength match (40% weight)
+              · mode-baseline strength match (15%)
+              · SWE-bench / HumanEval (25%)
+              · VRAM fit on the detected GPU (15%)
+              · usage history (5% — favour the user's regulars)
+          2. Return the top candidate + its score + a short reason
+             string suitable for an inline banner ("DeepSeek-Coder
+             6.7B · best fit for debugging on this GPU").
+        """
+        installed = await self.list_installed()
+        if not installed:
+            tag, reason = await self.auto_select(mode=mode)
+            return {
+                "tag": tag, "reason": reason, "score": 0,
+                "candidates": [],
+            }
+
+        # Detect prompt strengths via keyword sweep.
+        prompt_lc = (prompt or "").lower()
+        prompt_strengths: set[str] = set()
+        for strength, kws in self._RECOMMEND_KEYWORDS.items():
+            if any(kw in prompt_lc for kw in kws):
+                prompt_strengths.add(strength)
+
+        # Mode baseline strengths (research/thinking/code).
+        mode_baseline = set(MODE_REQUIREMENTS.get(mode, MODE_REQUIREMENTS["__all__"]))
+
+        if hardware is None:
+            try:
+                hardware = await self.detect_hardware()
+            except Exception:  # pragma: no cover
+                hardware = {}
+        vram_total = (hardware or {}).get("vram_total_gb")
+        vram_free = (hardware or {}).get("vram_free_gb")
+
+        usage_map = usage or {}
+
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for m in installed:
+            spec = m.spec
+            if spec is None:
+                continue
+            score = 0.0
+            # 1) keyword strength match — 40%
+            kw_match = sum(1 for s in prompt_strengths if s in spec.strengths)
+            if prompt_strengths:
+                score += (kw_match / max(len(prompt_strengths), 1)) * 40
+            # 2) mode baseline match — 15%
+            base_match = sum(1 for s in mode_baseline if s in spec.strengths)
+            if mode_baseline:
+                score += (base_match / max(len(mode_baseline), 1)) * 15
+            # 3) benchmarks — 25% (SWE-bench dominates code, HumanEval bonus)
+            score += min(spec.swebench_pct / 100.0, 1.0) * 18
+            score += min(spec.humaneval_pct / 100.0, 1.0) * 7
+            # 4) VRAM fit — 15% (penalise too-big, reward fits)
+            vram_req = self.estimate_vram_gb(m)
+            fit = self.fit_classification(vram_req, vram_total, vram_free)
+            score += {"fits": 15, "tight": 8, "cpu": 5,
+                      "unknown": 5, "too_big": -10}.get(fit, 0)
+            # 5) usage signal — 5% (log-scale; first use ≈ 1 point)
+            count = int((usage_map.get(m.tag) or {}).get("count_total") or 0)
+            if count > 0:
+                import math  # noqa: PLC0415
+                score += min(math.log1p(count) * 1.5, 5)
+            scored.append((score, {
+                "tag": m.tag,
+                "display_name": m.display_name or m.tag,
+                "score": round(score, 2),
+                "strengths_matched": [
+                    s for s in prompt_strengths if s in spec.strengths
+                ],
+                "fit": fit,
+                "vram_required_gb": vram_req,
+                "usage_count": count,
+            }))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if not scored:
+            tag, reason = await self.auto_select(mode=mode)
+            return {"tag": tag, "reason": reason, "score": 0, "candidates": []}
+
+        top_score, top = scored[0]
+        # Build a short, human-readable reason.
+        bits: list[str] = []
+        if top["strengths_matched"]:
+            bits.append("matches " + ", ".join(top["strengths_matched"][:2]))
+        if top["fit"] == "fits":
+            bits.append("fits comfortably")
+        elif top["fit"] == "tight":
+            bits.append("fits — tight on VRAM")
+        elif top["fit"] == "too_big":
+            bits.append("⚠ may not fit on this GPU")
+        if top["usage_count"] > 5:
+            bits.append(f"used {top['usage_count']}× before")
+        reason = " · ".join(bits) or "best-scored installed model"
+
+        return {
+            "tag": top["tag"],
+            "display_name": top["display_name"],
+            "score": round(top_score, 2),
+            "reason": reason,
+            "candidates": [c for _, c in scored[:5]],
+            "detected_strengths": sorted(prompt_strengths),
+        }
+
+    # ── 8b. VRAM FIT + WARMUP (v4) ───────────────────────────────────────
+
+    @staticmethod
+    def estimate_vram_gb(
+        model: dict[str, Any] | InstalledModel,
+    ) -> float | None:
+        """Best-effort VRAM estimate (in GB) for a tag.
+
+        Order:
+          1. ``size_bytes`` from Ollama (most accurate — disk size ≈ Q4
+             VRAM footprint within ±15%).
+          2. ``spec.vram_gb`` from the curated catalogue.
+          3. None — caller renders an "unknown" badge.
+        """
+        # Accept either an InstalledModel dataclass or a dict envelope.
+        if isinstance(model, InstalledModel):
+            size_bytes = model.size_bytes
+            spec = model.spec
+        else:
+            size_bytes = int(model.get("size_bytes") or 0)
+            spec_dict = model.get("spec") or {}
+            spec = spec_dict if spec_dict else None  # may be a dict, not a ModelSpec
+
+        if size_bytes:
+            return round(size_bytes / 1024**3, 2)
+        if spec is None:
+            return None
+        # Allow either a ModelSpec instance or a plain dict.
+        vram = getattr(spec, "vram_gb", None)
+        if vram is None and isinstance(spec, dict):
+            vram = spec.get("vram_gb")
+        try:
+            return float(vram) if vram is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def fit_classification(
+        vram_required_gb: float | None,
+        vram_total_gb: float | None,
+        vram_free_gb: float | None = None,
+    ) -> str:
+        """Classify how comfortably a model will fit on the detected GPU.
+
+        Returns one of: ``"unknown"``, ``"fits"`` (≤ 70% of free / 60%
+        of total), ``"tight"`` (≤ 100% of total), ``"too_big"`` (above).
+        Tuned to be conservative — KV cache + context overhead can add
+        20-30% on top of the model's static footprint.
+        """
+        if vram_required_gb is None:
+            return "unknown"
+        # No GPU detected → CPU-only (renders as "cpu" so the UI can
+        # use a different colour; not technically a "fits/tight" call).
+        if not vram_total_gb:
+            return "cpu"
+        # Prefer free VRAM when we have it (live state); else 60% of total.
+        budget = vram_free_gb if vram_free_gb is not None else (vram_total_gb * 0.85)
+        if vram_required_gb <= budget * 0.85:
+            return "fits"
+        if vram_required_gb <= vram_total_gb:
+            return "tight"
+        return "too_big"
+
+    async def warmup_model(self, tag: str) -> bool:
+        """
+        Pre-load a model into VRAM by issuing a 1-token generation with
+        ``keep_alive=10m``. Idempotent — Ollama already keeps loaded
+        models hot, so a second call is essentially free.
+
+        Called by the picker when the user clicks Save Profile so the
+        first real request doesn't pay the 5-30s cold-load cost.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/generate",
+                    json={
+                        "model": tag,
+                        "prompt": "",
+                        "stream": False,
+                        "keep_alive": "10m",
+                        "options": {"num_predict": 1},
+                    },
+                )
+                resp.raise_for_status()
+            return True
+        except Exception as exc:
+            logger.warning("model_warmup_failed tag=%s err=%s", tag, exc)
+            return False
+
     # ── 9. PROFILE → OLLAMA OPTIONS ──────────────────────────────────────
 
     @staticmethod
@@ -742,6 +989,11 @@ class ModelManager:
         import time as _time  # noqa: PLC0415
         started = _time.time()
         tokens = 0
+        # v4 — live tokens-per-second telemetry. We emit every chunk
+        # but only attach a tok/s estimate every 8 chunks so the UI
+        # doesn't flicker on each token (and the JS doesn't have to
+        # smooth a noisy signal).
+        last_telemetry_token = 0
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream(
@@ -766,13 +1018,34 @@ class ModelManager:
                         delta = chunk.get("response") or ""
                         if delta:
                             tokens += 1
-                            yield {"type": "test_chunk", "delta": delta}
+                            elapsed = max(_time.time() - started, 1e-3)
+                            chunk_evt: dict[str, Any] = {
+                                "type": "test_chunk",
+                                "delta": delta,
+                                "tokens": tokens,
+                            }
+                            # Telemetry frame every 8 tokens.
+                            if tokens - last_telemetry_token >= 8:
+                                chunk_evt["tokens_per_second"] = round(
+                                    tokens / elapsed, 2,
+                                )
+                                chunk_evt["elapsed_ms"] = int(elapsed * 1000)
+                                last_telemetry_token = tokens
+                            yield chunk_evt
                         if chunk.get("done"):
                             break
+            elapsed_ms = int((_time.time() - started) * 1000)
             yield {
                 "type": "test_done",
-                "elapsed_ms": int((_time.time() - started) * 1000),
+                "elapsed_ms": elapsed_ms,
                 "tokens": tokens,
+                "tokens_per_second": round(
+                    tokens / max(elapsed_ms / 1000.0, 1e-3), 2,
+                ) if tokens else 0.0,
+                # Pass through Ollama's per-eval timing if the daemon
+                # reported it (more accurate than wall-clock).
+                "eval_count": chunk.get("eval_count"),
+                "eval_duration_ns": chunk.get("eval_duration"),
             }
         except Exception as exc:
             yield {"type": "test_error", "error": str(exc)}
