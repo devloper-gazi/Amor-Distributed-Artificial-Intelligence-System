@@ -367,6 +367,9 @@ async def start_think(
         # phases so a /cancel call can stop the pipeline without having
         # to find the asyncio.Task object directly.
         "cancel_requested": False,
+        # Optional Ollama tag override (More settings → AI Model).
+        # Empty / None → engine's llm_call uses OLLAMA_MODEL.
+        "preferred_model": payload.preferred_model,
     }
     _sessions[session_id] = session
     await _persist(session_id, session)
@@ -398,6 +401,18 @@ async def _run_session(session_id: str) -> None:
     session = _sessions.get(session_id)
     if session is None:
         return
+
+    # Optional Ollama tag override. We set the local-AI ContextVar so
+    # every nested call_ollama() uses the override automatically — the
+    # ThinkingEngine itself is LLM-agnostic and its llm_call closure
+    # forwards to call_ollama unchanged.
+    if session.get("preferred_model"):
+        try:
+            from .local_ai_routes_simple import set_active_model
+            set_active_model(session["preferred_model"])
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("preferred_model_contextvar_set_failed: %s", _exc)
+
     llm = _pick_llm(session["provider"])
 
     async def on_event(event: Dict[str, Any]) -> None:

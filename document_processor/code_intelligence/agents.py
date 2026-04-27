@@ -1,0 +1,573 @@
+"""
+Five specialist agents for the Code Intelligence pipeline.
+
+Every agent is an async callable wrapper around the injected ``llm_call``
+function. Inputs come from the engine's ``AgentContext`` dataclass;
+outputs are typed dataclasses the engine consumes downstream. None of
+these classes import anthropic, openai, or any other vendor SDK — the
+``llm_call`` is the sole bridge to a model and is injected by the
+engine, exactly as ThinkingEngine does.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from . import prompts as P
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared types
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Same shape as ThinkingEngine's LLMCall: prompt, system, max_tokens → str.
+LLMCall = Callable[[str, str | None, int], Awaitable[str]]
+
+
+@dataclass
+class AgentContext:
+    """
+    Bundle of every input an agent might want. Plumbed end-to-end by
+    the engine; agents only read the fields they care about.
+    """
+
+    user_prompt: str
+    code_context: str | None = None
+    triage: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
+    code: str | None = None
+    tests: str | None = None
+    language: str = "python"
+    execution_feedback: str | None = None
+    static_feedback: str | None = None
+    test_failure: str | None = None
+    debug_iteration: int = 0
+
+
+@dataclass
+class AgentOutput:
+    """Generic agent return shape."""
+
+    raw: str = ""  # Untouched LLM output, for debugging
+    data: dict[str, Any] = field(default_factory=dict)
+    code: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Output parsing helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE)
+_CODE_FENCE_RE = re.compile(r"```([a-zA-Z0-9_+\-#]*)\s*\n([\s\S]*?)```", re.MULTILINE)
+
+
+def _extract_json(raw: str) -> dict[str, Any]:
+    """
+    Extract a JSON object from a model reply. Mirrors the helper in
+    thinking/engine.py. Falls back through fenced JSON → widest braces →
+    trailing-comma cleanup before giving up.
+    """
+    if not raw:
+        raise ValueError("empty model output")
+
+    stripped = raw.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    fence_match = _JSON_FENCE_RE.search(stripped)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    first = stripped.find("{")
+    last = stripped.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        candidate = stripped[first : last + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            cleaned = re.sub(r",(\s*[}\]])", r"\1", candidate)
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"could not parse model JSON: {exc}") from exc
+
+    raise ValueError("no JSON object found in model output")
+
+
+def _extract_code_and_meta(raw: str) -> dict[str, Any]:
+    """
+    Pull a code fence and a JSON metadata fence out of an LLM reply.
+
+    Tolerant of:
+      • Models that omit the JSON fence — `metadata` ends up empty.
+      • Models that swap fence order — code first, metadata second is
+        the spec, but we accept either.
+      • Models that emit only one fence (just code) — metadata empty.
+    """
+    code = ""
+    language = ""
+    metadata: dict[str, Any] = {}
+
+    fences = list(_CODE_FENCE_RE.finditer(raw))
+    json_blocks: list[dict[str, Any]] = []
+    code_blocks: list[dict[str, Any]] = []
+    for m in fences:
+        lang = (m.group(1) or "").strip().lower()
+        body = m.group(2).rstrip()
+        if lang in ("json", "json5"):
+            try:
+                json_blocks.append(json.loads(body))
+            except json.JSONDecodeError:
+                # Try cleaning trailing commas.
+                cleaned = re.sub(r",(\s*[}\]])", r"\1", body)
+                try:
+                    json_blocks.append(json.loads(cleaned))
+                except json.JSONDecodeError:
+                    pass
+        else:
+            code_blocks.append({"lang": lang, "body": body})
+
+    if code_blocks:
+        # Prefer the longest code block as the "main" implementation.
+        primary = max(code_blocks, key=lambda b: len(b["body"]))
+        code = primary["body"]
+        language = primary["lang"]
+    if json_blocks:
+        metadata = json_blocks[0]
+
+    return {
+        "code": code,
+        "language": language,
+        "metadata": metadata,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Base agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _BaseAgent:
+    """Common plumbing for every specialist."""
+
+    role: str = "base"
+    system_prompt: str = ""
+
+    def __init__(self, llm_call: LLMCall, max_tokens: int = 2000):
+        self.llm_call = llm_call
+        self.max_tokens = max_tokens
+
+    async def _call(self, prompt: str) -> str:
+        """Single LLM call with this agent's persona + token budget."""
+        raw = await self.llm_call(
+            prompt,
+            self.system_prompt,
+            self.max_tokens,
+        )
+        return raw or ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1 — Planner
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class PlannerAgent(_BaseAgent):
+    role = "planner"
+    system_prompt = P.PLANNER_SYSTEM_PROMPT
+
+    async def run(self, ctx: AgentContext) -> AgentOutput:
+        prompt = P.planner_prompt(
+            ctx.user_prompt,
+            code_context=ctx.code_context,
+            triage=ctx.triage,
+        )
+        raw = await self._call(prompt)
+        try:
+            data = _extract_json(raw)
+        except ValueError as exc:
+            logger.warning("planner_json_parse_failed: %s", exc)
+            return AgentOutput(raw=raw, error=str(exc))
+
+        # Clamp lists / strings to keep one rogue plan from blowing up
+        # the UI or downstream prompts.
+        plan_steps_raw = data.get("plan") if isinstance(data.get("plan"), list) else []
+        plan_steps_raw = plan_steps_raw or []  # narrow Optional → list for pyright
+        plan_steps: list[dict[str, Any]] = []
+        for i, step in enumerate(plan_steps_raw[:20], start=1):
+            if not isinstance(step, dict):
+                continue
+            plan_steps.append(
+                {
+                    "step": int(step.get("step", i)),
+                    "action": str(step.get("action", ""))[:200],
+                    "agent": _enum(
+                        step.get("agent"),
+                        {"coder", "tester", "debugger", "critic", "planner"},
+                        "coder",
+                    ),
+                    "description": str(step.get("description", ""))[:600],
+                    "depends_on": [
+                        int(d)
+                        for d in (step.get("depends_on") or [])
+                        if isinstance(d, (int, str)) and str(d).isdigit()
+                    ][:5],
+                }
+            )
+
+        normalized: dict[str, Any] = {
+            "task_type": _enum(
+                data.get("task_type"),
+                {
+                    "generation",
+                    "debugging",
+                    "review",
+                    "refactoring",
+                    "explanation",
+                    "architecture",
+                    "optimization",
+                    "testing",
+                },
+                "generation",
+            ),
+            "language": _enum(
+                data.get("language"),
+                {
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "go",
+                    "rust",
+                    "cpp",
+                    "java",
+                    "bash",
+                    "other",
+                },
+                "python",
+            ),
+            "framework": str(data.get("framework") or "")[:80] or None,
+            "complexity": _enum(
+                data.get("complexity"),
+                {"trivial", "simple", "moderate", "complex", "expert"},
+                "moderate",
+            ),
+            "title": str(data.get("title") or "Code task")[:100],
+            "plan": plan_steps,
+            "context_needed": [str(c)[:200] for c in (data.get("context_needed") or [])][:10],
+            "risks": [str(r)[:300] for r in (data.get("risks") or [])][:10],
+            "test_strategy": _enum(
+                data.get("test_strategy"),
+                {"unit", "integration", "e2e", "none"},
+                "unit",
+            ),
+            "deliverable_type": _enum(
+                data.get("deliverable_type"),
+                {
+                    "code_file",
+                    "code_snippet",
+                    "explanation",
+                    "diff",
+                    "test_suite",
+                    "architecture_doc",
+                },
+                "code_snippet",
+            ),
+        }
+        return AgentOutput(raw=raw, data=normalized)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2 — Coder
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CoderAgent(_BaseAgent):
+    role = "coder"
+    system_prompt = P.CODER_SYSTEM_PROMPT
+
+    async def run(self, ctx: AgentContext) -> AgentOutput:
+        plan = ctx.plan or {}
+        prompt = P.coder_prompt(
+            ctx.user_prompt,
+            plan=plan,
+            code_context=ctx.code_context,
+        )
+        raw = await self._call(prompt)
+        parsed = _extract_code_and_meta(raw)
+        if not parsed["code"]:
+            return AgentOutput(
+                raw=raw,
+                error="Coder produced no code fence",
+            )
+        meta = parsed["metadata"] or {}
+        return AgentOutput(
+            raw=raw,
+            code=parsed["code"],
+            data={
+                "language": (
+                    parsed["language"]
+                    or str(meta.get("language") or "")
+                    or plan.get("language", "python")
+                ),
+                "filename": str(meta.get("filename") or "")[:120] or None,
+                "dependencies": [str(d)[:80] for d in (meta.get("dependencies") or [])][:20],
+                "changes": str(meta.get("changes") or "")[:400],
+            },
+            metadata=meta,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3 — Tester
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TesterAgent(_BaseAgent):
+    role = "tester"
+    system_prompt = P.TESTER_SYSTEM_PROMPT
+
+    async def run(self, ctx: AgentContext) -> AgentOutput:
+        if not ctx.code:
+            return AgentOutput(error="No implementation to test")
+        prompt = P.tester_prompt(
+            ctx.user_prompt,
+            code=ctx.code,
+            plan=ctx.plan or {},
+        )
+        raw = await self._call(prompt)
+        parsed = _extract_code_and_meta(raw)
+        if not parsed["code"]:
+            return AgentOutput(
+                raw=raw,
+                error="Tester produced no test code",
+            )
+        meta = parsed["metadata"] or {}
+        return AgentOutput(
+            raw=raw,
+            code=parsed["code"],
+            data={
+                "language": (parsed["language"] or str(meta.get("language") or "") or ctx.language),
+                "framework": str(meta.get("framework") or "")[:80],
+                "test_count": _clamp_int(
+                    meta.get("test_count"),
+                    0,
+                    10_000,
+                    0,
+                ),
+                "coverage_estimate": str(meta.get("coverage_estimate") or "")[:80],
+                "critical_cases": [str(c)[:200] for c in (meta.get("critical_cases") or [])][:10],
+            },
+            metadata=meta,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4 — Debugger
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class DebuggerAgent(_BaseAgent):
+    role = "debugger"
+    system_prompt = P.DEBUGGER_SYSTEM_PROMPT
+
+    async def run(self, ctx: AgentContext) -> AgentOutput:
+        if not ctx.code:
+            return AgentOutput(error="No code to debug")
+        prompt = P.debugger_prompt(
+            ctx.user_prompt,
+            code=ctx.code,
+            execution_feedback=ctx.execution_feedback or "(no execution data)",
+            static_feedback=ctx.static_feedback or "(no static analysis)",
+            test_failure=ctx.test_failure,
+            iteration=ctx.debug_iteration,
+            language=ctx.language,
+        )
+        raw = await self._call(prompt)
+        parsed = _extract_code_and_meta(raw)
+        if not parsed["code"]:
+            return AgentOutput(
+                raw=raw,
+                error="Debugger produced no fixed code",
+            )
+        meta = parsed["metadata"] or {}
+        return AgentOutput(
+            raw=raw,
+            code=parsed["code"],
+            data={
+                "language": (parsed["language"] or str(meta.get("language") or "") or ctx.language),
+                "root_cause": str(meta.get("root_cause") or "")[:600],
+                "fix_description": str(meta.get("fix_description") or "")[:600],
+                "lines_changed": _clamp_int(
+                    meta.get("lines_changed"),
+                    0,
+                    100_000,
+                    0,
+                ),
+                "confidence": _enum(
+                    meta.get("confidence"),
+                    {"high", "medium", "low"},
+                    "medium",
+                ),
+            },
+            metadata=meta,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5 — Critic
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CriticAgent(_BaseAgent):
+    role = "critic"
+    system_prompt = P.CRITIC_SYSTEM_PROMPT
+
+    async def run(self, ctx: AgentContext) -> AgentOutput:
+        if not ctx.code:
+            return AgentOutput(error="No code to review")
+        prompt = P.critic_prompt(
+            ctx.user_prompt,
+            code=ctx.code,
+            plan=ctx.plan or {},
+            execution_feedback=ctx.execution_feedback,
+            static_feedback=ctx.static_feedback,
+            language=ctx.language,
+        )
+        raw = await self._call(prompt)
+        try:
+            data = _extract_json(raw)
+        except ValueError as exc:
+            logger.warning("critic_json_parse_failed: %s", exc)
+            return AgentOutput(raw=raw, error=str(exc))
+
+        verdict_raw = str(data.get("verdict") or "").lower()
+        # Accept a couple of common spellings.
+        verdict = {
+            "approved": "approved",
+            "approved_with_minor": "approved_with_minor",
+            "approved_with_minor_comments": "approved_with_minor",
+            "minor_comments": "approved_with_minor",
+            "needs_revision": "needs_revision",
+            "revise": "needs_revision",
+            "rejected": "rejected",
+        }.get(verdict_raw, "needs_revision")
+
+        issues_raw = data.get("issues") if isinstance(data.get("issues"), list) else []
+        issues_raw = issues_raw or []  # narrow Optional → list for pyright
+        issues: list[dict[str, Any]] = []
+        for it in issues_raw[:20]:
+            if not isinstance(it, dict):
+                continue
+            issues.append(
+                {
+                    "severity": _enum(
+                        it.get("severity"),
+                        {"critical", "major", "minor", "nit"},
+                        "minor",
+                    ),
+                    "description": str(it.get("description") or "")[:500],
+                    "suggestion": str(it.get("suggestion") or "")[:500],
+                }
+            )
+
+        normalized: dict[str, Any] = {
+            "verdict": verdict,
+            "score": _clamp_int(data.get("score"), 0, 100, 70),
+            "strengths": [str(s)[:300] for s in (data.get("strengths") or [])][:10],
+            "issues": issues,
+            "security_concerns": [str(s)[:300] for s in (data.get("security_concerns") or [])][:10],
+            "performance_concerns": [
+                str(s)[:300] for s in (data.get("performance_concerns") or [])
+            ][:10],
+            "final_comment": str(data.get("final_comment") or "")[:1500],
+        }
+        return AgentOutput(raw=raw, data=normalized)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triage helper (not a full agent — used by the routes layer)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def run_triage(
+    llm_call: LLMCall,
+    user_prompt: str,
+    code_context: str | None = None,
+    max_tokens: int = 600,
+) -> dict[str, Any]:
+    """
+    Fast classification call. Returns a normalised dict with safe
+    defaults if the model returns nonsense.
+    """
+    raw = await llm_call(
+        P.triage_prompt(user_prompt, code_context),
+        P.TRIAGE_SYSTEM_PROMPT,
+        max_tokens,
+    )
+    try:
+        data = _extract_json(raw or "")
+    except ValueError:
+        data = {}
+    return {
+        "task_type": _enum(
+            data.get("task_type"),
+            {
+                "generation",
+                "debugging",
+                "review",
+                "refactoring",
+                "explanation",
+                "architecture",
+                "optimization",
+                "testing",
+            },
+            "generation",
+        ),
+        "language": _enum(
+            data.get("language"),
+            {"python", "javascript", "typescript", "go", "rust", "cpp", "java", "bash", "other"},
+            "python",
+        ),
+        "complexity": _enum(
+            data.get("complexity"),
+            {"trivial", "simple", "moderate", "complex", "expert"},
+            "moderate",
+        ),
+        "needs_execution": bool(data.get("needs_execution", True)),
+        "needs_tests": bool(data.get("needs_tests", True)),
+        "estimated_phases": [str(p)[:30] for p in (data.get("estimated_phases") or [])][:9],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _enum(value: Any, allowed: set, default: str) -> str:
+    v = str(value or "").lower()
+    return v if v in allowed else default
+
+
+def _clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))

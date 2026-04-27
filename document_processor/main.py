@@ -56,6 +56,14 @@ except ImportError as _thinking_exc:  # pragma: no cover
     THINKING_AVAILABLE = False
     logger.warning("Thinking routes not available: %s", _thinking_exc)
 
+# Code Intelligence Mode — multi-agent local-only code engine
+try:
+    from .api.code_intelligence_routes import router as code_intelligence_router
+    CODE_INTELLIGENCE_AVAILABLE = True
+except ImportError as _code_exc:  # pragma: no cover
+    CODE_INTELLIGENCE_AVAILABLE = False
+    logger.warning("Code intelligence routes not available: %s", _code_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -93,11 +101,67 @@ async def _sse_queue_sweeper() -> None:
             from .api import thinking_routes, local_ai_routes_simple
             t_dropped = await thinking_routes.sweep_stale_event_queues()
             r_dropped = await local_ai_routes_simple.sweep_stale_event_queues()
-            if t_dropped or r_dropped:
-                logger.info("sse_queue_sweep",
-                            thinking=t_dropped, research=r_dropped)
+            c_dropped = 0
+            try:
+                from .api import code_intelligence_routes
+                c_dropped = await code_intelligence_routes.sweep_stale_event_queues()
+            except Exception:
+                pass
+            if t_dropped or r_dropped or c_dropped:
+                logger.info(
+                    "sse_queue_sweep",
+                    thinking=t_dropped,
+                    research=r_dropped,
+                    code=c_dropped,
+                )
         except Exception as exc:
             logger.warning("sse_queue_sweep_failed", error=str(exc))
+
+
+async def _code_intelligence_warmup() -> None:
+    """
+    Lifespan startup task — probe Ollama for code models + pre-pull
+    the configured sandbox base images so the first user request
+    isn't slowed by a 100 MB+ image fetch.
+
+    Best-effort: failures here log a warning but never block startup.
+    """
+    try:
+        from .api.code_intelligence_routes import (
+            get_model_registry,
+            get_sandbox,
+        )
+        from .config.settings import settings as _settings_warm
+
+        registry = get_model_registry()
+        try:
+            await registry.probe()
+            logger.info(
+                "code_intelligence_probed",
+                installed=len(registry.available),
+            )
+        except Exception as exc:
+            logger.warning("code_intelligence_probe_failed: %s", exc)
+
+        if _settings_warm.code_sandbox_enabled:
+            sandbox = get_sandbox()
+            if sandbox is not None and await sandbox.docker_available():
+                images = [
+                    s.strip() for s in
+                    (_settings_warm.code_sandbox_prewarm_images or "").split(",")
+                    if s.strip()
+                ]
+                for img in images:
+                    try:
+                        await sandbox._ensure_image(img)  # noqa: SLF001
+                        logger.info("code_sandbox_prewarmed image=%s", img)
+                    except Exception as exc:
+                        logger.warning(
+                            "code_sandbox_prewarm_failed image=%s err=%s",
+                            img, exc,
+                        )
+    except Exception as exc:
+        logger.warning("code_intelligence_warmup_failed: %s", exc)
 
 
 @asynccontextmanager
@@ -143,6 +207,26 @@ async def lifespan(app: FastAPI):
         sweeper_task = _asyncio_main.create_task(_sse_queue_sweeper())
         logger.info("sse_queue_sweeper_started")
 
+        # Code Intelligence warm-up — fire and forget.
+        if CODE_INTELLIGENCE_AVAILABLE:
+            _asyncio_main.create_task(_code_intelligence_warmup())
+
+            # v2: long-lived autonomous capability discovery loop.
+            if settings.code_capability_discovery_enabled:
+                from .api.code_intelligence_routes import (
+                    get_capability_discoverer,
+                )
+                _capability_task = _asyncio_main.create_task(
+                    get_capability_discoverer().run_forever()
+                )
+                logger.info(
+                    "capability_discoverer_lifespan_task_started "
+                    "interval_s=%d",
+                    settings.code_capability_discovery_interval_seconds,
+                )
+            else:
+                _capability_task = None
+
         logger.info("application_started")
         yield
     finally:
@@ -156,6 +240,18 @@ async def lifespan(app: FastAPI):
                 await sweeper_task
             except (_asyncio_main.CancelledError, Exception):
                 pass
+
+        # v2: cancel the capability discoverer if it was started.
+        try:
+            ct = locals().get("_capability_task")
+            if ct is not None:
+                ct.cancel()
+                try:
+                    await ct
+                except (_asyncio_main.CancelledError, Exception):
+                    pass
+        except Exception:
+            pass
 
         # Cleanup Local AI if available
         if LOCAL_AI_AVAILABLE:
@@ -264,6 +360,11 @@ logger.info("Auth routes included")
 if THINKING_AVAILABLE:
     app.include_router(thinking_router)
     logger.info("Thinking routes included")
+
+# Code Intelligence Mode (multi-agent local-only code engine)
+if CODE_INTELLIGENCE_AVAILABLE:
+    app.include_router(code_intelligence_router)
+    logger.info("Code intelligence routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

@@ -168,6 +168,33 @@ docker compose logs -f app gateway ollama
 - **Port 8000 already in use** — `docker compose down` first, or change the gateway mapping in `docker-compose.yml`
 - **Reset everything (drop volumes)** — `docker compose down -v`
 
+## Code Intelligence Mode
+
+A multi-agent local-only code engine: Planner → Coder → Tester →
+Debugger → Critic, with execution-grounded verification in a Docker
+sandbox (`--network none`, `--read-only`, no-new-privileges, hard
+memory + CPU caps), an auto-pulling model registry (12 catalogued
+Ollama tags), tree-sitter+PageRank workspace summary (RepoMap),
+synchronous adversarial event filter (prompt injection / secret
+leakage / shell injection), and an autonomous capability discoverer
+(Hugging Face / GitHub / arXiv). 100% local, zero external API cost.
+
+Pick `Code Intelligence` on the welcome card or `POST /api/code/start`.
+Live SSE at `/api/code/{sid}/events`. Full route table at
+<http://localhost:8000/docs>.
+
+Read more under [`docs/code_intelligence/`](docs/code_intelligence/):
+
+- [`ARCHITECTURE.md`](docs/code_intelligence/ARCHITECTURE.md) — layered
+  design + per-session lifecycle
+- [`RUNBOOK.md`](docs/code_intelligence/RUNBOOK.md) — operator guide
+- [`EXTENDING.md`](docs/code_intelligence/EXTENDING.md) — four recipes
+  (add an agent, sandbox tier, model provider, capability source)
+- [`CHANGELOG.md`](docs/code_intelligence/CHANGELOG.md) — every change
+  in user-visible terms
+- [`adr/`](docs/code_intelligence/adr/) — architectural decision records
+  (eight, one per non-default decision plus the v2.1 deferral list)
+
 ## Further reading
 
 - [`QUICK_START.md`](QUICK_START.md) — extended setup notes for unusual platforms

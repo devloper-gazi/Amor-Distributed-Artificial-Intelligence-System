@@ -76,6 +76,25 @@ services:
       # LanceDB Vector Store
       - LANCEDB_PATH=/data/vectors
 
+      # Code Intelligence Mode (multi-agent local engine)
+      - CODE_OLLAMA_BASE_URL=${CODE_OLLAMA_BASE_URL:-http://ollama:11434}
+      - CODE_DEFAULT_MODEL=${CODE_DEFAULT_MODEL:-}
+      - CODE_SANDBOX_ENABLED=${CODE_SANDBOX_ENABLED:-true}
+      - CODE_SANDBOX_TIMEOUT=${CODE_SANDBOX_TIMEOUT:-30}
+      - CODE_SANDBOX_MEMORY=${CODE_SANDBOX_MEMORY:-256m}
+      - CODE_AUTO_PULL_MODELS=${CODE_AUTO_PULL_MODELS:-true}
+      - CODE_MAX_DEBUG_ITERATIONS=${CODE_MAX_DEBUG_ITERATIONS:-3}
+      - CODE_SESSION_TTL_SECONDS=${CODE_SESSION_TTL_SECONDS:-7200}
+      - CODE_SANDBOX_PREWARM_IMAGES=${CODE_SANDBOX_PREWARM_IMAGES:-python:3.11-slim,node:20-slim}
+
+      # v2 — Autonomous capability discovery + observability
+      - CODE_CAPABILITY_DISCOVERY_ENABLED=${CODE_CAPABILITY_DISCOVERY_ENABLED:-true}
+      - CODE_CAPABILITY_DISCOVERY_INTERVAL_SECONDS=${CODE_CAPABILITY_DISCOVERY_INTERVAL_SECONDS:-3600}
+      - CODE_CAPABILITY_DISCOVERY_MAX_PER_CYCLE=${CODE_CAPABILITY_DISCOVERY_MAX_PER_CYCLE:-3}
+      - CODE_LANGFUSE_URL=${CODE_LANGFUSE_URL:-}
+      - CODE_LANGFUSE_PUBLIC_KEY=${CODE_LANGFUSE_PUBLIC_KEY:-}
+      - CODE_LANGFUSE_SECRET_KEY=${CODE_LANGFUSE_SECRET_KEY:-}
+
     depends_on:
       ollama:
         condition: service_healthy
@@ -113,6 +132,12 @@ services:
       - ./document_processor:/app/document_processor
       - ./web_ui:/app/web_ui
       - ./requirements.txt:/app/requirements.txt:ro
+      # Code Intelligence sandbox — gives the app container access to
+      # the host Docker daemon so it can spin up ephemeral runner
+      # containers (python:3.11-slim, node:20-slim, etc.) for the
+      # ExecutionSandbox. Read-only is enough; we only need to
+      # `docker run --rm` the runners.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     # P2.3: Healthcheck so a frozen worker (e.g. Ollama hang, deadlocked
     # event loop) is detected and restarted by Docker rather than
