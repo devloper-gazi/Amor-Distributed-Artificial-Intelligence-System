@@ -1,0 +1,122 @@
+# Project tooling configuration.
+#
+# Charter §5 quality gates run against this file. Keep it tight; every
+# rule we enable here is one a contributor has to satisfy on every
+# commit, so the bar is "rules that catch real bugs", not "everything
+# possible".
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    "node_modules",
+    ".venv",
+    "data",
+    "models",
+    "_inbound",
+    "**/__pycache__",
+    # Existing AMOR codebase predates this config — gates run only on
+    # the Code Intelligence module + its tests for now. The wider
+    # codebase will be brought up in a separate cleanup commit so
+    # this Charter pass stays scoped.
+    "document_processor/api/chat_research_routes.py",
+    "document_processor/api/chat_sessions_routes.py",
+    "document_processor/api/chat_folders_routes.py",
+    "document_processor/api/local_ai_routes_simple.py",
+    "document_processor/api/thinking_routes.py",
+    "document_processor/api/auth_routes.py",
+    "document_processor/api/query_record_routes.py",
+    "document_processor/api/_query_persistence.py",
+    "document_processor/api/crawling_routes.py",
+    "document_processor/api/translation_routes.py",
+    "document_processor/auth",
+    "document_processor/config",
+    "document_processor/core",
+    "document_processor/crawling",
+    "document_processor/dedup",
+    "document_processor/infrastructure",
+    "document_processor/local_ai",
+    "document_processor/processing",
+    "document_processor/rag",
+    "document_processor/reliability",
+    "document_processor/research",
+    "document_processor/storage",
+    "document_processor/thinking",
+    "document_processor/translation",
+    "document_processor/main.py",
+]
+
+[tool.ruff.lint]
+# Curated rule set — bug-catchers and clarity. We deliberately don't
+# enable the full kitchen sink (e.g. `D` for docstrings) because the
+# noise drowns the real signal.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear (mutable defaults, broad excepts, etc.)
+    "C4",  # comprehension simplifications
+    "UP",  # pyupgrade
+    "SIM", # simplification
+    "TID", # tidy imports
+    "PL",  # pylint subset
+    "RUF", # ruff-specific
+]
+ignore = [
+    # Pylint's "too many" thresholds are noisy in domain code.
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004",
+    # Bug-bear: blind excepts are sometimes intentional + logged.
+    "B904",
+    # Line-length is enforced by `line-length` above.
+    "E501",
+    # Unused arguments in mock fixtures and event-style callables.
+    "ARG002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0915", "PLR0913"]
+"document_processor/code_intelligence/prompts.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+include = ["document_processor/code_intelligence", "tests/code_intelligence"]
+typeCheckingMode = "basic"
+# `strict` is the Charter target. We start at `basic` because the
+# existing v1+v2 modules wouldn't pass `strict` on day one — pushing
+# them is a follow-up Charter cleanup commit, not a Phase A blocker.
+pythonVersion = "3.11"
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::DeprecationWarning:starlette.*",
+]
+
+[tool.coverage.run]
+source = ["document_processor.code_intelligence"]
+branch = true
+omit = [
+    "document_processor/code_intelligence/extensions/*",
+    "document_processor/code_intelligence/cache/*",
+    "document_processor/code_intelligence/traces/*",
+]
+
+[tool.coverage.report]
+# Charter §5 Gate 4 says ≥ 85% on touched modules. We target the same
+# floor for the package as a whole.
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == \"__main__\":",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
