@@ -33,6 +33,7 @@ from .agents import (
     TesterAgent,
     run_triage,
 )
+from .hooks import NoopHooks, PhaseHooks
 from .sandbox import ExecutionResult, ExecutionSandbox
 from .static_analysis import StaticAnalysisHarness, StaticAnalysisResult
 
@@ -167,6 +168,10 @@ class CodeIntelligenceEngine:
         # Optional pre-flight helpers (the routes layer plugs these in
         # when it wants to surface model-download progress to the UI).
         prepare_models: Callable[[], Awaitable[dict[str, str]]] | None = None,
+        # Charter §6 Mandate 3 — phase-boundary hooks. Defaults to
+        # NoopHooks; routes wire ChainedHooks(TelemetryHooks(), ...)
+        # when they want span emission per phase.
+        hooks: PhaseHooks | None = None,
     ) -> None:
         self.prompt = prompt
         self.code_context = code_context or None
@@ -188,6 +193,8 @@ class CodeIntelligenceEngine:
         self.static_harness = static_harness or StaticAnalysisHarness()
         self._prepare_models = prepare_models
         self._on_event = on_event or _noop_event
+        # PhaseHooks default = NoopHooks (zero overhead, never raises).
+        self._hooks: PhaseHooks = hooks or NoopHooks()
 
         self.phases: list[CodePhase] = [
             CodePhase(name=name, label=label) for name, label in CODE_PHASES
@@ -225,6 +232,8 @@ class CodeIntelligenceEngine:
         phase.status = "in_progress"
         phase.started_at = _now()
         await self._emit({"type": "phase_start", "phase": name, "label": phase.label})
+        # Charter §6 Mandate 3 — fire phase-boundary hook.
+        await self._hooks.before_phase(name, self.snapshot())
         try:
             result = await runner()
             phase.status = "completed"
@@ -238,12 +247,18 @@ class CodeIntelligenceEngine:
                     "detail": phase.detail,
                 }
             )
+            await self._hooks.after_phase(name, self.snapshot(), result)
             return result
         except Exception as exc:
             phase.status = "failed"
             phase.completed_at = _now()
             phase.detail = {"error": str(exc)}
             logger.exception("code.phase_failed phase=%s", name)
+            # Hook still fires on failure so telemetry captures the timing.
+            try:
+                await self._hooks.after_phase(name, self.snapshot(), None)
+            except Exception:
+                logger.debug("after_phase hook raised on failure path")
             await self._emit(
                 {
                     "type": "phase_failed",
