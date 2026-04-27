@@ -256,6 +256,14 @@
                     });
                     return;
 
+                case 'adversarial_alert':
+                    // v2: Adversarial Reviewer flagged something. Show
+                    // a banner, mark severity, and surface the matched
+                    // rules. For `critical` severity the engine is
+                    // already cancelling; we just reflect that here.
+                    this._renderAdversarialAlert(evt);
+                    return;
+
                 case 'done':
                     this.state = 'done';
                     this._setSubtitle('Pipeline complete');
@@ -643,6 +651,51 @@
             if (score >= 85) return 'high';
             if (score >= 65) return 'mid';
             return 'low';
+        }
+
+        _renderAdversarialAlert(evt) {
+            const host = this.root.querySelector('[data-role="artifacts"]');
+            if (!host) return;
+            const severity = evt.severity || 'medium';
+            // Reuse same slot — multiple alerts append into a list
+            // inside the slot so the user sees every hit.
+            let block = host.querySelector('[data-slot="adversarial"]');
+            if (!block) {
+                block = document.createElement('div');
+                block.className = `adversarial-alert adversarial-alert--${severity}`;
+                block.dataset.slot = 'adversarial';
+                block.innerHTML = `
+                    <div class="adversarial-alert-header">
+                        <span class="adversarial-alert-icon">⚠</span>
+                        <span class="adversarial-alert-title">Security alert</span>
+                        <span class="adversarial-alert-severity">${escapeHtml(severity)}</span>
+                    </div>
+                    <ul class="adversarial-alert-hits"></ul>
+                `;
+                // Mount at the very top of artifacts so it can't be missed.
+                host.insertBefore(block, host.firstChild);
+            }
+            block.classList.remove(
+                'adversarial-alert--low',
+                'adversarial-alert--medium',
+                'adversarial-alert--high',
+                'adversarial-alert--critical',
+            );
+            block.classList.add(`adversarial-alert--${severity}`);
+            const ul = block.querySelector('.adversarial-alert-hits');
+            (evt.hits || []).forEach(hit => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <code class="adversarial-rule-id">${escapeHtml(hit.rule_id || '?')}</code>
+                    <span class="adversarial-rule-sev sev-${escapeHtml(hit.severity || 'medium')}">${escapeHtml(hit.severity || 'medium')}</span>
+                    <span class="adversarial-rule-desc">${escapeHtml(hit.description || '')}</span>
+                `;
+                ul.appendChild(li);
+            });
+            if (severity === 'critical') {
+                this._setSubtitle('Halted by Adversarial Reviewer');
+                this.root.classList.add('failed');
+            }
         }
 
         _renderDeliverable(markdown) {
