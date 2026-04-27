@@ -275,6 +275,13 @@ async def _run_session(session_id: str) -> None:
     queue = _event_queue(session_id)
 
     async def on_event(event: Dict[str, Any]) -> None:
+        # v6 backstop — make sure every event has an event_id BEFORE
+        # we fan out to local queue + Redis. The orchestrator already
+        # stamps one in `_emit`, but any future caller that bypasses
+        # the orchestrator (e.g., a route-side phase pre-flight emit)
+        # would otherwise leak un-dedup-able events.
+        if not event.get("event_id"):
+            event = {**event, "event_id": uuid4().hex}
         # Apply cancel signal to the scope so the orchestrator notices
         # at the next phase boundary.
         if session.get("cancel_requested"):

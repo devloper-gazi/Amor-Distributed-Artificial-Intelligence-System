@@ -47,6 +47,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from uuid import uuid4
 
 from .models import (
     ConsortiumBundle,
@@ -112,7 +113,17 @@ class ConsortiumOrchestrator:
 
     async def _emit(self, event: dict[str, Any]) -> None:
         try:
-            event = {**event, "session_id": self.session_id, "ts": _now_iso()}
+            # v6 — every event gets a stable `event_id` BEFORE fan-out
+            # so the SSE stream can dedupe between the local in-memory
+            # queue and the Redis pub/sub channel (both deliver the
+            # same event to the same SSE subscriber on the same
+            # replica). Without this the user sees every event twice.
+            event = {
+                **event,
+                "session_id": self.session_id,
+                "ts": _now_iso(),
+                "event_id": event.get("event_id") or uuid4().hex,
+            }
             await self._on_event(event)
         except Exception:  # pragma: no cover
             logger.exception("consortium.on_event raised")
