@@ -239,6 +239,16 @@ class Settings(BaseSettings):
     # first execution isn't slowed by a 100 MB image fetch.
     code_sandbox_prewarm_images: str = "python:3.11-slim,node:20-slim"
 
+    # ── v2: Capability Discovery (autonomous self-extension) ──────────
+    code_capability_discovery_enabled: bool = True
+    code_capability_discovery_interval_seconds: int = 3600
+    code_capability_discovery_max_per_cycle: int = 3
+
+    # ── v2: Observability (Langfuse / OpenLLMetry) ─────────────────────
+    code_langfuse_url: str = ""
+    code_langfuse_public_key: str = ""
+    code_langfuse_secret_key: str = ""
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

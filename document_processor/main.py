@@ -211,6 +211,22 @@ async def lifespan(app: FastAPI):
         if CODE_INTELLIGENCE_AVAILABLE:
             _asyncio_main.create_task(_code_intelligence_warmup())
 
+            # v2: long-lived autonomous capability discovery loop.
+            if settings.code_capability_discovery_enabled:
+                from .api.code_intelligence_routes import (
+                    get_capability_discoverer,
+                )
+                _capability_task = _asyncio_main.create_task(
+                    get_capability_discoverer().run_forever()
+                )
+                logger.info(
+                    "capability_discoverer_lifespan_task_started "
+                    "interval_s=%d",
+                    settings.code_capability_discovery_interval_seconds,
+                )
+            else:
+                _capability_task = None
+
         logger.info("application_started")
         yield
     finally:
@@ -224,6 +240,18 @@ async def lifespan(app: FastAPI):
                 await sweeper_task
             except (_asyncio_main.CancelledError, Exception):
                 pass
+
+        # v2: cancel the capability discoverer if it was started.
+        try:
+            ct = locals().get("_capability_task")
+            if ct is not None:
+                ct.cancel()
+                try:
+                    await ct
+                except (_asyncio_main.CancelledError, Exception):
+                    pass
+        except Exception:
+            pass
 
         # Cleanup Local AI if available
         if LOCAL_AI_AVAILABLE:

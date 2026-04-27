@@ -41,6 +41,8 @@ from ..auth.dependencies import get_current_user
 from ..auth.models import User
 from ..code_intelligence import (
     CODE_PHASES,
+    AdversarialReviewer,
+    CapabilityDiscoverer,
     CodeIntelligenceEngine,
     CodeModelRegistry,
     ExecutionSandbox,
@@ -86,6 +88,8 @@ SESSION_CACHE_TTL_SECONDS = settings.code_session_ttl_seconds
 _model_registry: Optional[CodeModelRegistry] = None
 _sandbox: Optional[ExecutionSandbox] = None
 _static_harness: Optional[StaticAnalysisHarness] = None
+_adversarial_reviewer: Optional[AdversarialReviewer] = None
+_capability_discoverer: Optional[CapabilityDiscoverer] = None
 
 
 def get_model_registry() -> CodeModelRegistry:
@@ -112,6 +116,25 @@ def get_static_harness() -> StaticAnalysisHarness:
     if _static_harness is None:
         _static_harness = StaticAnalysisHarness()
     return _static_harness
+
+
+def get_adversarial_reviewer() -> AdversarialReviewer:
+    """Lazy singleton — one rule-pack-loaded reviewer per process."""
+    global _adversarial_reviewer
+    if _adversarial_reviewer is None:
+        _adversarial_reviewer = AdversarialReviewer(block_on_critical=True)
+    return _adversarial_reviewer
+
+
+def get_capability_discoverer() -> CapabilityDiscoverer:
+    """Lazy singleton (one Discoverer per process)."""
+    global _capability_discoverer
+    if _capability_discoverer is None:
+        _capability_discoverer = CapabilityDiscoverer(
+            interval_s=settings.code_capability_discovery_interval_seconds,
+            max_per_cycle=settings.code_capability_discovery_max_per_cycle,
+        )
+    return _capability_discoverer
 
 
 # ─── helpers (mirror thinking_routes.py) ─────────────────────────────────────
@@ -159,26 +182,57 @@ def _event_queue(session_id: str) -> asyncio.Queue:
 
 
 async def _publish(session_id: str, event: Dict[str, Any]) -> None:
-    """Fan an event to local SSE subscribers + cross-replica Redis."""
+    """
+    Fan an event to local SSE subscribers + cross-replica Redis.
+
+    Every event passes through the AdversarialReviewer first. On a
+    critical match the original event is suppressed and an
+    `adversarial_alert` is published in its place; the running
+    session is also flagged for cancellation. On non-critical
+    matches the alert event is published alongside the original.
+    """
     if "event_id" not in event:
         event = {**event, "event_id": uuid4().hex}
+
+    reviewer = get_adversarial_reviewer()
+    allow, alert = reviewer.inspect_event(session_id, event)
+    if alert is not None:
+        # Stamp the alert with its own event_id so SSE dedupe works.
+        if "event_id" not in alert:
+            alert = {**alert, "event_id": uuid4().hex}
+        # Critical hit → mark session for cancellation so the engine
+        # halts at the next phase boundary.
+        if alert.get("severity") == "critical":
+            session = _sessions.get(session_id)
+            if session is not None:
+                session["cancel_requested"] = True
+                session["adversarial_alert"] = alert
+                await _persist(session_id, session)
+
+    events_to_emit: List[Dict[str, Any]] = []
+    if allow:
+        events_to_emit.append(event)
+    if alert is not None:
+        events_to_emit.append(alert)
+
     queue = _event_queue(session_id)
-    try:
-        queue.put_nowait(event)
-    except asyncio.QueueFull:
-        # Sliding window drop — preserve newest.
+    for ev in events_to_emit:
         try:
-            queue.get_nowait()
-            queue.put_nowait(event)
-        except (asyncio.QueueEmpty, asyncio.QueueFull):
-            pass
-    try:
-        await cache_manager.publish_event(
-            _CODE_EVENT_CHANNEL.format(session_id=session_id),
-            event,
-        )
-    except Exception as exc:  # pragma: no cover
-        logger.debug("code _publish redis fanout failed: %s", exc)
+            queue.put_nowait(ev)
+        except asyncio.QueueFull:
+            # Sliding window drop — preserve newest.
+            try:
+                queue.get_nowait()
+                queue.put_nowait(ev)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+        try:
+            await cache_manager.publish_event(
+                _CODE_EVENT_CHANNEL.format(session_id=session_id),
+                ev,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.debug("code _publish redis fanout failed: %s", exc)
 
 
 async def sweep_stale_event_queues() -> int:
@@ -1013,3 +1067,46 @@ async def sandbox_health(user: User = Depends(get_current_user)):
         "memory_limit": settings.code_sandbox_memory,
         "timeout_seconds": settings.code_sandbox_timeout,
     }
+
+
+# ─── /capabilities (v2 — autonomous extension) ───────────────────────────────
+
+
+@router.get("/capabilities")
+async def list_capabilities(user: User = Depends(get_current_user)):
+    """List capabilities the discoverer has registered."""
+    discoverer = get_capability_discoverer()
+    items = await discoverer.registry.list_all()
+    return {
+        "count": len(items),
+        "items": items,
+        "discoverer": {
+            "cycle_count": discoverer.cycle_count,
+            "last_cycle_iso": discoverer.last_cycle_iso,
+            "interval_seconds":
+                settings.code_capability_discovery_interval_seconds,
+            "max_per_cycle":
+                settings.code_capability_discovery_max_per_cycle,
+            "enabled": settings.code_capability_discovery_enabled,
+        },
+    }
+
+
+@router.post("/capabilities/discover")
+async def trigger_discovery(
+    user: User = Depends(get_current_user),
+):
+    """
+    Run an on-demand discovery cycle. Returns the report directly so
+    the user can see exactly what was harvested + accepted + rejected.
+    Independent of the long-lived loop schedule.
+    """
+    if not settings.code_capability_discovery_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Capability discovery is disabled "
+                   "(CODE_CAPABILITY_DISCOVERY_ENABLED=false).",
+        )
+    discoverer = get_capability_discoverer()
+    report = await discoverer.run_once()
+    return report
