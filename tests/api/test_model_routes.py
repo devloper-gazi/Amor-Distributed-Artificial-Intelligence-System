@@ -43,6 +43,31 @@ class _StubManager:
     async def delete_custom_model(self, **kwargs):
         return None
 
+    # v4 — these methods are called from the same routes the v2 tests
+    # exercise, so the stub has to grow to match the real surface.
+    async def detect_hardware(self):
+        return {
+            "gpu_available": False, "gpu_name": None, "gpu_count": 0,
+            "vram_total_gb": None, "vram_free_gb": None,
+            "cpu_threads": 4, "ollama_version": None, "platform": None,
+        }
+
+    async def warmup_model(self, tag: str):
+        return True
+
+    async def search_models(self, query, *, source="all", limit=20):
+        return []
+
+    async def test_generate(self, *, model, prompt, profile=None, max_tokens=128):
+        yield {"type": "test_start", "model": model}
+        yield {"type": "test_done", "elapsed_ms": 1, "tokens": 0,
+               "tokens_per_second": 0.0}
+
+    async def recommend_for_prompt(self, prompt, *, mode="__all__",
+                                    usage=None, hardware=None):
+        return {"tag": "qwen2.5:7b", "reason": "stub", "score": 0,
+                "candidates": [], "detected_strengths": []}
+
 
 @pytest.fixture
 def app(monkeypatch):
