@@ -31,14 +31,20 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    Header,
     HTTPException,
     Request,
+    Response,
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 from ..code_intelligence import (
     CODE_PHASES,
     AdversarialReviewer,
@@ -349,7 +355,10 @@ async def triage(
 async def start_code_session(
     payload: CodeStartRequest,
     background: BackgroundTasks,
+    http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> CodeStartResponse:
     """
     Kick off a full Code Intelligence session. Returns immediately with
@@ -362,6 +371,49 @@ async def start_code_session(
         payload.max_debug_iterations
         if payload.max_debug_iterations is not None
         else settings.code_max_debug_iterations
+    )
+
+    # Server-side model resolution. The Code Intelligence engine *also*
+    # picks per-role on top of this — but the resolved tag here becomes
+    # the global default (planner/coder/critic all see it unless they
+    # override). When the user picked a tag in the picker, we honour it
+    # everywhere; otherwise we let the registry's per-role auto-pick
+    # logic take over by leaving preferred_model = None.
+    client_id_hdr = (x_client_id or "").strip() or session_id
+    resolved_profile: Optional[Dict[str, Any]] = None
+    try:
+        resolved_model, resolved_profile, model_reason = (
+            await resolve_request_model_full(
+                request=http_request,
+                requested_model=payload.preferred_model,
+                user_id=str(user.id),
+                client_id=client_id_hdr,
+                mode="code",
+                effort=effort,
+            )
+        )
+        # Code Intelligence has a richer per-role auto-select than the
+        # generic ModelManager — only honour resolution if it came from
+        # an explicit user choice, not a generic auto pick.
+        if model_reason in {"request override", "user preference (code)",
+                             "user preference (coding)", "user preference (__all__)"}:
+            effective_model = resolved_model
+        else:
+            effective_model = None  # Let CodeModelRegistry pick per role
+            resolved_profile = None  # without an explicit pref the profile is moot
+    except Exception as exc:  # pragma: no cover
+        logger.warning("code_resolve_request_model_failed: %s", exc)
+        effective_model, model_reason = (payload.preferred_model, "fallback")
+
+    # Spec validation point #1 — surface the resolved tag. Code
+    # Intelligence is special: when no user pref is set, the engine
+    # picks per-role at runtime (planner=qwen2.5-coder:32b,
+    # critic=devstral:24b, …), so we emit a sentinel rather than a
+    # single tag in that case.
+    response.headers["X-Model-Used"] = (
+        effective_model
+        if effective_model
+        else "auto:per-role"
     )
 
     session: Dict[str, Any] = {
@@ -379,7 +431,10 @@ async def start_code_session(
         "enable_static_analysis": bool(payload.enable_static_analysis),
         "enable_testing": bool(payload.enable_testing),
         "max_debug_iterations": int(max_debug),
-        "preferred_model": payload.preferred_model,
+        "preferred_model": effective_model,
+        "preferred_model_requested": payload.preferred_model,
+        "preferred_model_reason": model_reason,
+        "preferred_model_profile": resolved_profile,
         # Phase scaffold matching CODE_PHASES order.
         "phases": [
             {"name": n, "label": l, "status": "pending", "detail": {}}
@@ -425,6 +480,36 @@ async def _run_session(session_id: str) -> None:
     session = _sessions.get(session_id)
     if session is None:
         return
+
+    # v3 — propagate the resolved model + advanced profile (temperature,
+    # num_gpu, system_prompt, …) into the local-AI ContextVars so every
+    # nested call_ollama() inside the engine picks them up.
+    if session.get("preferred_model") or session.get("preferred_model_profile"):
+        try:
+            from .local_ai_routes_simple import (
+                set_active_model,
+                set_active_profile,
+            )
+            if session.get("preferred_model"):
+                set_active_model(session["preferred_model"])
+            if session.get("preferred_model_profile"):
+                set_active_profile(session["preferred_model_profile"])
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("code_preferred_model_contextvar_set_failed: %s", _exc)
+
+    # v4 — fetch the user's multi-model routing doc + push it into the
+    # ContextVar so call_ollama_with can apply per-role / fallback /
+    # ensemble at every nested LLM call.
+    try:
+        from ..infrastructure.chat_store import chat_store as _cs
+        from .local_ai_routes_simple import set_active_routing
+        routing = await _cs.get_model_routing(
+            user_id=session.get("user_id"),
+            client_id=session.get("client_id") or session_id,
+        )
+        set_active_routing(routing)
+    except Exception as _exc:  # noqa: BLE001
+        logger.debug("code_routing_contextvar_set_failed: %s", _exc)
 
     registry = get_model_registry()
     sandbox = get_sandbox() if session["enable_execution"] else None
@@ -550,6 +635,17 @@ async def _run_session(session_id: str) -> None:
 
     # ── engine wiring ────────────────────────────────────────────────────
 
+    # v4 — role_setter binds each phase to an agent role so the per-role
+    # / ensemble strategies in `call_ollama_with` can swap models for
+    # planner vs coder vs critic on the fly. Lazy import — `set_active_role`
+    # only exists in the v4 local-ai module.
+    def _phase_role(role: str | None) -> None:
+        try:
+            from .local_ai_routes_simple import set_active_role
+            set_active_role(role)
+        except Exception:  # pragma: no cover
+            pass
+
     engine = CodeIntelligenceEngine(
         prompt=session["prompt"],
         code_context=session.get("code_context"),
@@ -565,6 +661,7 @@ async def _run_session(session_id: str) -> None:
         max_debug_iterations=session["max_debug_iterations"],
         on_event=on_event,
         prepare_models=prepare_models,
+        role_setter=_phase_role,
     )
 
     session["status"] = "in_progress"

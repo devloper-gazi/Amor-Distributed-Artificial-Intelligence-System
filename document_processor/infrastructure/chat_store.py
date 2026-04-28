@@ -237,8 +237,481 @@ class ChatStore:
             [("idempotency_key", 1)], sparse=True, unique=True
         )
 
+        # Per-user model preferences (More settings → AI Model). Stored
+        # under user_id when authenticated, client_id otherwise. The
+        # "mode" value is one of "research" / "thinking" / "coding" /
+        # "code" / "__all__" — the wildcard applies across modes when
+        # no exact-mode preference exists.
+        prefs = db["user_model_preferences"]
+        await prefs.create_index(
+            [("user_id", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+        await prefs.create_index(
+            [("client_id", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+
+        # v3 — Per-user multi-model routing strategy. One doc per user
+        # (or client when anonymous). Schema in `set_model_routing`.
+        # The picker UI's "Single | Multi" toggle writes here; backend
+        # callers read it to pick a per-role model when multi-model
+        # mode is on.
+        routing = db["user_model_routing"]
+        await routing.create_index([("user_id", 1)], unique=True, sparse=True)
+        await routing.create_index([("client_id", 1)], unique=True, sparse=True)
+
+        # v4 — Per-(user/client, tag, mode) usage counters. One doc per
+        # tuple, incremented every time a model is bound as a preference
+        # or actively dispatched. The picker reads aggregates to render
+        # "used X×" badges + drives smart-recommendation heuristics.
+        usage = db["user_model_usage"]
+        await usage.create_index(
+            [("user_id", 1), ("tag", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+        await usage.create_index(
+            [("client_id", 1), ("tag", 1), ("mode", 1)],
+            unique=True, sparse=True,
+        )
+
         self._indexes_ready = True
         logger.info("chat_store_indexes_ready")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # User model preferences (More settings → AI Model)
+    #
+    # Optional override of the default Ollama tag, stored per-user (or
+    # per-client when unauthenticated). The settings UI writes here; the
+    # AI handlers read here at request time. Falling back to None means
+    # the caller should auto-select.
+    # ─────────────────────────────────────────────────────────────────────
+
+    PREFERENCE_MODE_ALL = "__all__"
+
+    @staticmethod
+    def _pref_filter(
+        user_id: Optional[str], client_id: str, mode: str,
+    ) -> Dict[str, Any]:
+        """Build the unique-key filter — user_id wins when set, else client_id."""
+        if user_id:
+            return {"user_id": str(user_id), "mode": mode}
+        return {"user_id": None, "client_id": client_id, "mode": mode}
+
+    async def set_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+        model_tag: str,
+        model_source: str = "ollama_registry",
+        display_name: Optional[str] = None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Upsert a model preference for a specific mode (or "__all__").
+
+        ``profile`` is the v3 advanced-options dict — sliders/inputs from
+        the picker's Advanced expansion. Recognised keys:
+          - ``temperature``     (float 0.0–2.0)
+          - ``top_p``           (float 0.0–1.0)
+          - ``top_k``           (int 1–200)
+          - ``repeat_penalty``  (float 1.0–2.0)
+          - ``num_ctx``         (int — context length in tokens)
+          - ``num_gpu``         (int — Ollama GPU layer offload; 0 = CPU only)
+          - ``num_thread``      (int — CPU thread budget)
+          - ``seed``            (int — RNG seed for reproducibility, -1 = random)
+          - ``system_prompt``   (str — prepended to every prompt)
+          - ``mirostat``        (int 0/1/2)
+          - ``stop``            (list[str] — stop sequences)
+
+        The dict is stored verbatim; ModelManager's
+        ``apply_profile_to_options`` whitelists known keys at request
+        time so unknown fields are ignored without crashing Ollama.
+        """
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        flt = self._pref_filter(user_id, client_id, mode)
+        now = _utcnow()
+        update_set: Dict[str, Any] = {
+            "model_tag": model_tag,
+            "model_source": model_source,
+            "display_name": display_name,
+            "updated_at": now,
+        }
+        if profile is not None:
+            # Storing None explicitly clears the profile; an empty dict
+            # is treated the same as None for callers that want "use
+            # Ollama defaults again".
+            update_set["profile"] = profile or None
+        await _write_with_retry(
+            lambda: coll.update_one(
+                flt,
+                {
+                    "$set": update_set,
+                    "$setOnInsert": {**flt, "set_at": now},
+                },
+                upsert=True,
+            ),
+            op_name="set_model_preference",
+        )
+
+    async def get_model_preference_full(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Like ``get_model_preference`` but returns the full doc
+        (tag + profile) rather than just the tag string. Same fallback
+        chain: exact mode → __all__ wildcard → None."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        try:
+            exact = await coll.find_one(
+                self._pref_filter(user_id, client_id, mode)
+            )
+            if exact and exact.get("model_tag"):
+                return self._serialise_pref_doc(exact)
+            wildcard = await coll.find_one(
+                self._pref_filter(user_id, client_id, self.PREFERENCE_MODE_ALL)
+            )
+            if wildcard and wildcard.get("model_tag"):
+                return self._serialise_pref_doc(wildcard)
+        except Exception as exc:
+            logger.warning("get_model_preference_full_failed: %s", exc)
+        return None
+
+    @staticmethod
+    def _serialise_pref_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip Mongo-specific keys; UI/JSON-friendly view."""
+        return {
+            "mode": doc.get("mode"),
+            "model_tag": doc.get("model_tag"),
+            "model_source": doc.get("model_source"),
+            "display_name": doc.get("display_name"),
+            "profile": doc.get("profile") or {},
+            "set_at": doc.get("set_at"),
+            "updated_at": doc.get("updated_at"),
+        }
+
+    async def get_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+    ) -> Optional[str]:
+        """
+        Resolution order:
+          1. Exact (user/client, mode)
+          2. Wildcard (user/client, "__all__")
+          3. None — caller should auto-select
+        """
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        try:
+            exact = await coll.find_one(
+                self._pref_filter(user_id, client_id, mode)
+            )
+            if exact and exact.get("model_tag"):
+                return str(exact["model_tag"])
+            wildcard = await coll.find_one(
+                self._pref_filter(user_id, client_id, self.PREFERENCE_MODE_ALL)
+            )
+            if wildcard and wildcard.get("model_tag"):
+                return str(wildcard["model_tag"])
+        except Exception as exc:
+            logger.warning("get_model_preference_failed: %s", exc)
+        return None
+
+    async def delete_model_preference(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        mode: str,
+    ) -> bool:
+        """Remove a preference; returns True if a row was deleted."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        try:
+            res = await _write_with_retry(
+                lambda: coll.delete_one(self._pref_filter(user_id, client_id, mode)),
+                op_name="delete_model_preference",
+            )
+            return bool(getattr(res, "deleted_count", 0))
+        except Exception as exc:
+            logger.warning("delete_model_preference_failed: %s", exc)
+            return False
+
+    async def get_all_model_preferences(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return {mode: {model_tag, model_source, display_name, profile, ...}}
+        — used by the settings UI to populate the picker on open."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_preferences"]
+        flt: Dict[str, Any] = (
+            {"user_id": str(user_id)} if user_id
+            else {"user_id": None, "client_id": client_id}
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        try:
+            async for doc in coll.find(flt):
+                mode = doc.get("mode") or self.PREFERENCE_MODE_ALL
+                out[mode] = {
+                    "model_tag": doc.get("model_tag"),
+                    "model_source": doc.get("model_source"),
+                    "display_name": doc.get("display_name"),
+                    "profile": doc.get("profile") or {},
+                    "set_at": doc.get("set_at"),
+                    "updated_at": doc.get("updated_at"),
+                }
+        except Exception as exc:
+            logger.warning("get_all_model_preferences_failed: %s", exc)
+        return out
+
+    # ─────────────────────────────────────────────────────────────────────
+    # v3 — Multi-model routing (Single | Per-mode | Per-role | Ensemble)
+    #
+    # The routing doc encodes how the system chooses a model when the
+    # user enables "multi-model orchestration" in the picker. Schema:
+    #
+    #   {
+    #     "user_id": "..." | null, "client_id": "...",
+    #     "strategy": "single" | "per_mode" | "per_role" | "ensemble",
+    #     "single_tag": "qwen2.5:7b" | null,
+    #     "mode_routes": { "research": "tag", "thinking": "tag", "code": "tag" },
+    #     "role_routes": { "planner": "tag", "coder": "tag", "critic": "tag", "reviewer": "tag" },
+    #     "fallback_chain": ["primary:tag", "fallback:tag"],
+    #     "hardware_pref": "auto" | "gpu" | "cpu" | "gpu_partial",
+    #     "gpu_layers": 999,
+    #     "ensemble": { "voting": "majority" | "weighted", "members": ["tag1", "tag2"] }
+    #   }
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _routing_filter(
+        user_id: Optional[str], client_id: str,
+    ) -> Dict[str, Any]:
+        if user_id:
+            return {"user_id": str(user_id)}
+        return {"user_id": None, "client_id": client_id}
+
+    async def set_model_routing(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        routing: Dict[str, Any],
+    ) -> None:
+        """Upsert the user/client routing strategy. Whitelists known keys."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_routing"]
+        flt = self._routing_filter(user_id, client_id)
+        now = _utcnow()
+
+        allowed = {
+            "strategy", "single_tag", "mode_routes", "role_routes",
+            "fallback_chain", "hardware_pref", "gpu_layers", "ensemble",
+        }
+        clean = {k: v for k, v in routing.items() if k in allowed}
+        # Strategy must be one of the four canonical values; default
+        # falls back to "single" so a malformed write doesn't lock the
+        # user into nothing.
+        strat = str(clean.get("strategy") or "single").lower()
+        if strat not in {"single", "per_mode", "per_role", "ensemble"}:
+            strat = "single"
+        clean["strategy"] = strat
+
+        await _write_with_retry(
+            lambda: coll.update_one(
+                flt,
+                {
+                    "$set": {**clean, "updated_at": now},
+                    "$setOnInsert": {**flt, "set_at": now},
+                },
+                upsert=True,
+            ),
+            op_name="set_model_routing",
+        )
+
+    async def get_model_routing(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> Dict[str, Any]:
+        """Return the user/client routing doc, or a default
+        {strategy: "single", ...} when none is set."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_routing"]
+        try:
+            doc = await coll.find_one(self._routing_filter(user_id, client_id))
+            if doc:
+                return {
+                    "strategy": doc.get("strategy") or "single",
+                    "single_tag": doc.get("single_tag"),
+                    "mode_routes": doc.get("mode_routes") or {},
+                    "role_routes": doc.get("role_routes") or {},
+                    "fallback_chain": doc.get("fallback_chain") or [],
+                    "hardware_pref": doc.get("hardware_pref") or "auto",
+                    "gpu_layers": doc.get("gpu_layers"),
+                    "ensemble": doc.get("ensemble") or {},
+                    "updated_at": doc.get("updated_at"),
+                }
+        except Exception as exc:
+            logger.warning("get_model_routing_failed: %s", exc)
+        return {
+            "strategy": "single",
+            "single_tag": None,
+            "mode_routes": {},
+            "role_routes": {},
+            "fallback_chain": [],
+            "hardware_pref": "auto",
+            "gpu_layers": None,
+            "ensemble": {},
+        }
+
+    async def delete_model_routing(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> bool:
+        """Reset the user/client to default (single-model) behaviour."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_routing"]
+        try:
+            res = await _write_with_retry(
+                lambda: coll.delete_one(self._routing_filter(user_id, client_id)),
+                op_name="delete_model_routing",
+            )
+            return bool(getattr(res, "deleted_count", 0))
+        except Exception as exc:
+            logger.warning("delete_model_routing_failed: %s", exc)
+            return False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # v4 — Per-tag usage counters
+    #
+    # Incremented every time a model is bound as a preference or
+    # actively dispatched. The picker reads these to:
+    #   · render a "used 47×" badge on each installed model card
+    #   · feed the smart-recommendation engine ("you mostly use X for Y")
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _usage_filter(
+        user_id: Optional[str], client_id: str,
+        tag: str, mode: str,
+    ) -> Dict[str, Any]:
+        if user_id:
+            return {"user_id": str(user_id), "tag": tag, "mode": mode}
+        return {"user_id": None, "client_id": client_id,
+                "tag": tag, "mode": mode}
+
+    async def increment_model_usage(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+        tag: str,
+        mode: str = "__all__",
+        kind: str = "dispatch",
+    ) -> None:
+        """Bump the (tag, mode) counter by 1 and stamp ``last_used_at``.
+
+        ``kind`` is a short string (``"dispatch"`` for a real LLM call,
+        ``"preference"`` for a Save Profile, ``"pull"`` for a download).
+        Distinct kinds get their own per-doc subcounter under
+        ``counts.<kind>`` so the UI can distinguish "47× dispatch · 3× pull".
+        """
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_usage"]
+        flt = self._usage_filter(user_id, client_id, tag, mode)
+        now = _utcnow()
+        try:
+            await _write_with_retry(
+                lambda: coll.update_one(
+                    flt,
+                    {
+                        "$inc": {
+                            "count_total": 1,
+                            f"counts.{kind}": 1,
+                        },
+                        "$set": {"last_used_at": now, "last_kind": kind},
+                        "$setOnInsert": {**flt, "first_used_at": now},
+                    },
+                    upsert=True,
+                ),
+                op_name="increment_model_usage",
+            )
+        except Exception as exc:
+            logger.debug("increment_model_usage_failed: %s", exc)
+
+    async def get_model_usage(
+        self,
+        *,
+        user_id: Optional[str],
+        client_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return ``{tag: {count_total, counts, last_used_at, …}}`` —
+        aggregated across all modes for this user/client."""
+        await self.ensure_indexes()
+        db = await self._db()
+        coll = db["user_model_usage"]
+        flt: Dict[str, Any] = (
+            {"user_id": str(user_id)} if user_id
+            else {"user_id": None, "client_id": client_id}
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        try:
+            async for doc in coll.find(flt):
+                tag = str(doc.get("tag") or "")
+                if not tag:
+                    continue
+                bucket = out.setdefault(tag, {
+                    "count_total": 0,
+                    "counts": {},
+                    "by_mode": {},
+                    "first_used_at": None,
+                    "last_used_at": None,
+                })
+                bucket["count_total"] += int(doc.get("count_total") or 0)
+                for k, v in (doc.get("counts") or {}).items():
+                    bucket["counts"][k] = bucket["counts"].get(k, 0) + int(v)
+                mode = str(doc.get("mode") or self.PREFERENCE_MODE_ALL)
+                bucket["by_mode"][mode] = (
+                    bucket["by_mode"].get(mode, 0) + int(doc.get("count_total") or 0)
+                )
+                # Keep the most-recent timestamps.
+                last = doc.get("last_used_at")
+                first = doc.get("first_used_at")
+                if last and (bucket["last_used_at"] is None
+                             or last > bucket["last_used_at"]):
+                    bucket["last_used_at"] = last
+                if first and (bucket["first_used_at"] is None
+                              or first < bucket["first_used_at"]):
+                    bucket["first_used_at"] = first
+        except Exception as exc:
+            logger.warning("get_model_usage_failed: %s", exc)
+        return out
 
     async def create_session(
         self,

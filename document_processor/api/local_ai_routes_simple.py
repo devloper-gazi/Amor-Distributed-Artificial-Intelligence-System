@@ -12,7 +12,7 @@ from uuid import uuid4
 import re
 from urllib.parse import quote_plus, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import httpx
@@ -22,6 +22,10 @@ from ..infrastructure.cache import cache_manager
 from ..research import AdvancedResearcher
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 
 try:
     import trafilatura
@@ -837,6 +841,27 @@ _ACTIVE_MODEL: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
     "amor_active_ollama_model", default=None,
 )
 
+# v3 — Per-task advanced-options profile (temperature, top_p, num_gpu,
+# system_prompt, …). Same propagation semantics as _ACTIVE_MODEL: set
+# once at task entry, automatically picked up by every nested call.
+# Stored as a dict so the picker can persist arbitrary Ollama options
+# without baking each one into a typed slot.
+_ACTIVE_PROFILE: _contextvars.ContextVar[Optional[dict]] = _contextvars.ContextVar(
+    "amor_active_ollama_profile", default=None,
+)
+
+# v4 — Per-task agent role + multi-model routing strategy. The
+# per-role / ensemble / fallback-chain logic in `call_ollama_with`
+# reads these ContextVars to decide which tag(s) to dispatch a call
+# to. Both default to "no opinion" — the route layer (or the engine
+# wiring) sets them at task entry / phase entry.
+_ACTIVE_ROLE: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
+    "amor_active_agent_role", default=None,
+)
+_ACTIVE_ROUTING: _contextvars.ContextVar[Optional[dict]] = _contextvars.ContextVar(
+    "amor_active_model_routing", default=None,
+)
+
 
 def set_active_model(model: Optional[str]):
     """Set the per-task override and return the reset token.
@@ -853,6 +878,104 @@ def set_active_model(model: Optional[str]):
     OLLAMA_MODEL).
     """
     return _ACTIVE_MODEL.set(model or None)
+
+
+def set_active_profile(profile: Optional[dict]):
+    """Set the per-task advanced-options profile (v3).
+
+    Same lifecycle as ``set_active_model``. Pass ``None`` or an empty
+    dict to clear; nested calls fall back to Ollama defaults.
+    """
+    return _ACTIVE_PROFILE.set(profile or None)
+
+
+def set_active_role(role: Optional[str]):
+    """Set the per-call agent role (v4) — read by ``call_ollama_with``
+    when the active routing doc has ``strategy="per_role"``.
+
+    Engine phases call this at phase entry, e.g.::
+
+        set_active_role("planner")
+        await llm_call(prompt, system, max_tokens)  # may use planner-specific tag
+    """
+    return _ACTIVE_ROLE.set(role or None)
+
+
+def set_active_routing(routing: Optional[dict]):
+    """Set the per-task multi-model routing doc (v4).
+
+    The doc shape mirrors ``ChatStore.user_model_routing``:
+    ``{strategy, role_routes, fallback_chain, ensemble: {voting, members}}``.
+    """
+    return _ACTIVE_ROUTING.set(routing or None)
+
+
+# ── v4 — per-role / fallback / ensemble helpers (used by call_ollama_with)
+
+
+def _routing_apply_role(model: Optional[str]) -> Optional[str]:
+    """If routing.strategy=='per_role' and the active role has a
+    bound tag, return that tag; otherwise return ``model`` unchanged."""
+    routing = _ACTIVE_ROUTING.get()
+    if not routing:
+        return model
+    if routing.get("strategy") != "per_role":
+        return model
+    role = _ACTIVE_ROLE.get()
+    if not role:
+        return model
+    routes = routing.get("role_routes") or {}
+    return (routes.get(role) or "").strip() or model
+
+
+def _routing_fallback_chain() -> list[str]:
+    """Return the configured fallback chain (may be empty)."""
+    routing = _ACTIVE_ROUTING.get() or {}
+    chain = routing.get("fallback_chain") or []
+    return [str(t).strip() for t in chain if str(t).strip()]
+
+
+def _routing_is_ensemble() -> bool:
+    routing = _ACTIVE_ROUTING.get() or {}
+    if routing.get("strategy") != "ensemble":
+        return False
+    members = (routing.get("ensemble") or {}).get("members") or []
+    return len(members) >= 2
+
+
+def _routing_ensemble_config() -> tuple[list[str], str]:
+    routing = _ACTIVE_ROUTING.get() or {}
+    ens = routing.get("ensemble") or {}
+    members = [str(t).strip() for t in (ens.get("members") or []) if str(t).strip()]
+    voting = str(ens.get("voting") or "majority").lower()
+    if voting not in {"majority", "weighted", "first"}:
+        voting = "majority"
+    return members, voting
+
+
+def _resolve_profile() -> dict:
+    """Read the contextvar profile and translate it to Ollama options.
+
+    Imported lazily to avoid circular dep with services.model_manager."""
+    prof = _ACTIVE_PROFILE.get()
+    if not prof:
+        return {}
+    try:
+        from ..services.model_manager import ModelManager  # noqa: PLC0415
+        return ModelManager.apply_profile_to_options(prof)
+    except Exception:  # pragma: no cover
+        return {}
+
+
+def _resolve_system_prompt() -> Optional[str]:
+    prof = _ACTIVE_PROFILE.get()
+    if not prof:
+        return None
+    try:
+        from ..services.model_manager import ModelManager  # noqa: PLC0415
+        return ModelManager.system_prompt_from_profile(prof)
+    except Exception:  # pragma: no cover
+        return None
 
 
 def _resolve_model(model: Optional[str]) -> str:
@@ -946,21 +1069,199 @@ async def call_ollama_with(
     """
     Same contract as ``call_ollama`` but takes an explicit model tag.
 
+    v4 — also honors three runtime knobs from ContextVars (set by the
+    routes layer at task / phase entry):
+
+      * ``per_role`` strategy + ``_ACTIVE_ROLE`` → swap ``model`` for
+        the role's bound tag from ``routing.role_routes``.
+      * ``ensemble`` strategy → fan out to N members in parallel and
+        vote (``majority`` / ``weighted`` / ``first``).
+      * ``fallback_chain`` → if the chosen tag fails (HTTP error / 404
+        on a missing model that auto-pull couldn't recover), try each
+        chain member in order before bailing.
+
     When ``model`` is ``None`` / empty / whitespace, falls back to
     ``OLLAMA_MODEL`` so callers can blindly pass through a
-    ``preferred_model`` field from the request body.
-
-    The cache key includes the model so two different tags never share
-    cached responses.
+    ``preferred_model`` field from the request body. The cache key
+    includes the *effective* model (post-role override) so two
+    different role tags never share cached responses.
     """
-    resolved = _resolve_model(model)
+    # Ensemble bypasses the cache — every call hits all members.
+    if _routing_is_ensemble():
+        return await _call_ollama_ensemble(prompt, system, max_tokens)
+
+    # Apply per-role override BEFORE resolution so the cache key is
+    # right and per-role logs are accurate.
+    role_overridden = _routing_apply_role(model)
+    resolved = _resolve_model(role_overridden)
     cached = await _llm_cache_get(prompt, system, max_tokens, resolved)
     if cached is not None:
         logger.debug("llm cache hit model=%s len=%d", resolved, len(cached))
         return cached
-    response = await _call_ollama_uncached_with(resolved, prompt, system, max_tokens)
-    await _llm_cache_set(prompt, system, max_tokens, response, resolved)
-    return response
+
+    # Walk the fallback chain: primary first, then routing.fallback_chain.
+    chain = [resolved]
+    for tag in _routing_fallback_chain():
+        if tag and tag.lower() != resolved.lower() and tag not in chain:
+            chain.append(tag)
+
+    last_exc: Exception | None = None
+    for idx, tag in enumerate(chain):
+        try:
+            response = await _call_ollama_uncached_with(
+                tag, prompt, system, max_tokens,
+            )
+            if idx > 0:
+                logger.warning(
+                    "call_ollama_fallback_used primary=%s used=%s pos=%d",
+                    resolved, tag, idx,
+                )
+            await _llm_cache_set(prompt, system, max_tokens, response, tag)
+            return response
+        except HTTPException as exc:
+            last_exc = exc
+            if exc.status_code in (404, 503) and idx + 1 < len(chain):
+                logger.warning(
+                    "call_ollama_chain_step_failed tag=%s status=%s "
+                    "trying_next_in_chain", tag, exc.status_code,
+                )
+                continue
+            raise
+        except Exception as exc:  # network blow-ups
+            last_exc = exc
+            if idx + 1 < len(chain):
+                logger.warning(
+                    "call_ollama_chain_step_failed tag=%s err=%s "
+                    "trying_next_in_chain", tag, exc,
+                )
+                continue
+            raise
+    # Defensive — should be unreachable, the loop either returns or raises.
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("call_ollama_with: empty fallback chain")
+
+
+async def _call_ollama_ensemble(
+    prompt: str, system: Optional[str], max_tokens: int,
+) -> str:
+    """
+    Ensemble dispatcher — runs every member in parallel and picks the
+    consensus answer per the configured voting strategy.
+
+    Voting strategies
+    -----------------
+    * ``first``    — return the first member to finish; cancel the rest
+                     (lowest latency, no consensus check).
+    * ``weighted`` — pick the longest non-empty response (proxy for
+                     "more thoughtful" without a vote oracle).
+    * ``majority`` — score each response by mean Jaccard similarity to
+                     the others and return the highest. Robust to one
+                     outlier in a 3-member ensemble.
+    """
+    members, voting = _routing_ensemble_config()
+    if not members:
+        # Defensive — _routing_is_ensemble() should already have ruled this out.
+        return await _call_ollama_uncached_with(
+            _resolve_model(None), prompt, system, max_tokens,
+        )
+
+    logger.info(
+        "call_ollama_ensemble_dispatch members=%s voting=%s",
+        members, voting,
+    )
+
+    if voting == "first":
+        # asyncio.wait + cancellation: return the first non-empty.
+        tasks = {
+            asyncio.create_task(
+                _call_ollama_uncached_with(m, prompt, system, max_tokens)
+            ): m
+            for m in members
+        }
+        try:
+            done, pending = await asyncio.wait(
+                tasks.keys(), return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            for t in done:
+                try:
+                    res = t.result()
+                    if res:
+                        return res
+                except Exception as exc:
+                    logger.warning("ensemble_first_member_failed: %s", exc)
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+        # Fallback — all members either failed or returned empty.
+        # Raise the first non-cancellation exception we can find;
+        # cancelled tasks raise CancelledError from .exception() which
+        # would mask the real error, so skip them.
+        for t in tasks:
+            if t.done() and not t.cancelled():
+                exc = t.exception()
+                if exc:
+                    raise exc
+        return ""
+
+    # majority / weighted — collect every response, then pick.
+    results = await asyncio.gather(
+        *[
+            _call_ollama_uncached_with(m, prompt, system, max_tokens)
+            for m in members
+        ],
+        return_exceptions=True,
+    )
+    successes: list[tuple[str, str]] = [
+        (members[i], r) for i, r in enumerate(results)
+        if isinstance(r, str) and r.strip()
+    ]
+    if not successes:
+        # Re-raise the first exception we saw.
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+        return ""
+
+    if voting == "weighted":
+        winner_tag, winner_resp = max(successes, key=lambda x: len(x[1]))
+        logger.info(
+            "ensemble_weighted_winner tag=%s len=%d",
+            winner_tag, len(winner_resp),
+        )
+        return winner_resp
+
+    # majority — Jaccard on token bags.
+    def _tokens(s: str) -> set[str]:
+        return {w for w in s.lower().split() if w}
+
+    bags = [(t, _tokens(r), r) for t, r in successes]
+    if len(bags) == 1:
+        return bags[0][2]
+
+    def _score(tag_resp: tuple[str, set, str]) -> float:
+        _, my_bag, _ = tag_resp
+        if not my_bag:
+            return 0.0
+        sims = []
+        for ot, ob, _ in bags:
+            if ot == _ or not ob:
+                continue
+            inter = len(my_bag & ob)
+            union = len(my_bag | ob)
+            sims.append((inter / union) if union else 0.0)
+        return sum(sims) / len(sims) if sims else 0.0
+
+    bags.sort(key=_score, reverse=True)
+    winner_tag, _, winner_resp = bags[0]
+    logger.info(
+        "ensemble_majority_winner tag=%s candidates=%d",
+        winner_tag, len(bags),
+    )
+    return winner_resp
 
 
 async def call_ollama(
@@ -982,6 +1283,19 @@ async def _call_ollama_uncached(
     return await _call_ollama_uncached_with(OLLAMA_MODEL, prompt, system, max_tokens)
 
 
+def _merge_profile_options(max_tokens: int) -> dict:
+    """Build the Ollama ``options`` dict, layering profile overrides on
+    top of system defaults. Profile values from ``_ACTIVE_PROFILE``
+    win over the env-default temperature / num_predict so per-model
+    sliders in the picker actually steer the daemon."""
+    base = {
+        "num_predict": max_tokens,
+        "temperature": _OLLAMA_TEMPERATURE,
+    }
+    base.update(_resolve_profile())
+    return base
+
+
 async def _call_ollama_uncached_with(
     model: str,
     prompt: str,
@@ -994,7 +1308,13 @@ async def _call_ollama_uncached_with(
     doesn't have it we attempt one auto-pull (when configured) and
     retry. On unrecoverable error, surfaces an HTTPException so the
     upper layers fall through to error-handling rather than silently
-    using OLLAMA_MODEL behind the user's back."""
+    using OLLAMA_MODEL behind the user's back.
+
+    v3 — when a profile is bound via ``set_active_profile``, its
+    Ollama options merge on top of the defaults *and* its
+    ``system_prompt`` is used when the caller didn't pass one. This
+    lets the picker's Advanced sliders + system-prompt textarea
+    actually take effect without changing every call site."""
     try:
         # Ensure the *configured default* model is available — the
         # legacy auto-pull pipe only knows about OLLAMA_MODEL. For the
@@ -1003,18 +1323,18 @@ async def _call_ollama_uncached_with(
         # already invoked, OR a 404 retry below.
         await _ensure_ollama_ready()
 
+        merged_opts = _merge_profile_options(max_tokens)
+        effective_system = system or _resolve_system_prompt() or ""
+
         async with httpx.AsyncClient(timeout=OLLAMA_HTTP_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
                     "model": model,
                     "prompt": prompt,
-                    "system": system or "",
+                    "system": effective_system,
                     "stream": False,
-                    "options": {
-                        "num_predict": max_tokens,
-                        "temperature": _OLLAMA_TEMPERATURE,
-                    },
+                    "options": merged_opts,
                 },
             )
 
@@ -1041,19 +1361,17 @@ async def _call_ollama_uncached_with(
                     json={
                         "model": model,
                         "prompt": prompt,
-                        "system": system or "",
+                        "system": effective_system,
                         "stream": False,
-                        "options": {
-                            "num_predict": max_tokens,
-                            "temperature": _OLLAMA_TEMPERATURE,
-                        },
+                        "options": merged_opts,
                     },
                 )
                 if retry.status_code == 200:
                     return retry.json().get("response", "")
                 # Fallback to OLLAMA_MODEL if the user's tag still doesn't
                 # work — better to answer with the default than to 500
-                # the whole pipeline.
+                # the whole pipeline. Profile options still apply (the
+                # user wanted those even if their tag is unavailable).
                 if model != OLLAMA_MODEL:
                     logger.warning(
                         "ollama_falling_back_to_default tag=%s default=%s",
@@ -1064,12 +1382,9 @@ async def _call_ollama_uncached_with(
                         json={
                             "model": OLLAMA_MODEL,
                             "prompt": prompt,
-                            "system": system or "",
+                            "system": effective_system,
                             "stream": False,
-                            "options": {
-                                "num_predict": max_tokens,
-                                "temperature": _OLLAMA_TEMPERATURE,
-                            },
+                            "options": merged_opts,
                         },
                     )
                     if fallback.status_code == 200:
@@ -1226,7 +1541,10 @@ async def list_ollama_models():
 async def start_research(
     request: LocalAIResearchRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ):
     """Start autonomous research on a topic using Ollama."""
     # Ensure Ollama is reachable and the configured model is available (or can be auto-pulled).
@@ -1251,6 +1569,36 @@ async def start_research(
         # Create session
         session_id = str(uuid4())
 
+        # Server-side model resolution. Order:
+        #   1. request.preferred_model (the picker JS sets this when the
+        #      user explicitly chose a tag for this run)
+        #   2. per-user/client MongoDB pref for "research" (then "__all__")
+        #   3. ModelManager.auto_select for the depth tier
+        # `model_reason` goes onto the session payload so the SSE phase
+        # log can surface "Using qwen2.5-coder:7b — user preference".
+        client_id_hdr = (x_client_id or "").strip() or session_id
+        depth_for_pick = (request.depth or "medium").strip().lower() or "medium"
+        resolved_profile: Optional[dict] = None
+        try:
+            resolved_model, resolved_profile, model_reason = (
+                await resolve_request_model_full(
+                    request=http_request,
+                    requested_model=request.preferred_model,
+                    user_id=user.id,
+                    client_id=client_id_hdr,
+                    mode="research",
+                    effort=depth_for_pick,
+                )
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("research_resolve_request_model_failed: %s", exc)
+            resolved_model, model_reason = (request.preferred_model, "fallback")
+
+        # Spec validation point #1 — surface the resolved Ollama tag on
+        # the response so clients (and the picker UI) can verify which
+        # model the run will actually use.
+        response.headers["X-Model-Used"] = (resolved_model or OLLAMA_MODEL)
+
         # Initialize session tracking
         research_sessions[session_id] = {
             "session_id": session_id,
@@ -1270,7 +1618,13 @@ async def start_research(
             "cancel_requested": False,
             # Optional Ollama tag override (More settings → AI Model).
             # Empty / None → fall through to OLLAMA_MODEL.
-            "preferred_model": request.preferred_model,
+            "preferred_model": resolved_model,
+            "preferred_model_requested": request.preferred_model,
+            "preferred_model_reason": model_reason,
+            # v3 — advanced profile (temperature, num_gpu, …) bound to
+            # this run; the worker stuffs it into _ACTIVE_PROFILE so
+            # every nested call_ollama() picks it up.
+            "preferred_model_profile": resolved_profile,
         }
         await _persist_session(session_id, research_sessions[session_id])
 
@@ -1804,6 +2158,9 @@ async def execute_advanced_research(
     # Stored on the session payload, read here once, propagated to
     # every nested call_ollama() via ContextVar.
     _model_token = set_active_model(session.get("preferred_model"))
+    # v3 — advanced profile (temperature, num_gpu, system_prompt, …)
+    # propagated the same way; cleared at task exit just like the model.
+    _profile_token = set_active_profile(session.get("preferred_model_profile"))
 
     async def llm(prompt: str, system: Optional[str], max_tokens: int) -> str:
         return await call_ollama(prompt, system, max_tokens)

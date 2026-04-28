@@ -23,12 +23,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ..auth.dependencies import get_current_user
 from ..auth.models import User
 from ..infrastructure.cache import cache_manager
+from ..services.model_resolution import (
+    resolve_request_model,
+    resolve_request_model_full,
+)
 from ..thinking import ThinkingEngine
 from ..thinking.engine import _extract_json
 from ..thinking.models import (
@@ -311,7 +315,10 @@ async def analyze(
 async def start_think(
     payload: ThinkRequest,
     background: BackgroundTasks,
+    http_request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> ThinkResponse:
     """
     Kick off a thinking session. Returns immediately with a session_id;
@@ -322,6 +329,31 @@ async def start_think(
     deliverable = payload.detected_deliverable
     if deliverable == "auto":
         deliverable = "explanation"
+
+    # Server-side model resolution — see local_ai_routes_simple.start_research
+    # for the full rationale. Mode = "thinking", effort tier = payload.effort.
+    client_id_hdr = (x_client_id or "").strip() or session_id
+    resolved_profile: Optional[Dict[str, Any]] = None
+    try:
+        resolved_model, resolved_profile, model_reason = (
+            await resolve_request_model_full(
+                request=http_request,
+                requested_model=payload.preferred_model,
+                user_id=str(user.id),
+                client_id=client_id_hdr,
+                mode="thinking",
+                effort=(payload.effort or "medium").strip().lower() or "medium",
+            )
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("thinking_resolve_request_model_failed: %s", exc)
+        resolved_model, model_reason = (payload.preferred_model, "fallback")
+
+    # Spec validation point #1 — surface the resolved Ollama tag so the
+    # client can verify which model the run will use.
+    response.headers["X-Model-Used"] = (
+        resolved_model or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+    )
 
     session: Dict[str, Any] = {
         "session_id": session_id,
@@ -369,7 +401,11 @@ async def start_think(
         "cancel_requested": False,
         # Optional Ollama tag override (More settings → AI Model).
         # Empty / None → engine's llm_call uses OLLAMA_MODEL.
-        "preferred_model": payload.preferred_model,
+        "preferred_model": resolved_model,
+        "preferred_model_requested": payload.preferred_model,
+        "preferred_model_reason": model_reason,
+        # v3 — advanced profile bound to this run.
+        "preferred_model_profile": resolved_profile,
     }
     _sessions[session_id] = session
     await _persist(session_id, session)
@@ -412,6 +448,14 @@ async def _run_session(session_id: str) -> None:
             set_active_model(session["preferred_model"])
         except Exception as _exc:  # noqa: BLE001
             logger.debug("preferred_model_contextvar_set_failed: %s", _exc)
+    # v3 — advanced profile (temperature, num_gpu, system_prompt, …)
+    # propagated the same way.
+    if session.get("preferred_model_profile"):
+        try:
+            from .local_ai_routes_simple import set_active_profile
+            set_active_profile(session["preferred_model_profile"])
+        except Exception as _exc:  # noqa: BLE001
+            logger.debug("preferred_model_profile_contextvar_set_failed: %s", _exc)
 
     llm = _pick_llm(session["provider"])
 

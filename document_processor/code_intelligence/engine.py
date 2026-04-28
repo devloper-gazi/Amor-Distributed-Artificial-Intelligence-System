@@ -172,6 +172,13 @@ class CodeIntelligenceEngine:
         # NoopHooks; routes wire ChainedHooks(TelemetryHooks(), ...)
         # when they want span emission per phase.
         hooks: PhaseHooks | None = None,
+        # v4 — per-phase agent-role hint. Routes wire this to the
+        # local-AI ContextVar `set_active_role` so multi-model strategy
+        # (per_role / ensemble) can pick a different tag for each
+        # phase without changing the engine's LLM-agnostic shape.
+        # Called once at the START of every agent phase with the role
+        # name (e.g. "planner", "coder", "tester", "debugger", "critic").
+        role_setter: Callable[[str | None], Any] | None = None,
     ) -> None:
         self.prompt = prompt
         self.code_context = code_context or None
@@ -195,6 +202,9 @@ class CodeIntelligenceEngine:
         self._on_event = on_event or _noop_event
         # PhaseHooks default = NoopHooks (zero overhead, never raises).
         self._hooks: PhaseHooks = hooks or NoopHooks()
+        # v4 — role_setter is a no-op fallback so engine code stays
+        # branch-free at every phase boundary.
+        self._role_setter = role_setter or (lambda _r: None)
 
         self.phases: list[CodePhase] = [
             CodePhase(name=name, label=label) for name, label in CODE_PHASES
@@ -297,6 +307,7 @@ class CodeIntelligenceEngine:
         return {"models_used": self.models_used}
 
     async def _phase_plan(self) -> dict[str, Any]:
+        self._role_setter("planner")
         agent = PlannerAgent(self.llm_call, max_tokens=self._budgets["plan"])
         out = await agent.run(
             AgentContext(
@@ -316,6 +327,7 @@ class CodeIntelligenceEngine:
         return out.data
 
     async def _phase_implement(self) -> dict[str, Any]:
+        self._role_setter("coder")
         agent = CoderAgent(self.llm_call, max_tokens=self._budgets["implement"])
         out = await agent.run(
             AgentContext(
@@ -395,6 +407,7 @@ class CodeIntelligenceEngine:
         }:
             self._skip("test", "non-code deliverable")
             return {"skipped": True}
+        self._role_setter("tester")
         agent = TesterAgent(self.llm_call, max_tokens=self._budgets["test"])
         out = await agent.run(
             AgentContext(
@@ -441,6 +454,7 @@ class CodeIntelligenceEngine:
             self._skip("debug", "execution already passing")
             return {"skipped": True, "reason": "no failure"}
 
+        self._role_setter("debugger")
         debugger = DebuggerAgent(self.llm_call, max_tokens=self._budgets["debug"])
 
         last_result: dict[str, Any] = {}
@@ -551,6 +565,7 @@ class CodeIntelligenceEngine:
         if not self.code:
             self._skip("review", "no code to review")
             return {"skipped": True}
+        self._role_setter("critic")
         agent = CriticAgent(self.llm_call, max_tokens=self._budgets["review"])
         exec_feedback = None
         if self.execution_results:

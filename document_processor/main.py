@@ -64,6 +64,23 @@ except ImportError as _code_exc:  # pragma: no cover
     CODE_INTELLIGENCE_AVAILABLE = False
     logger.warning("Code intelligence routes not available: %s", _code_exc)
 
+# Unified model management (More Settings → AI Model picker)
+try:
+    from .api.model_routes import router as model_router
+    from .services.model_manager import ModelManager
+    MODEL_ROUTES_AVAILABLE = True
+except ImportError as _model_exc:  # pragma: no cover
+    MODEL_ROUTES_AVAILABLE = False
+    logger.warning("Model routes not available: %s", _model_exc)
+
+# Consortium Mode — meta-orchestrator chaining Code Intelligence + Research + Thinking
+try:
+    from .api.consortium_routes import router as consortium_router
+    CONSORTIUM_AVAILABLE = True
+except ImportError as _cons_exc:  # pragma: no cover
+    CONSORTIUM_AVAILABLE = False
+    logger.warning("Consortium routes not available: %s", _cons_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -107,12 +124,23 @@ async def _sse_queue_sweeper() -> None:
                 c_dropped = await code_intelligence_routes.sweep_stale_event_queues()
             except Exception:
                 pass
-            if t_dropped or r_dropped or c_dropped:
+            # v7 — also sweep consortium zombies + queues.
+            cons_zombies = 0
+            cons_dropped = 0
+            try:
+                from .api import consortium_routes
+                cons_zombies = await consortium_routes.sweep_zombies_periodic()
+                cons_dropped = await consortium_routes.sweep_stale_event_queues()
+            except Exception:
+                pass
+            if t_dropped or r_dropped or c_dropped or cons_zombies or cons_dropped:
                 logger.info(
                     "sse_queue_sweep",
                     thinking=t_dropped,
                     research=r_dropped,
                     code=c_dropped,
+                    consortium_zombies=cons_zombies,
+                    consortium_queues=cons_dropped,
                 )
         except Exception as exc:
             logger.warning("sse_queue_sweep_failed", error=str(exc))
@@ -203,9 +231,47 @@ async def lifespan(app: FastAPI):
             )
             logger.info("local_ai_initialized")
 
+        # Unified ModelManager — singleton on app.state. Created on
+        # demand by /api/models/* routes if missing, but pre-instantiating
+        # here lets us run the first installed-models probe early so the
+        # picker UI doesn't take 8s to render on the first open.
+        if MODEL_ROUTES_AVAILABLE:
+            try:
+                app.state.model_manager = ModelManager()
+                # Best-effort warm probe — failure logs but doesn't block.
+                _asyncio_main.create_task(
+                    app.state.model_manager.list_installed(force_refresh=True),
+                )
+                logger.info("model_manager_initialized")
+            except Exception as e:
+                logger.warning("model_manager_init_failed", error=str(e))
+
         # Phase D4 sweeper task — must outlive every request.
         sweeper_task = _asyncio_main.create_task(_sse_queue_sweeper())
         logger.info("sse_queue_sweeper_started")
+
+        # v7 — at startup, mark any consortium sessions whose bg task
+        # died with a previous container as "interrupted". Without
+        # this, /status would forever claim the dead session is still
+        # running. Fire-and-forget so a Redis hiccup never blocks
+        # startup. Multi-replica safe: every replica races to the same
+        # work but each session-flip is idempotent (status field check).
+        if CONSORTIUM_AVAILABLE:
+            async def _consortium_zombie_sweep_at_startup() -> None:
+                try:
+                    from .api import consortium_routes as _cr
+                    flipped = await _cr.mark_zombies_at_startup()
+                    if flipped:
+                        logger.info(
+                            "consortium_zombies_marked_at_startup count=%d",
+                            flipped,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "consortium_zombie_sweep_at_startup_failed",
+                        error=str(e),
+                    )
+            _asyncio_main.create_task(_consortium_zombie_sweep_at_startup())
 
         # Code Intelligence warm-up — fire and forget.
         if CODE_INTELLIGENCE_AVAILABLE:
@@ -365,6 +431,16 @@ if THINKING_AVAILABLE:
 if CODE_INTELLIGENCE_AVAILABLE:
     app.include_router(code_intelligence_router)
     logger.info("Code intelligence routes included")
+
+# Unified model management — /api/models/* (More Settings → AI Model)
+if MODEL_ROUTES_AVAILABLE:
+    app.include_router(model_router)
+    logger.info("Model routes included")
+
+# Consortium Mode — /api/consortium/* (meta-orchestrator)
+if CONSORTIUM_AVAILABLE:
+    app.include_router(consortium_router)
+    logger.info("Consortium routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

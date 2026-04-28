@@ -68,6 +68,12 @@ class ChatController {
             }
         });
         this.chatInput?.addEventListener('input', () => this.updateCharacterCount());
+        // v4 — debounced model recommendation as the user types.
+        // Idempotent (the method handles short prompts + dismissed state).
+        this.chatInput?.addEventListener('input', () => {
+            try { this._refreshRecommendation?.(this.chatInput.value || ''); }
+            catch (_) {}
+        });
         this.useClaudeAPI?.addEventListener('change', () => this.updateAIMode());
 
         // Auto-resize textarea
@@ -1635,17 +1641,17 @@ class ChatController {
         }
     }
 
-    // ── AI Model picker (More settings → AI Model) ──────────────────────
+    // ── AI Model selector (More settings → AI Model) ───────────────────
     //
-    // Three pieces:
-    //   1. Read / save / clear the user's choice from localStorage
-    //      under `amor.preferredModel`.
-    //   2. Fetch the catalogue from /api/code/models and populate the
-    //      dropdown grouped by tier (flagship / balanced / lightweight).
-    //   3. Stream a Pull when the user picks a non-installed tag or
-    //      types a custom one.
-    // The selection is sent as `preferred_model` on every outbound mode
-    // request so backend handlers can use it.
+    // Three-tab UI backed by /api/models/* (Installed / Pull / Upload).
+    // Per-mode scope toggle decides whether the chosen tag binds to a
+    // single mode or all modes. Server-side resolution means the mere
+    // act of saving a preference is enough — the next request, even
+    // without a `preferred_model` field on the wire, will use it.
+    //
+    // localStorage `amor.preferredModel` is still written so:
+    //  (a) the topbar chip shows the active tag without an HTTP call;
+    //  (b) outbound bodies can carry preferred_model for back-compat.
 
     _MODEL_LS_KEY = 'amor.preferredModel';
 
@@ -1667,152 +1673,625 @@ class ChatController {
         } catch (_) { /* best-effort */ }
     }
 
-    /**
-     * Initialise the AI Model picker UI. Idempotent — safe to call
-     * every time the settings panel opens. The catalogue HTTP fetch
-     * runs only once per session (cached).
-     */
-    async _initModelPicker() {
-        if (this._modelPickerInited) return;
-        this._modelPickerInited = true;
-
-        const select = document.getElementById('aiModelSelect');
-        const customInput = document.getElementById('customModelTag');
-        const pullBtn = document.getElementById('pullModelBtn');
-        const currentEl = document.getElementById('panelModelCurrent');
-        if (!select) return;
-
-        // Populate the dropdown from the cached catalogue.
-        await this._loadModelCatalogue();
-
-        // Restore previous selection from localStorage.
-        const saved = this._readPreferredModel();
-        if (saved) {
-            const exists = Array.from(select.options).some(o => o.value === saved);
-            if (exists) {
-                select.value = saved;
-            } else {
-                // Custom tag — preserve the value by injecting an option.
-                const opt = document.createElement('option');
-                opt.value = saved;
-                opt.textContent = `${saved} (custom)`;
-                select.appendChild(opt);
-                select.value = saved;
-            }
-        } else {
-            select.value = '';
+    /** Idempotent state holder for the picker. */
+    _modelState() {
+        if (!this._modelStateObj) {
+            this._modelStateObj = {
+                scope: '__all__',         // active scope tab
+                tab: 'installed',         // active source tab
+                installed: [],            // list of {tag, display_name, ...}
+                catalogue: [],            // pullable catalogue entries
+                preferences: {},          // { mode: {model_tag, profile, ...} }
+                autoSelect: null,         // {tag, reason}
+                ollamaUp: true,
+                pendingFile: null,        // currently-staged upload File
+                pendingFileBytes: 0,
+                uploading: false,
+                pulling: false,
+                // ── v3 additions ────────────────────────────────────────
+                hardware: null,           // /api/models/hardware payload
+                hardwarePref: 'auto',     // auto | gpu | gpu_partial | cpu
+                gpuLayers: 999,           // Ollama num_gpu, used when hardwarePref=gpu_partial
+                strategy: 'single',       // single | per_mode | per_role | ensemble
+                routing: null,            // /api/models/routing payload
+                discoverResults: [],      // search results
+                discoverQuery: '',
+                discoverSource: 'all',
+                expandedTag: null,        // currently-expanded card's tag (one at a time)
+                tested: {},               // tag → {output, elapsed_ms} cache
+                ensembleMembers: [],      // selected tags for ensemble strategy
+                // ── v4 additions ────────────────────────────────────────
+                usage: {},                // tag → {count_total, by_mode, last_used_at}
+                recommendation: null,     // {tag, reason, score, candidates}
+                recommendDismissed: false,
+                recommendQueryToken: 0,   // debounce token for /recommend
+                liveTokRate: 0,           // streaming tok/s during Try it
+            };
         }
-        this._refreshModelCurrentLabel(currentEl, select.value);
-        this._renderModelChip();
+        return this._modelStateObj;
+    }
 
-        // Wire change handler.
-        select.addEventListener('change', () => {
-            const tag = select.value || '';
-            this._writePreferredModel(tag);
-            this._refreshModelCurrentLabel(currentEl, tag);
-            this._renderModelChip();
-        });
+    // ── v4 — Preset library (Advanced expansion) ────────────────────────
 
-        // Wire the Pull button — handles both "selected catalogue tag
-        // not yet installed" and "custom-tag input".
-        pullBtn?.addEventListener('click', () => {
-            const customTag = (customInput?.value || '').trim();
-            const target = customTag || select.value;
-            if (!target) {
-                customInput?.focus();
-                return;
+    /** Hand-tuned slider preset library. Each value is what gets loaded
+     *  when the user clicks a preset button in the Advanced panel. */
+    _modelPresets() {
+        return {
+            creative: {
+                temperature: 1.0, top_p: 0.95, top_k: 60,
+                repeat_penalty: 1.05, num_ctx: 8192, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'High variance, broad sampling — good for ideation, brainstorms, marketing copy.',
+            },
+            precise: {
+                temperature: 0.2, top_p: 0.7, top_k: 20,
+                repeat_penalty: 1.1, num_ctx: 8192, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Tight sampling — factual Q&A, summarisation, instruction following.',
+            },
+            coding: {
+                temperature: 0.15, top_p: 0.95, top_k: 40,
+                repeat_penalty: 1.05, num_ctx: 16384, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Low temperature + larger context — code generation, refactoring, bug fixes.',
+            },
+            long_form: {
+                temperature: 0.7, top_p: 0.9, top_k: 40,
+                repeat_penalty: 1.15, num_ctx: 32768, num_gpu: 999,
+                num_thread: 8, seed: -1,
+                _description: 'Balanced sampling + 32k context — essays, deep research, multi-page docs.',
+            },
+            deterministic: {
+                temperature: 0.0, top_p: 1.0, top_k: 1,
+                repeat_penalty: 1.0, num_ctx: 4096, num_gpu: 999,
+                num_thread: 8, seed: 42,
+                _description: 'Greedy decoding + fixed seed — reproducible outputs, regression tests.',
+            },
+        };
+    }
+
+    /** Lazy-init the picker on first panel-open. */
+    async _initModelPicker() {
+        // Backwards-compatible name — defers to initModelSelector once.
+        return this.initModelSelector();
+    }
+
+    /**
+     * Initialise the picker. Wiring happens once; data refresh on every
+     * call (cheap — backed by 2-min server-side cache).
+     */
+    async initModelSelector() {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+
+        // One-time wiring — tab buttons, scope buttons, drop-zone, etc.
+        if (!root.dataset.wired) {
+            root.dataset.wired = '1';
+            this._wireModelTabs(root);
+            this._wireModelScope(root);
+            this._wireModelPullButton();
+            this._wireModelUpload();
+            // v3 — additional surfaces.
+            this._wireHardwarePanel(root);
+            this._wireModelStrategy(root);
+            this._wireDiscoverTab(root);
+            this._wireEnsembleConfig(root);
+            // Topbar chip wiring — opens the panel + jumps to picker.
+            const chip = document.getElementById('topBarModelChip');
+            if (chip && !chip.dataset.wired) {
+                chip.dataset.wired = '1';
+                chip.addEventListener('click', () => {
+                    if (typeof this.openResearchSettingsPanel === 'function') {
+                        this.openResearchSettingsPanel();
+                    }
+                    setTimeout(() => root.scrollIntoView({behavior: 'smooth'}), 50);
+                });
             }
-            this._pullModel(target).catch(err => {
-                console.warn('model pull failed:', err);
+        }
+
+        // Refresh data + render every time.
+        await this._refreshModelData();
+        // v3 — async hardware probe + routing fetch run in parallel
+        // with the main render so the panel never blocks on them.
+        this._refreshHardware().catch(err =>
+            console.warn('hardware probe failed:', err));
+        this._refreshRouting().catch(err =>
+            console.warn('routing fetch failed:', err));
+    }
+
+    _wireModelTabs(root) {
+        root.querySelectorAll('.model-tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                if (!tab) return;
+                this._modelState().tab = tab;
+                root.querySelectorAll('.model-tab').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                root.querySelectorAll('.model-tab-panel').forEach(p => {
+                    const match = p.dataset.tabPanel === tab;
+                    p.classList.toggle('active', match);
+                    p.hidden = !match;
+                });
             });
-        });
-
-        // Pressing Enter in the custom-tag input also triggers Pull.
-        customInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                pullBtn?.click();
-            }
         });
     }
 
-    async _loadModelCatalogue() {
-        const select = document.getElementById('aiModelSelect');
-        if (!select) return;
-        let data;
+    _wireModelScope(root) {
+        root.querySelectorAll('.model-scope-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const scope = btn.dataset.scope || '__all__';
+                this._modelState().scope = scope;
+                root.querySelectorAll('.model-scope-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                // Re-render so per-mode "is_preferred" reflects the new scope.
+                this._refreshModelData().catch(err =>
+                    console.warn('model scope refresh failed:', err));
+            });
+        });
+    }
+
+    /**
+     * Hit /api/models?mode=<scope> and re-render Installed / Pull tabs.
+     * Falls back gracefully if Ollama is unreachable.
+     *
+     * v4 — also captures the embedded `hardware` envelope (so the
+     * picker doesn't need a separate /hardware roundtrip on first
+     * paint) and the per-tag `usage` counts.
+     */
+    async _refreshModelData() {
+        const state = this._modelState();
+        const url = `/api/models?mode=${encodeURIComponent(state.scope)}&effort=medium`;
         try {
-            const resp = await this._authFetch('/api/code/models');
-            if (!resp.ok) throw new Error(`status ${resp.status}`);
-            data = await resp.json();
-        } catch (e) {
-            console.warn('model catalogue fetch failed:', e);
+            const resp = await this._authFetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.installed = Array.isArray(data.installed) ? data.installed : [];
+            state.catalogue = Array.isArray(data.catalogue) ? data.catalogue : [];
+            state.autoSelect = data.auto_select || null;
+            state.ollamaUp = !!data.ollama_available;
+            // Keep `preferences` in sync with what the server says is
+            // active for THIS scope — used by the rendering pass.
+            state.preferences = state.preferences || {};
+            state.preferences[state.scope] = data.active_preference || {};
+            // v4 — hardware envelope embedded in the list response.
+            if (data.hardware) {
+                state.hardware = data.hardware;
+                this._renderHardwarePanel();
+            }
+            // v4 — collect usage map from card-level `usage` fields.
+            const usage = {};
+            for (const m of state.installed) {
+                if (m.usage && m.usage.count_total) usage[m.tag] = m.usage;
+            }
+            state.usage = usage;
+        } catch (err) {
+            console.warn('model list fetch failed:', err);
+            state.ollamaUp = false;
+        }
+        this._renderInstalledTab();
+        this._renderCatalogueTab();
+        this._renderPanelFooter();
+        this._renderModelChip();
+        this._syncLegacySelect();
+        this._renderRecommendBanner();
+    }
+
+    /** Keep the (now-hidden) <select id="aiModelSelect"> in sync so
+     *  any code path still reading from it via DOM gets the right value. */
+    _syncLegacySelect() {
+        const sel = document.getElementById('aiModelSelect');
+        if (!sel) return;
+        const tag = this._readPreferredModel();
+        // Inject an option for the current tag if missing.
+        if (tag && !Array.from(sel.options).some(o => o.value === tag)) {
+            const opt = document.createElement('option');
+            opt.value = tag; opt.textContent = tag;
+            sel.appendChild(opt);
+        }
+        sel.value = tag || '';
+    }
+
+    _renderInstalledTab() {
+        const state = this._modelState();
+        const list = document.getElementById('modelInstalledList');
+        const empty = document.getElementById('modelInstalledEmpty');
+        const count = document.getElementById('modelTabCountInstalled');
+        const autoCard = document.getElementById('modelAutoCard');
+        const autoMeta = document.getElementById('modelAutoMeta');
+        if (!list) return;
+
+        if (count) count.textContent = String(state.installed.length);
+        if (autoMeta) {
+            const auto = state.autoSelect;
+            autoMeta.textContent = auto?.tag
+                ? `Will pick ${auto.tag} — ${auto.reason || ''}`.trim()
+                : 'Server picks the best installed model for each request.';
+        }
+        const activeTag = (state.preferences[state.scope]?.tag || '').toLowerCase();
+        if (autoCard) {
+            const isAuto = !activeTag;
+            autoCard.classList.toggle('active', isAuto);
+            autoCard.setAttribute('aria-pressed', isAuto ? 'true' : 'false');
+            if (!autoCard.dataset.wired) {
+                autoCard.dataset.wired = '1';
+                autoCard.addEventListener('click', () => this._clearPreference());
+            }
+        }
+
+        list.innerHTML = '';
+        if (!state.installed.length) {
+            if (empty) empty.hidden = false;
             return;
         }
+        if (empty) empty.hidden = true;
 
-        // Reset to just the Auto option.
-        const autoOpt = select.querySelector('option[value=""]');
-        select.innerHTML = '';
-        if (autoOpt) select.appendChild(autoOpt);
-        else {
-            const o = document.createElement('option');
-            o.value = ''; o.textContent = 'Auto · best per role (recommended)';
-            o.selected = true;
-            select.appendChild(o);
-        }
-
-        const installed = new Set(data.installed || []);
-        const catalogue = data.catalogue || [];
-        // Group by tier.
-        const tiers = { flagship: [], balanced: [], lightweight: [] };
-        catalogue.forEach(m => {
-            (tiers[m.tier] || tiers.balanced).push(m);
-        });
-        const labels = {
-            flagship: 'flagship · ≥ 16 GB VRAM',
-            balanced: 'balanced · 8–15 GB',
-            lightweight: 'lightweight · < 8 GB',
-        };
-        ['flagship', 'balanced', 'lightweight'].forEach(tier => {
-            const list = tiers[tier];
-            if (!list.length) return;
-            const group = document.createElement('optgroup');
-            group.label = labels[tier];
-            list.forEach(m => {
-                const opt = document.createElement('option');
-                opt.value = m.tag;
-                const isInstalled = installed.has(m.tag) || m.installed;
-                const bench = m.swebench_pct
-                    ? `${m.swebench_pct.toFixed(0)}% SWE-bench`
-                    : (m.humaneval_pct
-                        ? `${m.humaneval_pct.toFixed(0)}% HumanEval` : '');
-                const tail = isInstalled ? '· installed'
-                                         : (m.vram_gb ? `· ${m.vram_gb} GB pull` : '');
-                opt.textContent = `${m.display_name} ${tail ? '— ' + tail : ''} ${bench ? '· ' + bench : ''}`.trim();
-                if (!isInstalled) {
-                    // Not blocked — picking it sends preferred_model;
-                    // backend tries to pull on first call as fallback.
-                    opt.dataset.installed = 'false';
-                }
-                group.appendChild(opt);
-            });
-            select.appendChild(group);
+        state.installed.forEach(m => {
+            const card = this._makeModelCard(m, {pullable: false});
+            const isPref = (m.tag || '').toLowerCase() === activeTag;
+            if (isPref) card.classList.add('active');
+            list.appendChild(card);
         });
     }
 
-    _refreshModelCurrentLabel(el, tag) {
+    _renderCatalogueTab() {
+        const state = this._modelState();
+        const list = document.getElementById('modelCatalogueList');
+        const count = document.getElementById('modelTabCountPull');
+        if (!list) return;
+
+        const installable = state.catalogue.filter(m => !m.is_installed);
+        if (count) count.textContent = String(installable.length);
+
+        list.innerHTML = '';
+        installable.forEach(m => {
+            const card = this._makeModelCard(m, {pullable: true});
+            list.appendChild(card);
+        });
+    }
+
+    /** Build one .model-card. Installed cards expose an Advanced
+     *  expansion (sliders + system prompt + Save / Try-it / Reset).
+     *  Pullable cards click-to-pull; installed cards click-to-select. */
+    _makeModelCard(model, {pullable}) {
+        const card = document.createElement('div');
+        card.className = 'model-card';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        card.dataset.tag = model.tag;
+        if (model.is_custom) card.classList.add('model-card-custom');
+        if (model.is_auto_selected) card.classList.add('model-card-auto-pick');
+
+        const spec = model.spec || {};
+        const tier = spec.tier || (model.is_custom ? 'custom' : 'unknown');
+        const bench = spec.swebench_pct
+            ? `${Math.round(spec.swebench_pct)}% SWE-bench`
+            : (spec.humaneval_pct ? `${Math.round(spec.humaneval_pct)}% HumanEval` : '');
+        const sizeChip = model.size_bytes
+            ? `${(model.size_bytes / 1024**3).toFixed(1)} GB`
+            : (spec.vram_gb ? `${spec.vram_gb} GB VRAM` : '');
+
+        const badge = pullable
+            ? `<span class="model-card-badge model-card-badge-pull">Pull</span>`
+            : (model.is_custom
+                ? `<span class="model-card-badge model-card-badge-custom">custom</span>`
+                : (model.is_auto_selected
+                    ? `<span class="model-card-badge model-card-badge-auto">auto pick</span>`
+                    : ''));
+
+        // v4 — VRAM-fit badge (fits / tight / too_big / cpu / unknown).
+        const fitBadge = (() => {
+            const fit = model.fit;
+            if (!fit || fit === 'unknown') return '';
+            const labels = {
+                fits: '✓ fits',
+                tight: '⚠ tight',
+                too_big: '✗ too big',
+                cpu: 'CPU',
+            };
+            return `<span class="model-card-fit model-card-fit-${fit}">${labels[fit] || fit}</span>`;
+        })();
+
+        // v4 — usage counter chip ("used 47×").
+        const usageBadge = (() => {
+            const u = model.usage || {};
+            const c = u.count_total || 0;
+            if (c <= 0) return '';
+            return `<span class="model-card-usage" title="${c} prior uses">used ${c}×</span>`;
+        })();
+
+        // Build the head + meta block. For installed cards we add an
+        // Advanced toggle (chevron) on the right. For pullable cards
+        // we keep the lean look.
+        const advancedToggleHtml = pullable
+            ? ''
+            : `<button type="button" class="model-card-advanced-toggle"
+                       title="Advanced options"
+                       aria-label="Advanced options"
+                       aria-expanded="false">
+                   <i class="fas fa-chevron-down"></i>
+               </button>`;
+
+        card.innerHTML = `
+            <div class="model-card-row">
+                <div class="model-card-head">
+                    <span class="model-card-icon"><i class="fas fa-${pullable ? 'cloud-download-alt' : 'cube'}"></i></span>
+                    <span class="model-card-name">${this.escapeHtml(model.display_name || model.tag)}</span>
+                    ${badge}
+                </div>
+                ${advancedToggleHtml}
+            </div>
+            <div class="model-card-meta">
+                <code class="model-card-tag">${this.escapeHtml(model.tag)}</code>
+                ${tier ? `<span class="model-card-tier">${this.escapeHtml(tier)}</span>` : ''}
+                ${sizeChip ? `<span class="model-card-size">${this.escapeHtml(sizeChip)}</span>` : ''}
+                ${bench ? `<span class="model-card-bench">${this.escapeHtml(bench)}</span>` : ''}
+                ${fitBadge}
+                ${usageBadge}
+            </div>
+        `;
+
+        // Main click handler — select or pull. Keyboard activates too.
+        const primaryAction = (e) => {
+            // Don't trigger when the user clicked the chevron, delete,
+            // or any nested button (handled by their own listeners).
+            if (e.target.closest('.model-card-advanced-toggle, .model-card-delete, .model-advanced')) {
+                return;
+            }
+            if (pullable) {
+                this._pullModel(model.tag).catch(err =>
+                    console.warn('model pull failed:', err));
+            } else {
+                this._savePreference(
+                    model.tag,
+                    model.is_custom ? 'gguf_upload' : 'ollama_registry',
+                    model.display_name || model.tag,
+                );
+            }
+        };
+        card.addEventListener('click', primaryAction);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                primaryAction(e);
+            }
+        });
+
+        // Advanced expansion (installed cards only).
+        if (!pullable) {
+            const toggleBtn = card.querySelector('.model-card-advanced-toggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._toggleAdvanced(card, model);
+                });
+            }
+            // Auto-expand if this is the currently-active expanded card.
+            if (this._modelState().expandedTag === model.tag) {
+                // Defer so the DOM has the card attached first.
+                setTimeout(() => this._toggleAdvanced(card, model, true), 0);
+            }
+        }
+
+        // Custom models get a delete affordance.
+        if (!pullable && model.is_custom) {
+            const del = document.createElement('span');
+            del.className = 'model-card-delete';
+            del.title = 'Delete this custom model';
+            del.innerHTML = '<i class="fas fa-trash-alt"></i>';
+            del.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._deleteCustomModel(model.tag).catch(err =>
+                    console.warn('model delete failed:', err));
+            });
+            // Insert into the head row so it's flush right of the toggle.
+            card.querySelector('.model-card-row')?.appendChild(del);
+        }
+
+        return card;
+    }
+
+    // ── v3 — Advanced expansion (per-card profile editor) ──────────────
+
+    /** Expand or collapse a card's Advanced panel. ``forceOpen`` forces
+     *  the open state (used when restoring after re-render). */
+    _toggleAdvanced(card, model, forceOpen) {
+        const state = this._modelState();
+        const existing = card.querySelector(':scope > .model-advanced');
+        const toggleBtn = card.querySelector('.model-card-advanced-toggle');
+        if (existing && !forceOpen) {
+            // Collapse.
+            existing.remove();
+            card.classList.remove('model-card-expanded');
+            toggleBtn?.setAttribute('aria-expanded', 'false');
+            toggleBtn?.querySelector('i')?.classList.replace('fa-chevron-up', 'fa-chevron-down');
+            if (state.expandedTag === model.tag) state.expandedTag = null;
+            return;
+        }
+        if (existing && forceOpen) return;  // already open
+
+        // Collapse any other expanded card (one at a time).
+        document.querySelectorAll('.model-card.model-card-expanded')
+            .forEach(c => {
+                if (c !== card) {
+                    c.classList.remove('model-card-expanded');
+                    c.querySelector(':scope > .model-advanced')?.remove();
+                    c.querySelector('.model-card-advanced-toggle')
+                        ?.setAttribute('aria-expanded', 'false');
+                }
+            });
+
+        const tpl = document.getElementById('modelAdvancedTemplate');
+        if (!tpl) return;
+        const node = tpl.content.firstElementChild.cloneNode(true);
+
+        // Hydrate values from saved profile (if any).
+        const profile = (model.profile)
+            || (state.preferences[state.scope]?.profile)
+            || {};
+        this._hydrateAdvancedForm(node, profile);
+
+        // Wire the form's controls.
+        this._wireAdvancedForm(node, model);
+
+        card.appendChild(node);
+        card.classList.add('model-card-expanded');
+        toggleBtn?.setAttribute('aria-expanded', 'true');
+        toggleBtn?.querySelector('i')?.classList.replace('fa-chevron-down', 'fa-chevron-up');
+        state.expandedTag = model.tag;
+    }
+
+    _hydrateAdvancedForm(root, profile) {
+        const setRange = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            const out = root.querySelector(`[data-out="${key}"]`);
+            if (!el) return;
+            const v = (profile && profile[key] != null)
+                ? profile[key]
+                : fallback;
+            el.value = v;
+            if (out) out.textContent = String(v);
+        };
+        const setNumber = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            if (!el) return;
+            el.value = (profile && profile[key] != null) ? profile[key] : fallback;
+        };
+        const setSelect = (key, fallback) => {
+            const el = root.querySelector(`[data-key="${key}"]`);
+            if (!el) return;
+            const v = (profile && profile[key] != null)
+                ? String(profile[key])
+                : String(fallback);
+            const opt = Array.from(el.options).find(o => o.value === v);
+            el.value = opt ? v : String(fallback);
+        };
+        setRange('temperature', 0.7);
+        setRange('top_p', 0.9);
+        setNumber('top_k', 40);
+        setRange('repeat_penalty', 1.1);
+        setSelect('num_ctx', 4096);
+        setRange('num_gpu', 999);
+        setNumber('num_thread', 8);
+        setNumber('seed', -1);
+        const sp = root.querySelector('[data-key="system_prompt"]');
+        if (sp) sp.value = profile?.system_prompt || '';
+    }
+
+    _wireAdvancedForm(root, model) {
+        // Live-update value labels next to ranges.
+        root.querySelectorAll('.adv-range').forEach(input => {
+            input.addEventListener('input', () => {
+                const out = root.querySelector(
+                    `[data-out="${input.dataset.key}"]`,
+                );
+                if (out) out.textContent = input.value;
+            });
+        });
+
+        // v4 — preset buttons load known-good slider configs.
+        root.querySelectorAll('.adv-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const presets = this._modelPresets();
+                const preset = presets[btn.dataset.preset];
+                if (!preset) return;
+                this._hydrateAdvancedForm(root, preset);
+                root.querySelectorAll('.adv-range').forEach(i =>
+                    i.dispatchEvent(new Event('input')),
+                );
+                root.querySelectorAll('.adv-preset-btn').forEach(b =>
+                    b.classList.toggle('active', b === btn),
+                );
+                if (preset._description) {
+                    this._toast?.(preset._description);
+                }
+            });
+        });
+
+        const collect = () => {
+            const out = {};
+            root.querySelectorAll('[data-key]').forEach(el => {
+                const k = el.dataset.key;
+                let v = el.value;
+                if (el.tagName === 'TEXTAREA') {
+                    if (v.trim()) out[k] = v.trim();
+                    return;
+                }
+                if (el.type === 'range' || el.type === 'number') {
+                    const num = Number(v);
+                    if (!Number.isNaN(num)) out[k] = num;
+                    return;
+                }
+                if (el.tagName === 'SELECT') {
+                    const num = Number(v);
+                    out[k] = Number.isNaN(num) ? v : num;
+                }
+            });
+            return out;
+        };
+
+        // Save profile.
+        root.querySelector('.adv-save-btn')?.addEventListener('click', () => {
+            const profile = collect();
+            this._savePreference(
+                model.tag,
+                model.is_custom ? 'gguf_upload' : 'ollama_registry',
+                model.display_name || model.tag,
+                profile,
+            );
+        });
+
+        // Reset to template defaults.
+        root.querySelector('.adv-reset-btn')?.addEventListener('click', () => {
+            this._hydrateAdvancedForm(root, {});
+            // Trigger range output refresh.
+            root.querySelectorAll('.adv-range').forEach(input =>
+                input.dispatchEvent(new Event('input')),
+            );
+        });
+
+        // Try it — streams a tiny generation.
+        root.querySelector('.adv-test-btn')?.addEventListener('click', () => {
+            const promptInput = root.querySelector('.adv-test-prompt');
+            const prompt = (promptInput?.value || '').trim()
+                || 'Reply in one short sentence.';
+            const profile = collect();
+            const out = root.querySelector('.adv-test-output');
+            if (out) {
+                out.hidden = false;
+                out.textContent = '…';
+            }
+            this._testGenerate(model.tag, prompt, profile, out)
+                .catch(err => {
+                    if (out) {
+                        out.classList.add('adv-test-error');
+                        out.textContent = `Failed: ${err.message}`;
+                    }
+                });
+        });
+    }
+
+    _renderPanelFooter() {
+        const el = document.getElementById('panelModelCurrent');
         if (!el) return;
-        if (!tag) {
+        const state = this._modelState();
+        const active = state.preferences[state.scope]?.tag;
+        if (!active) {
             el.classList.add('is-auto');
-            el.innerHTML = 'Currently: <strong>Auto</strong>';
+            el.innerHTML = `Currently: <strong>Auto</strong> · <span>${this.escapeHtml(state.autoSelect?.tag || 'server-picked')}</span>`;
         } else {
             el.classList.remove('is-auto');
-            el.innerHTML = `Currently: <strong>${this.escapeHtml(tag)}</strong>`;
+            const scopeLabel = state.scope === '__all__' ? 'all modes' : state.scope;
+            el.innerHTML = `Currently: <strong>${this.escapeHtml(active)}</strong> · ${this.escapeHtml(scopeLabel)}`;
         }
     }
 
     /**
-     * Render or hide the topbar chip showing the active non-default model.
-     * Called whenever the selection changes + once at boot.
+     * Render or hide the topbar chip showing the active model. Reads
+     * localStorage so it works on first paint without an HTTP call.
      */
     _renderModelChip() {
         const chip = document.getElementById('topBarModelChip');
@@ -1825,47 +2304,143 @@ class ChatController {
         }
         tagEl.textContent = tag;
         chip.hidden = false;
-        // Click → open the settings panel scrolled to the picker.
-        if (!chip._wired) {
-            chip._wired = true;
-            chip.addEventListener('click', () => {
-                if (typeof this.openResearchSettingsPanel === 'function') {
-                    this.openResearchSettingsPanel();
-                }
-                setTimeout(() => {
-                    document.getElementById('aiModelSelect')?.focus();
-                }, 50);
-            });
-        }
     }
 
     /**
-     * Pull a model tag via the existing SSE endpoint. Drives the
-     * `#modelPullProgress` bar and refreshes the catalogue on success.
+     * PUT /api/models/preference + sync localStorage + re-render.
+     * v3 — accepts an optional ``profile`` dict (advanced options).
+     */
+    async _savePreference(tag, source, displayName, profile) {
+        const state = this._modelState();
+        // Layer the global hardware preference into the per-model profile
+        // when one isn't already set there — this lets the picker's top
+        // toggle ("Run on GPU/CPU") propagate into every saved model.
+        const merged = this._mergeHardwareIntoProfile(profile);
+        const body = {
+            mode: state.scope,
+            model_tag: tag,
+            model_source: source || 'ollama_registry',
+            display_name: displayName || tag,
+        };
+        if (merged && Object.keys(merged).length) body.profile = merged;
+
+        try {
+            const resp = await this._authFetch('/api/models/preference', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            // localStorage tracks the user's most recent pick across
+            // ANY scope — this drives the topbar chip + the outbound
+            // body's `preferred_model` field for clients on this tab.
+            this._writePreferredModel(tag);
+            this._toast?.(
+                merged && Object.keys(merged).length
+                    ? `Saved ${tag} with custom profile`
+                    : `Model set: ${tag}`,
+            );
+            // v4 — fire-and-forget warmup so the next real request
+            // doesn't pay the cold-load penalty. Failure is silent
+            // (warmup is purely an optimisation).
+            this._warmupModel(tag);
+        } catch (err) {
+            console.warn('save preference failed:', err);
+            this._toast?.(`Failed to save preference: ${err.message}`, 'error');
+        }
+        await this._refreshModelData();
+    }
+
+    /** POST /api/models/warmup — fire-and-forget. */
+    async _warmupModel(tag) {
+        try {
+            await this._authFetch('/api/models/warmup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({tag}),
+            });
+        } catch (_) { /* best-effort */ }
+    }
+
+    /** Translate the hardware-pref toggle into Ollama options that are
+     *  layered into the saved profile. ``hardwarePref`` of "auto" leaves
+     *  whatever the user set in the Advanced sliders alone. */
+    _mergeHardwareIntoProfile(profile) {
+        const state = this._modelState();
+        const out = profile ? {...profile} : {};
+        const pref = state.hardwarePref || 'auto';
+        if (pref === 'cpu') {
+            out.num_gpu = 0;
+        } else if (pref === 'gpu') {
+            // 999 = "all layers on GPU" (Ollama clamps to model's actual layer count).
+            if (out.num_gpu == null) out.num_gpu = 999;
+        } else if (pref === 'gpu_partial') {
+            // Only override if the user didn't already pick something explicit.
+            if (out.num_gpu == null) out.num_gpu = state.gpuLayers || 32;
+            else out.num_gpu = state.gpuLayers || out.num_gpu;
+        }
+        return out;
+    }
+
+    /** DELETE /api/models/preference/{mode} for the active scope. */
+    async _clearPreference() {
+        const state = this._modelState();
+        try {
+            await this._authFetch(
+                `/api/models/preference/${encodeURIComponent(state.scope)}`,
+                {method: 'DELETE'},
+            );
+            // Only nuke localStorage if no preference remains for any scope.
+            this._writePreferredModel('');
+        } catch (err) {
+            console.warn('clear preference failed:', err);
+        }
+        await this._refreshModelData();
+    }
+
+    _wireModelPullButton() {
+        const btn = document.getElementById('pullModelBtn');
+        const input = document.getElementById('customModelTag');
+        btn?.addEventListener('click', () => {
+            const tag = (input?.value || '').trim();
+            if (!tag) { input?.focus(); return; }
+            this._pullModel(tag).catch(err =>
+                console.warn('model pull failed:', err));
+        });
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); btn?.click(); }
+        });
+    }
+
+    /**
+     * POST /api/models/pull (SSE). Drives #modelPullProgress and re-
+     * fetches the catalogue when complete; auto-saves the just-pulled
+     * tag as the active preference on success.
      */
     async _pullModel(tag) {
+        const state = this._modelState();
+        if (!tag || state.pulling) return;
+
         const progress = document.getElementById('modelPullProgress');
         const fill = document.getElementById('pullFill');
         const pct = document.getElementById('pullPct');
         const status = document.getElementById('pullStatus');
         const pullBtn = document.getElementById('pullModelBtn');
 
-        if (!tag) return;
-        if (progress) {
-            progress.hidden = false;
-            progress.classList.remove('error');
-        }
+        if (progress) { progress.hidden = false; progress.classList.remove('error'); }
         if (pct) pct.textContent = '0%';
         if (fill) fill.style.width = '0%';
         if (status) status.textContent = 'Starting…';
         if (pullBtn) pullBtn.disabled = true;
+        state.pulling = true;
 
-        const url = `/api/code/models/${encodeURIComponent(tag)}/pull`;
-        // EventSource doesn't support POST; use fetch + body reader so
-        // we can stream the SSE manually.
         let resp;
         try {
-            resp = await this._authFetch(url, { method: 'POST' });
+            resp = await this._authFetch('/api/models/pull', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({tag}),
+            });
             if (!resp.ok || !resp.body) {
                 throw new Error(`pull start failed (${resp.status})`);
             }
@@ -1873,12 +2448,14 @@ class ChatController {
             if (status) status.textContent = `Failed: ${e.message}`;
             if (progress) progress.classList.add('error');
             if (pullBtn) pullBtn.disabled = false;
+            state.pulling = false;
             return;
         }
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let success = false;
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -1902,22 +2479,7 @@ class ChatController {
                         if (fill) fill.style.width = '100%';
                         if (pct) pct.textContent = '100%';
                         if (status) status.textContent = 'Done';
-                        // Refresh catalogue + auto-select the just-pulled tag.
-                        await this._loadModelCatalogue();
-                        const select = document.getElementById('aiModelSelect');
-                        if (select) {
-                            const opt = Array.from(select.options).find(o => o.value === tag);
-                            if (opt) {
-                                select.value = tag;
-                                this._writePreferredModel(tag);
-                                this._refreshModelCurrentLabel(
-                                    document.getElementById('panelModelCurrent'),
-                                    tag,
-                                );
-                                this._renderModelChip();
-                            }
-                        }
-                        setTimeout(() => { if (progress) progress.hidden = true; }, 1500);
+                        success = true;
                     } else if (evt.type === 'pull_error') {
                         if (status) status.textContent = `Failed: ${evt.error || 'unknown'}`;
                         if (progress) progress.classList.add('error');
@@ -1926,7 +2488,853 @@ class ChatController {
             }
         } finally {
             if (pullBtn) pullBtn.disabled = false;
+            state.pulling = false;
         }
+
+        if (success) {
+            // Refresh catalogue, then save the just-pulled tag for the
+            // current scope so the next request actually uses it.
+            await this._refreshModelData();
+            await this._savePreference(tag, 'ollama_registry', tag);
+            setTimeout(() => { if (progress) progress.hidden = true; }, 1500);
+            // Clear the custom-tag input.
+            const input = document.getElementById('customModelTag');
+            if (input) input.value = '';
+        }
+    }
+
+    // ── Tab 3 — GGUF upload ────────────────────────────────────────────
+
+    _wireModelUpload() {
+        const dropZone = document.getElementById('modelDropZone');
+        const fileInput = document.getElementById('modelUploadInput');
+        const cancelBtn = document.getElementById('modelUploadCancel');
+        const submitBtn = document.getElementById('modelUploadSubmit');
+        const limitEl = document.getElementById('modelUploadLimit');
+
+        // The server-side limit is exposed via .env; we don't have a
+        // dedicated endpoint, so the badge stays at the default 50 GB
+        // unless overridden by the operator.
+        if (limitEl) limitEl.textContent = '50';
+
+        if (!dropZone || !fileInput) return;
+
+        const handleFile = (file) => {
+            if (!file) return;
+            if (!/\.gguf$/i.test(file.name)) {
+                this._toast?.('Pick a .gguf file', 'error');
+                return;
+            }
+            this._stageUploadFile(file);
+        };
+
+        fileInput.addEventListener('change', () => handleFile(fileInput.files?.[0]));
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInput.click();
+            }
+        });
+        ['dragenter', 'dragover'].forEach(evt =>
+            dropZone.addEventListener(evt, (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dropZone.classList.add('dragging');
+            })
+        );
+        ['dragleave', 'drop'].forEach(evt =>
+            dropZone.addEventListener(evt, (e) => {
+                e.preventDefault(); e.stopPropagation();
+                dropZone.classList.remove('dragging');
+            })
+        );
+        dropZone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer?.files?.[0];
+            handleFile(file);
+        });
+
+        cancelBtn?.addEventListener('click', () => this._resetUploadForm());
+        submitBtn?.addEventListener('click', () => this._submitUpload().catch(err =>
+            console.warn('upload failed:', err)));
+    }
+
+    _stageUploadFile(file) {
+        const state = this._modelState();
+        state.pendingFile = file;
+        state.pendingFileBytes = file.size;
+        const form = document.getElementById('modelUploadForm');
+        const dz = document.getElementById('modelDropZone');
+        const fname = document.getElementById('modelUploadFname');
+        const fsize = document.getElementById('modelUploadFsize');
+        if (form) form.hidden = false;
+        if (dz) dz.hidden = true;
+        if (fname) fname.textContent = file.name;
+        if (fsize) fsize.textContent = `${(file.size / 1024**3).toFixed(2)} GB`;
+    }
+
+    _resetUploadForm() {
+        const state = this._modelState();
+        state.pendingFile = null;
+        state.pendingFileBytes = 0;
+        state.uploading = false;
+        const form = document.getElementById('modelUploadForm');
+        const dz = document.getElementById('modelDropZone');
+        const progress = document.getElementById('modelUploadProgress');
+        const fileInput = document.getElementById('modelUploadInput');
+        const display = document.getElementById('modelUploadDisplay');
+        if (form) form.hidden = true;
+        if (dz) dz.hidden = false;
+        if (progress) progress.hidden = true;
+        if (fileInput) fileInput.value = '';
+        if (display) display.value = '';
+    }
+
+    async _submitUpload() {
+        const state = this._modelState();
+        if (!state.pendingFile || state.uploading) return;
+        const file = state.pendingFile;
+        const display = (document.getElementById('modelUploadDisplay')?.value || '').trim();
+
+        const progress = document.getElementById('modelUploadProgress');
+        const fill = document.getElementById('modelUploadFill');
+        const pct = document.getElementById('modelUploadPct');
+        const status = document.getElementById('modelUploadStatus');
+        const submit = document.getElementById('modelUploadSubmit');
+        if (progress) { progress.hidden = false; progress.classList.remove('error'); }
+        if (fill) fill.style.width = '0%';
+        if (pct) pct.textContent = '0%';
+        if (status) status.textContent = 'Uploading…';
+        if (submit) submit.disabled = true;
+        state.uploading = true;
+
+        const fd = new FormData();
+        fd.append('file', file);
+        if (display) fd.append('display_name', display);
+
+        try {
+            // We use XMLHttpRequest because fetch() doesn't expose
+            // upload progress events in the browser.
+            const result = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/api/models/upload', true);
+                // Mirror _authFetch's headers (token + X-Client-Id) so
+                // the server-side identity logic works for uploads too.
+                const headers = (this._authHeaders ? this._authHeaders() : {});
+                Object.entries(headers || {}).forEach(([k, v]) => {
+                    if (v != null) xhr.setRequestHeader(k, v);
+                });
+                xhr.upload.onprogress = (e) => {
+                    if (!e.lengthComputable) return;
+                    const p = Math.round((e.loaded / e.total) * 100);
+                    if (fill) fill.style.width = `${p}%`;
+                    if (pct) pct.textContent = `${p}%`;
+                    if (status && p < 100) status.textContent = 'Uploading…';
+                    if (status && p >= 100) status.textContent = 'Registering with Ollama…';
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try { resolve(JSON.parse(xhr.responseText)); }
+                        catch (_) { resolve({ok: true}); }
+                    } else {
+                        let detail = `HTTP ${xhr.status}`;
+                        try {
+                            const body = JSON.parse(xhr.responseText);
+                            detail = body.detail || detail;
+                        } catch (_) {}
+                        reject(new Error(detail));
+                    }
+                };
+                xhr.onerror = () => reject(new Error('Network error'));
+                xhr.send(fd);
+            });
+            if (status) status.textContent = `Registered as ${result.tag}`;
+            if (fill) fill.style.width = '100%';
+            // Auto-save as the active preference for the current scope.
+            await this._refreshModelData();
+            await this._savePreference(
+                result.tag, 'gguf_upload',
+                result.display_name || file.name,
+            );
+            setTimeout(() => this._resetUploadForm(), 1800);
+            // Switch to Installed tab so the user sees the new model.
+            document.querySelector('.model-tab[data-tab="installed"]')?.click();
+        } catch (err) {
+            if (status) status.textContent = `Failed: ${err.message}`;
+            if (progress) progress.classList.add('error');
+        } finally {
+            if (submit) submit.disabled = false;
+            state.uploading = false;
+        }
+    }
+
+    /** DELETE /api/models/custom/{tag} for an uploaded model. */
+    async _deleteCustomModel(tag) {
+        if (!tag.startsWith('custom/')) return;
+        // No native confirm() in some testing harnesses; gate behind a
+        // typed confirmation.
+        const proceed = window.confirm?.(
+            `Delete custom model ${tag}? This cannot be undone.`,
+        );
+        if (proceed === false) return;
+        try {
+            const resp = await this._authFetch(
+                `/api/models/custom/${encodeURIComponent(tag)}`,
+                {method: 'DELETE'},
+            );
+            if (!resp.ok) {
+                const body = await resp.json().catch(() => ({}));
+                throw new Error(body.detail || `HTTP ${resp.status}`);
+            }
+            this._toast?.(`Deleted ${tag}`);
+        } catch (err) {
+            console.warn('custom model delete failed:', err);
+            this._toast?.(`Delete failed: ${err.message}`, 'error');
+        }
+        await this._refreshModelData();
+    }
+
+    /** Optional toast helper — falls back to console.log. */
+    _toast(msg, kind) {
+        try {
+            const el = document.createElement('div');
+            el.className = `model-toast model-toast-${kind || 'info'}`;
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.classList.add('show'), 10);
+            setTimeout(() => el.classList.remove('show'), 2400);
+            setTimeout(() => el.remove(), 2700);
+        } catch (_) {
+            console.log('[model]', msg);
+        }
+    }
+
+    // ── v3 — Hardware panel ────────────────────────────────────────────
+
+    _wireHardwarePanel(root) {
+        const refreshBtn = root.querySelector('#modelHwRefresh');
+        refreshBtn?.addEventListener('click', () => {
+            this._refreshHardware().catch(err =>
+                console.warn('hardware refresh failed:', err));
+        });
+        const slider = root.querySelector('#modelHwGpuLayers');
+        const sliderVal = root.querySelector('#modelHwGpuLayersValue');
+        slider?.addEventListener('input', () => {
+            const n = Number(slider.value);
+            this._modelState().gpuLayers = n;
+            if (sliderVal) sliderVal.textContent = String(n);
+        });
+        slider?.addEventListener('change', () => {
+            this._saveRouting().catch(err =>
+                console.warn('routing save failed:', err));
+        });
+        root.querySelectorAll('.hw-pref-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pref = btn.dataset.hw || 'auto';
+                this._modelState().hardwarePref = pref;
+                root.querySelectorAll('.hw-pref-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                const slideRow = root.querySelector('#modelHwGpuLayersRow');
+                if (slideRow) slideRow.hidden = (pref !== 'gpu_partial');
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+        });
+    }
+
+    async _refreshHardware() {
+        try {
+            const resp = await this._authFetch('/api/models/hardware');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this._modelState().hardware = data;
+            this._renderHardwarePanel();
+        } catch (err) {
+            console.warn('hardware probe failed:', err);
+            const line = document.getElementById('modelHwLine');
+            const sub = document.getElementById('modelHwSub');
+            const icon = document.getElementById('modelHwIcon');
+            if (icon) icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            if (line) line.textContent = 'Hardware probe failed';
+            if (sub) sub.textContent = err.message;
+        }
+    }
+
+    _renderHardwarePanel() {
+        const state = this._modelState();
+        const hw = state.hardware || {};
+        const line = document.getElementById('modelHwLine');
+        const sub = document.getElementById('modelHwSub');
+        const icon = document.getElementById('modelHwIcon');
+        if (!line || !sub || !icon) return;
+        if (hw.gpu_available) {
+            icon.innerHTML = '<i class="fas fa-microchip" style="color: #6ddfb5"></i>';
+            const name = hw.gpu_name || `${hw.gpu_count || 1}× GPU`;
+            const vram = hw.vram_total_gb
+                ? ` · ${hw.vram_total_gb} GB VRAM`
+                : '';
+            line.textContent = `GPU detected: ${name}${vram}`;
+            const free = hw.vram_free_gb != null
+                ? `${hw.vram_free_gb} GB free`
+                : 'live VRAM unknown';
+            const ver = hw.ollama_version
+                ? ` · Ollama ${hw.ollama_version}`
+                : '';
+            sub.textContent = `${free}${ver} · CPU threads: ${hw.cpu_threads ?? '?'}`;
+        } else {
+            icon.innerHTML = '<i class="fas fa-microchip" style="color: #8a8aa0"></i>';
+            line.textContent = 'CPU only';
+            sub.textContent = `No GPU detected${hw.ollama_version ? ` · Ollama ${hw.ollama_version}` : ''} · CPU threads: ${hw.cpu_threads ?? '?'}`;
+        }
+    }
+
+    // ── v3 — Strategy toggle (Single | Per-mode | Per-role | Ensemble) ─
+
+    _wireModelStrategy(root) {
+        root.querySelectorAll('.model-mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const strategy = btn.dataset.strategy || 'single';
+                this._modelState().strategy = strategy;
+                root.querySelectorAll('.model-mode-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+                });
+                this._renderStrategyHint();
+                this._renderRoleMatrix();
+                this._renderEnsembleConfig();
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+        });
+    }
+
+    _renderStrategyHint() {
+        const hint = document.getElementById('modelModeHint');
+        if (!hint) return;
+        const map = {
+            single:   'One model for everything.',
+            per_mode: 'Pick a different model per mode (Research / Thinking / Code).',
+            per_role: 'Code Intelligence: planner / coder / critic / reviewer can each have their own model.',
+            ensemble: 'Run multiple models in parallel; pick the answer by voting.',
+        };
+        hint.textContent = map[this._modelState().strategy] || '';
+    }
+
+    _renderRoleMatrix() {
+        const wrap = document.getElementById('modelRoleMatrix');
+        const grid = document.getElementById('modelRoleGrid');
+        if (!wrap || !grid) return;
+        if (this._modelState().strategy !== 'per_role') {
+            wrap.hidden = true;
+            return;
+        }
+        wrap.hidden = false;
+        const state = this._modelState();
+        const installed = state.installed || [];
+        const routes = (state.routing?.role_routes) || {};
+        const roles = [
+            {key: 'planner',  label: 'Planner',  icon: 'fa-route'},
+            {key: 'coder',    label: 'Coder',    icon: 'fa-code'},
+            {key: 'tester',   label: 'Tester',   icon: 'fa-vial'},
+            {key: 'debugger', label: 'Debugger', icon: 'fa-bug'},
+            {key: 'critic',   label: 'Critic',   icon: 'fa-balance-scale'},
+            {key: 'reviewer', label: 'Reviewer', icon: 'fa-user-shield'},
+        ];
+        grid.innerHTML = '';
+        roles.forEach(r => {
+            const row = document.createElement('div');
+            row.className = 'role-matrix-row';
+            row.innerHTML = `
+                <span class="role-matrix-icon"><i class="fas ${r.icon}"></i></span>
+                <span class="role-matrix-name">${r.label}</span>
+                <select class="role-matrix-select panel-setting-select">
+                    <option value="">Auto</option>
+                    ${installed.map(m =>
+                        `<option value="${this.escapeHtml(m.tag)}"${m.tag === routes[r.key] ? ' selected' : ''}>${this.escapeHtml(m.display_name || m.tag)}</option>`
+                    ).join('')}
+                </select>
+            `;
+            const sel = row.querySelector('select');
+            sel.addEventListener('change', () => {
+                if (!state.routing) state.routing = {};
+                state.routing.role_routes = {
+                    ...(state.routing.role_routes || {}),
+                    [r.key]: sel.value || null,
+                };
+                if (!sel.value) delete state.routing.role_routes[r.key];
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+            grid.appendChild(row);
+        });
+    }
+
+    // ── v3 — Ensemble config ───────────────────────────────────────────
+
+    _wireEnsembleConfig(root) {
+        const sel = root.querySelector('#ensembleVotingSelect');
+        sel?.addEventListener('change', () => {
+            const state = this._modelState();
+            if (!state.routing) state.routing = {};
+            state.routing.ensemble = {
+                ...(state.routing.ensemble || {}),
+                voting: sel.value,
+            };
+            this._saveRouting().catch(err =>
+                console.warn('routing save failed:', err));
+        });
+    }
+
+    _renderEnsembleConfig() {
+        const wrap = document.getElementById('modelEnsembleConfig');
+        const list = document.getElementById('ensembleMembersList');
+        const sel = document.getElementById('ensembleVotingSelect');
+        if (!wrap || !list) return;
+        const state = this._modelState();
+        if (state.strategy !== 'ensemble') {
+            wrap.hidden = true;
+            return;
+        }
+        wrap.hidden = false;
+
+        const members = state.routing?.ensemble?.members || [];
+        const installed = state.installed || [];
+        list.innerHTML = '';
+        installed.forEach(m => {
+            const row = document.createElement('label');
+            row.className = 'ensemble-member-row';
+            const checked = members.includes(m.tag) ? 'checked' : '';
+            row.innerHTML = `
+                <input type="checkbox" data-tag="${this.escapeHtml(m.tag)}" ${checked} />
+                <span class="ensemble-member-name">${this.escapeHtml(m.display_name || m.tag)}</span>
+                <code class="ensemble-member-tag">${this.escapeHtml(m.tag)}</code>
+            `;
+            const cb = row.querySelector('input');
+            cb.addEventListener('change', () => {
+                if (!state.routing) state.routing = {};
+                const ens = state.routing.ensemble = state.routing.ensemble || {};
+                const cur = new Set(ens.members || []);
+                if (cb.checked) cur.add(m.tag);
+                else cur.delete(m.tag);
+                ens.members = Array.from(cur);
+                this._saveRouting().catch(err =>
+                    console.warn('routing save failed:', err));
+            });
+            list.appendChild(row);
+        });
+
+        if (sel) sel.value = state.routing?.ensemble?.voting || 'majority';
+    }
+
+    // ── v3 — Discover tab ──────────────────────────────────────────────
+
+    _wireDiscoverTab(root) {
+        const input = root.querySelector('#discoverSearchInput');
+        const btn = root.querySelector('#discoverSearchBtn');
+        const sel = root.querySelector('#discoverSourceSelect');
+        const trigger = () => {
+            const q = (input?.value || '').trim();
+            const src = sel?.value || 'all';
+            if (!q) { input?.focus(); return; }
+            this._modelState().discoverQuery = q;
+            this._modelState().discoverSource = src;
+            this._runDiscoverSearch().catch(err =>
+                console.warn('discover failed:', err));
+        };
+        btn?.addEventListener('click', trigger);
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); trigger(); }
+        });
+    }
+
+    async _runDiscoverSearch() {
+        const state = this._modelState();
+        const list = document.getElementById('modelDiscoverList');
+        const empty = document.getElementById('modelDiscoverEmpty');
+        const count = document.getElementById('modelTabCountDiscover');
+        if (!list) return;
+
+        list.innerHTML = `<div class="model-empty"><i class="fas fa-spinner fa-spin"></i><span>Searching…</span></div>`;
+        try {
+            const url = `/api/models/search?q=${encodeURIComponent(state.discoverQuery)}&source=${encodeURIComponent(state.discoverSource)}&limit=24`;
+            const resp = await this._authFetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            state.discoverResults = data.results || [];
+        } catch (err) {
+            state.discoverResults = [];
+            list.innerHTML = `<div class="model-empty model-empty-error"><i class="fas fa-exclamation-triangle"></i><span>Search failed: ${this.escapeHtml(err.message)}</span></div>`;
+            return;
+        }
+
+        if (count) count.textContent = String(state.discoverResults.length);
+        list.innerHTML = '';
+        if (!state.discoverResults.length) {
+            list.innerHTML = '';
+            if (empty) {
+                empty.hidden = false;
+                empty.innerHTML = `<i class="fas fa-search"></i><span>No matches for "${this.escapeHtml(state.discoverQuery)}".</span>`;
+            }
+            return;
+        }
+        if (empty) empty.hidden = true;
+
+        state.discoverResults.forEach(r => {
+            list.appendChild(this._makeDiscoverCard(r));
+        });
+    }
+
+    _makeDiscoverCard(result) {
+        const card = document.createElement('div');
+        card.className = 'model-card model-card-discover';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+
+        const stars = result.stars != null
+            ? `<span class="model-card-stars"><i class="fas fa-star"></i> ${result.stars.toLocaleString()}</span>`
+            : '';
+        const dl = result.downloads != null
+            ? `<span class="model-card-dl"><i class="fas fa-download"></i> ${result.downloads.toLocaleString()}</span>`
+            : '';
+        const license = result.license
+            ? `<span class="model-card-tier">${this.escapeHtml(result.license)}</span>`
+            : '';
+        const sourceBadge = result.source === 'hf'
+            ? `<span class="model-card-badge model-card-badge-custom">Hugging Face</span>`
+            : `<span class="model-card-badge model-card-badge-active">Curated</span>`;
+
+        // v4 — quantization picker for HF results. Ollama supports
+        // every common GGUF quant on a model with the `:Q4_K_M` /
+        // `:Q5_K_M` / etc. suffix. We default to whatever the search
+        // returned (typically Q4_K_M) and let the user switch.
+        const isHf = result.source === 'hf';
+        const quants = ['Q3_K_M', 'Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0', 'F16'];
+        // Extract the quant suffix from the result tag (after the colon).
+        const colonIdx = (result.tag || '').lastIndexOf(':');
+        const baseTag = colonIdx >= 0 ? result.tag.slice(0, colonIdx) : result.tag;
+        const currentQuant = colonIdx >= 0 ? result.tag.slice(colonIdx + 1) : 'Q4_K_M';
+        const quantPicker = isHf
+            ? `<select class="discover-quant-picker" title="Quantization">
+                ${quants.map(q =>
+                    `<option value="${q}"${q === currentQuant ? ' selected' : ''}>${q}</option>`
+                ).join('')}
+               </select>`
+            : '';
+
+        card.innerHTML = `
+            <div class="model-card-row">
+                <div class="model-card-head">
+                    <span class="model-card-icon"><i class="fas fa-cloud"></i></span>
+                    <span class="model-card-name">${this.escapeHtml(result.display_name || result.tag)}</span>
+                    ${sourceBadge}
+                </div>
+                ${quantPicker}
+                <button type="button" class="panel-action-btn model-discover-load" title="Load this model">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    <span>Install</span>
+                </button>
+            </div>
+            <div class="model-card-meta">
+                <code class="model-card-tag">${this.escapeHtml(result.tag)}</code>
+                ${license}
+                ${stars}
+                ${dl}
+            </div>
+            ${result.description
+                ? `<div class="model-card-description">${this.escapeHtml(result.description)}</div>`
+                : ''}
+        `;
+
+        // Live-update the displayed tag when quant changes.
+        const qSelect = card.querySelector('.discover-quant-picker');
+        const tagEl = card.querySelector('.model-card-tag');
+        const resolveTag = () => {
+            if (!qSelect) return result.tag;
+            return `${baseTag}:${qSelect.value}`;
+        };
+        qSelect?.addEventListener('change', () => {
+            if (tagEl) tagEl.textContent = resolveTag();
+        });
+        qSelect?.addEventListener('click', (e) => e.stopPropagation());
+
+        const installBtn = card.querySelector('.model-discover-load');
+        const loadFlow = (e) => {
+            e?.stopPropagation?.();
+            const tag = resolveTag();
+            const pullInput = document.getElementById('customModelTag');
+            if (pullInput) pullInput.value = tag;
+            this._setActiveTab('pull');
+            this._pullModel(tag).catch(err =>
+                console.warn('discover install failed:', err));
+        };
+        installBtn?.addEventListener('click', loadFlow);
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.model-discover-load, .discover-quant-picker')) return;
+            const tag = resolveTag();
+            const pullInput = document.getElementById('customModelTag');
+            if (pullInput) pullInput.value = tag;
+            this._setActiveTab('pull');
+            this._toast?.(`Loaded ${tag} — review and click Pull to install`);
+        });
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); loadFlow(e); }
+        });
+        return card;
+    }
+
+    /** Programmatically activate one of the picker tabs. */
+    _setActiveTab(tab) {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        const btn = root.querySelector(`.model-tab[data-tab="${tab}"]`);
+        if (btn) btn.click();
+    }
+
+    // ── v3 — Test generation ───────────────────────────────────────────
+
+    /** POST /api/models/test — streams a tiny generation into ``outEl``. */
+    async _testGenerate(tag, prompt, profile, outEl) {
+        const body = {
+            model_tag: tag,
+            prompt: prompt || 'Reply in one short sentence.',
+            profile: profile && Object.keys(profile).length ? profile : null,
+            max_tokens: 256,
+        };
+        const resp = await this._authFetch('/api/models/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok || !resp.body) {
+            throw new Error(`test start failed (${resp.status})`);
+        }
+        if (outEl) {
+            outEl.textContent = '';
+            outEl.classList.remove('adv-test-error');
+            outEl.classList.add('adv-test-streaming');
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let acc = '';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                const chunk = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 2);
+                const dataLine = chunk.split('\n').find(l => l.startsWith('data:'));
+                if (!dataLine) continue;
+                let evt;
+                try { evt = JSON.parse(dataLine.slice(5).trim()); } catch (_) { continue; }
+                if (evt.type === 'test_chunk' && evt.delta) {
+                    acc += evt.delta;
+                    if (outEl) {
+                        // Render text + (when present) live tok/s overlay.
+                        outEl.textContent = acc;
+                        if (evt.tokens_per_second != null) {
+                            const tps = document.createElement('span');
+                            tps.className = 'adv-test-tps';
+                            tps.textContent = ` ${evt.tokens_per_second} tok/s`;
+                            outEl.appendChild(tps);
+                        }
+                    }
+                } else if (evt.type === 'test_done') {
+                    if (outEl) {
+                        outEl.classList.remove('adv-test-streaming');
+                        const meta = document.createElement('div');
+                        meta.className = 'adv-test-meta';
+                        const tps = evt.tokens_per_second
+                            ? ` · ${evt.tokens_per_second} tok/s`
+                            : '';
+                        meta.textContent = `${evt.tokens || 0} tokens · ${evt.elapsed_ms || 0} ms${tps}`;
+                        outEl.appendChild(meta);
+                    }
+                } else if (evt.type === 'test_error') {
+                    if (outEl) {
+                        outEl.classList.remove('adv-test-streaming');
+                        outEl.classList.add('adv-test-error');
+                        outEl.textContent = `Failed: ${evt.error || 'unknown'}`;
+                    }
+                }
+            }
+        }
+        return acc;
+    }
+
+    // ── v3 — Routing persistence ───────────────────────────────────────
+
+    async _refreshRouting() {
+        try {
+            const resp = await this._authFetch('/api/models/routing');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const state = this._modelState();
+            state.routing = data || {};
+            state.strategy = data?.strategy || 'single';
+            state.hardwarePref = data?.hardware_pref || 'auto';
+            if (typeof data?.gpu_layers === 'number') {
+                state.gpuLayers = data.gpu_layers;
+            }
+            this._reflectRoutingToUI();
+        } catch (err) {
+            console.warn('routing fetch failed:', err);
+        }
+    }
+
+    /** Reflect server-state into the UI controls. Idempotent. */
+    _reflectRoutingToUI() {
+        const state = this._modelState();
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        // Strategy tab.
+        root.querySelectorAll('.model-mode-btn').forEach(btn => {
+            const on = btn.dataset.strategy === state.strategy;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        this._renderStrategyHint();
+        this._renderRoleMatrix();
+        this._renderEnsembleConfig();
+        // Hardware pref toggle.
+        root.querySelectorAll('.hw-pref-btn').forEach(btn => {
+            const on = btn.dataset.hw === state.hardwarePref;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        const slideRow = root.querySelector('#modelHwGpuLayersRow');
+        if (slideRow) slideRow.hidden = (state.hardwarePref !== 'gpu_partial');
+        const slider = root.querySelector('#modelHwGpuLayers');
+        const sliderVal = root.querySelector('#modelHwGpuLayersValue');
+        if (slider && state.gpuLayers != null) {
+            slider.value = state.gpuLayers;
+            if (sliderVal) sliderVal.textContent = String(state.gpuLayers);
+        }
+    }
+
+    /** PUT the current routing state. Debounced so a flurry of slider
+     *  drags doesn't spam the server. */
+    async _saveRouting() {
+        if (this._routingSaveTimer) clearTimeout(this._routingSaveTimer);
+        this._routingSaveTimer = setTimeout(async () => {
+            const state = this._modelState();
+            const body = {
+                strategy: state.strategy || 'single',
+                hardware_pref: state.hardwarePref || 'auto',
+                gpu_layers: state.gpuLayers,
+                role_routes: state.routing?.role_routes || {},
+                mode_routes: state.routing?.mode_routes || {},
+                ensemble: state.routing?.ensemble || {},
+                fallback_chain: state.routing?.fallback_chain || [],
+            };
+            try {
+                const resp = await this._authFetch('/api/models/routing', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            } catch (err) {
+                console.warn('routing save failed:', err);
+            }
+        }, 350);
+    }
+
+    // ── v4 — Smart recommendation banner ────────────────────────────────
+
+    /** Run a debounced recommendation for the prompt currently in the
+     *  active chat input. Called from chat input listeners. */
+    async _refreshRecommendation(prompt) {
+        const root = document.getElementById('modelPicker');
+        if (!root) return;
+        const state = this._modelState();
+        if (state.recommendDismissed) return;
+        const trimmed = (prompt || '').trim();
+        if (trimmed.length < 12) {
+            this._hideRecommendBanner();
+            return;
+        }
+        // Debounce — only the latest call wins.
+        const myToken = ++state.recommendQueryToken;
+        // Fire after 500ms of typing inactivity.
+        if (this._recommendDebounceTimer) clearTimeout(this._recommendDebounceTimer);
+        this._recommendDebounceTimer = setTimeout(async () => {
+            if (myToken !== state.recommendQueryToken) return;
+            try {
+                const resp = await this._authFetch('/api/models/recommend', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({prompt: trimmed, mode: state.scope}),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                if (myToken !== state.recommendQueryToken) return;
+                state.recommendation = await resp.json();
+                this._renderRecommendBanner();
+            } catch (err) {
+                console.warn('recommend failed:', err);
+            }
+        }, 500);
+    }
+
+    _renderRecommendBanner() {
+        const banner = document.getElementById('modelRecommendBanner');
+        const tagEl = document.getElementById('recommendTag');
+        const reasonEl = document.getElementById('recommendReason');
+        const applyBtn = document.getElementById('recommendApplyBtn');
+        const dismissBtn = document.getElementById('recommendDismissBtn');
+        if (!banner || !tagEl || !reasonEl) return;
+        const state = this._modelState();
+        const rec = state.recommendation;
+        if (!rec || !rec.tag) {
+            banner.hidden = true;
+            return;
+        }
+        // Don't suggest the model that's already active.
+        const activeTag = (state.preferences[state.scope]?.tag || '').toLowerCase();
+        if (rec.tag.toLowerCase() === activeTag) {
+            banner.hidden = true;
+            return;
+        }
+        tagEl.textContent = rec.display_name || rec.tag;
+        reasonEl.textContent = rec.reason || '';
+        banner.hidden = false;
+        if (applyBtn && !applyBtn.dataset.wired) {
+            applyBtn.dataset.wired = '1';
+            applyBtn.addEventListener('click', () => {
+                this._savePreference(
+                    rec.tag, 'ollama_registry',
+                    rec.display_name || rec.tag,
+                ).catch(err => console.warn(err));
+                this._hideRecommendBanner();
+            });
+        }
+        if (dismissBtn && !dismissBtn.dataset.wired) {
+            dismissBtn.dataset.wired = '1';
+            dismissBtn.addEventListener('click', () => {
+                this._modelState().recommendDismissed = true;
+                this._hideRecommendBanner();
+            });
+        }
+    }
+
+    _hideRecommendBanner() {
+        const banner = document.getElementById('modelRecommendBanner');
+        if (banner) banner.hidden = true;
+    }
+
+    /** Headers used by XHR upload (mirrors _authFetch behaviour). */
+    _authHeaders() {
+        const headers = {};
+        try {
+            const token = localStorage.getItem('amor.accessToken');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const cid = localStorage.getItem('amor.clientId');
+            if (cid) headers['X-Client-Id'] = cid;
+        } catch (_) {}
+        return headers;
     }
 
     // ── localStorage active-code persistence (mirrors active-research) ──
