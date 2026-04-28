@@ -72,6 +72,30 @@ PHASE_ORDER = ["planning", "gathering", "analyzing", "synthesizing"]
 PHASE_SHORT = {"planning": "Plan", "gathering": "Gather",
                "analyzing": "Analyze", "synthesizing": "Synth"}
 
+# ─── Consortium pipeline phases ──────────────────────────────────────────────
+CONSORTIUM_PHASE_ORDER = ["scope", "research", "thinking", "implementation"]
+CONSORTIUM_PHASE_SHORT = {
+    "scope": "Scope", "research": "Research",
+    "thinking": "Think", "implementation": "Implement",
+}
+# Per-phase "weight" so a multi-LLM-call thinking phase counts more than
+# a sub-second scope. Used to compute Overall Progress %.
+CONSORTIUM_PHASE_WEIGHT = {
+    "scope": 5, "research": 25, "thinking": 35, "implementation": 35,
+}
+# Thinking + Implementation have inner phases too — we surface the
+# ones the engines emit ("understand → decompose → explore → evaluate
+# → synthesize → critique" for thinking; "triage → plan → implement
+# → execute → analyze → test → debug → review" for code intelligence).
+THINKING_INNER_ORDER = [
+    "understand", "decompose", "explore", "evaluate",
+    "synthesize", "critique",
+]
+CODE_INNER_ORDER = [
+    "triage", "model_prep", "plan", "implement",
+    "execute", "analyze", "test", "debug", "review",
+]
+
 # ─── ANSI control ────────────────────────────────────────────────────────────
 HOME, CLEAR_LINE, CLEAR_DOWN = "\033[H", "\033[K", "\033[J"
 ALT_ON, ALT_OFF = "\033[?1049h", "\033[?1049l"
@@ -431,6 +455,182 @@ def find_active_research() -> dict | None:
     return None
 
 
+def find_active_consortium() -> dict | None:
+    """Pick the most-active consortium session (preferring `started`)."""
+    keys = list_keys("consortium_session:*")
+    active = []
+    others = []
+    for k in keys:
+        d = get_session(k)
+        if not d:
+            continue
+        # Tag the type so the renderer can branch.
+        d["_kind"] = "consortium"
+        if d.get("status") in ("started", "running"):
+            active.append(d)
+        else:
+            others.append(d)
+    # Prefer running sessions, sorted by most-recent heartbeat.
+    if active:
+        active.sort(
+            key=lambda d: d.get("last_heartbeat_at") or d.get("started_at") or "",
+            reverse=True,
+        )
+        return active[0]
+    if others:
+        others.sort(
+            key=lambda d: d.get("started_at") or "",
+            reverse=True,
+        )
+        return others[0]
+    return None
+
+
+def find_active() -> dict | None:
+    """Unified active-session finder. Prefers running consortium > running
+    research > most-recent of either. Returned dict has ``_kind`` set to
+    ``"consortium"`` or ``"research"`` for the renderer."""
+    cons = find_active_consortium()
+    res = find_active_research()
+    if cons and cons.get("status") in ("started", "running"):
+        return cons
+    if res and res.get("status") in ("started", "in_progress"):
+        if res.get("_kind") is None:
+            res["_kind"] = "research"
+        return res
+    # Both done — return whichever finished more recently.
+    cands = [d for d in (cons, res) if d]
+    if not cands:
+        return None
+    if len(cands) == 1:
+        d = cands[0]
+        if d.get("_kind") is None:
+            d["_kind"] = "research"
+        return d
+    # Pick by most-recent timestamp.
+    def _ts(d):
+        return (d.get("completed_at") or d.get("last_heartbeat_at")
+                or d.get("started_at") or "")
+    cands.sort(key=_ts, reverse=True)
+    d = cands[0]
+    if d.get("_kind") is None:
+        d["_kind"] = "research"
+    return d
+
+
+# ─── Consortium-specific helpers ─────────────────────────────────────────────
+def consortium_progress_pct(d: dict) -> float:
+    """Return 0–100 progress derived from phase weights + inner-phase
+    progress for the active phase (if any)."""
+    phases = d.get("phases") or []
+    total_weight = sum(CONSORTIUM_PHASE_WEIGHT.values())
+    accumulated = 0.0
+    for p in phases:
+        name = p.get("name") or ""
+        status = p.get("status") or "pending"
+        weight = CONSORTIUM_PHASE_WEIGHT.get(name, 0)
+        if status == "completed":
+            accumulated += weight
+        elif status == "in_progress":
+            # Inner phase progress estimate (from the engine's nested events
+            # if we tracked them; otherwise 50%).
+            inner_pct = _consortium_inner_pct(d, name)
+            accumulated += weight * inner_pct
+    return min(100.0, (accumulated / total_weight) * 100.0)
+
+
+def _consortium_inner_pct(d: dict, phase_name: str) -> float:
+    """0.0–1.0 estimated inner-phase completion for a phase that's
+    `in_progress`. Reads the ``current_task`` heuristically; falls back
+    to 50%."""
+    task = (d.get("current_task") or "").lower()
+    if phase_name == "thinking":
+        order = THINKING_INNER_ORDER
+    elif phase_name == "implementation":
+        order = CODE_INNER_ORDER
+    else:
+        return 0.5
+    # See if any inner phase name appears in the current task string.
+    for i, name in enumerate(order):
+        if name in task:
+            return (i + 0.5) / len(order)
+    return 0.4  # fallback — between 0% and 50%
+
+
+def consortium_phase_chips(d: dict) -> str:
+    """Inline phase chips for the 4 consortium phases."""
+    phases = d.get("phases") or []
+    by_name = {p.get("name"): p for p in phases}
+    cur = d.get("current_phase")
+    out = []
+    for p in CONSORTIUM_PHASE_ORDER:
+        col = PHASE_COLOR.get(p, T.HILITE)
+        label = CONSORTIUM_PHASE_SHORT.get(p, p)
+        meta = by_name.get(p) or {}
+        st = meta.get("status") or "pending"
+        if st == "completed":
+            out.append(f"{T.OK}✓{T.RESET} {col}{label}{T.RESET}")
+        elif st == "in_progress" or p == cur:
+            out.append(f"{T.WARN}{T.BOLD}◉ {label.upper()}{T.RESET}")
+        elif st == "failed":
+            out.append(f"{T.ERR}✗ {label}{T.RESET}")
+        elif st == "skipped":
+            out.append(f"{T.MUTED}⤳ {label}{T.RESET}")
+        else:
+            out.append(f"{T.MUTED}⋯ {label}{T.RESET}")
+    return f"  {T.DIMTEXT}|{T.RESET}  ".join(out)
+
+
+def consortium_inner_chips(d: dict) -> str:
+    """Inner-phase chips for the active consortium phase. Empty when
+    the active phase has no known inner steps."""
+    cur = d.get("current_phase")
+    task = (d.get("current_task") or "").lower()
+    if cur == "thinking":
+        order = THINKING_INNER_ORDER
+    elif cur == "implementation":
+        order = CODE_INNER_ORDER
+    else:
+        return ""
+    # Find active inner step.
+    active_idx = -1
+    for i, name in enumerate(order):
+        if name in task:
+            active_idx = i
+            break
+    out = []
+    for i, name in enumerate(order):
+        col = T.MUTED if active_idx < 0 else (
+            T.OK if i < active_idx
+            else T.WARN if i == active_idx
+            else T.MUTED
+        )
+        if active_idx == i:
+            out.append(f"{col}{T.BOLD}◉ {name}{T.RESET}")
+        elif active_idx >= 0 and i < active_idx:
+            out.append(f"{T.OK}✓{T.RESET} {T.DIMTEXT}{name}{T.RESET}")
+        else:
+            out.append(f"{T.MUTED}⋯ {name}{T.RESET}")
+    return "  ".join(out)
+
+
+def consortium_eta(d: dict) -> tuple[str, float] | None:
+    """Estimate remaining time using LLM call history."""
+    pct = consortium_progress_pct(d)
+    if pct <= 0 or pct >= 99:
+        return None
+    started = parse_iso(d.get("started_at"))
+    if not started:
+        return None
+    elapsed = time.time() - started
+    if elapsed < 10:
+        return None
+    # Crude linear extrapolation: if X% took Y seconds, the remaining
+    # (100-X)% takes Y * (100-X) / X seconds.
+    remaining = elapsed * (100 - pct) / max(pct, 1)
+    return (f"~{hms(remaining)}", remaining)
+
+
 # ─── Phase helpers ───────────────────────────────────────────────────────────
 def phase_chips(d: dict) -> str:
     """Inline phase chips: ✓ Plan  ✓ Gather  ◉ ANALYZE  ⋯ Synth"""
@@ -490,8 +690,17 @@ def header_panel(width: int, refresh: int) -> list[str]:
 
 def progress_hero(d: dict | None, width: int) -> list[str]:
     if not d:
-        return panel("Overall Progress", [f"{T.DIMTEXT}Aktif research session yok.{T.RESET}"],
-                     width, accent=T.HILITE)
+        return panel(
+            "Overall Progress",
+            [f"{T.DIMTEXT}Aktif session yok (research veya consortium başlatılmamış).{T.RESET}"],
+            width, accent=T.HILITE,
+        )
+    if d.get("_kind") == "consortium":
+        return _progress_hero_consortium(d, width)
+    return _progress_hero_research(d, width)
+
+
+def _progress_hero_research(d: dict, width: int) -> list[str]:
     sid = (d.get("session_id") or "?")[:8]
     topic = d.get("topic") or d.get("prompt") or "?"
     depth = d.get("depth") or "?"
@@ -528,7 +737,102 @@ def progress_hero(d: dict | None, width: int) -> list[str]:
         eta_str,
         last_llm,
     ]
-    return panel("Overall Progress", lines, width, accent=T.HILITE)
+    return panel("Overall Progress · research", lines, width, accent=T.HILITE)
+
+
+def _progress_hero_consortium(d: dict, width: int) -> list[str]:
+    """Render a consortium-aware Overall Progress panel.
+
+    Layout (4 lines + bar + ETA + LLM stats):
+      <sid> <status>  ·  <goal>
+      Elapsed XXm  ·  Phase chips: ✓ Scope | ✓ Research | ◉ THINKING | ⋯ Implement
+      Inner: ✓ understand  ✓ decompose  ◉ explore  ⋯ evaluate  ⋯ synthesize  ⋯ critique
+      [████████░░░░] 62%
+      ETA: ~5m
+      Last LLM: 1m12s · Avg(20): 1m08s · 5min: 4 (0.8/dk) · Heartbeat 2.5s
+    """
+    sid = (d.get("session_id") or "?")[:8]
+    scope = d.get("scope") or {}
+    goal = scope.get("goal") or scope.get("title") or "?"
+    depth = scope.get("depth") or "?"
+    status = d.get("status") or "?"
+
+    started = parse_iso(d.get("started_at"))
+    elapsed = (time.time() - started) if started else 0
+    pct = consortium_progress_pct(d)
+
+    # Status colour.
+    status_col = {
+        "started": T.HEAD, "running": T.HEAD,
+        "ok": T.OK, "cancelled": T.WARN,
+        "interrupted": T.HILITE, "error": T.ERR,
+    }.get(status, T.FG)
+
+    # Heartbeat freshness — important signal that the bg task is alive.
+    hb_str = ""
+    hb = parse_iso(d.get("last_heartbeat_at"))
+    if hb:
+        age = time.time() - hb
+        hb_col = T.OK if age < 30 else (T.WARN if age < 90 else T.ERR)
+        hb_str = f"{hb_col}heartbeat {age:.0f}s{T.RESET}"
+
+    # last LLM stats — same as the research path.
+    hist = ollama_history()
+    last_llm = ""
+    if hist:
+        t, dur = hist[-1]
+        last5 = ollama_calls_in(5)
+        avg20 = sum(d for _, d in hist[-20:]) / min(20, len(hist))
+        last_llm = (f"Last LLM: {T.OK}{t}{T.RESET} {T.WARN}{dur:.1f}s{T.RESET}  ·  "
+                    f"Avg(20): {T.HEAD}{avg20:.1f}s{T.RESET}  ·  "
+                    f"5min: {T.OK}{last5}{T.RESET} ({last5/5:.1f}/dk)")
+
+    eta_str = ""
+    eta = consortium_eta(d)
+    if eta:
+        eta_str = f"ETA: {T.HEAD}{eta[0]}{T.RESET} (kalan ~{eta[1]/60:.0f} dk)"
+
+    inner = width - 4
+
+    # Verifications summary (passed / passed_warn / failed counts).
+    verifs = d.get("verifications") or []
+    if verifs:
+        ok = sum(1 for v in verifs if v.get("status") == "passed")
+        warn = sum(1 for v in verifs if v.get("status") == "passed_warn")
+        fail = sum(1 for v in verifs if v.get("status") == "failed")
+        verif_str = (f"  {T.DIMTEXT}·{T.RESET}  Gates: "
+                     f"{T.OK}✓ {ok}{T.RESET} "
+                     f"{T.WARN}⚠ {warn}{T.RESET} "
+                     f"{T.ERR}✗ {fail}{T.RESET}")
+    else:
+        verif_str = ""
+
+    inner_chips = consortium_inner_chips(d)
+
+    head = (f"{T.HILITE}{T.BOLD}🏛 {sid}{T.RESET}  "
+            f"{status_col}{T.BOLD}{status.upper()}{T.RESET}  "
+            f"{T.DIMTEXT}·{T.RESET}  "
+            f"{T.BOLD}{goal[:inner-40]}{T.RESET}  "
+            f"{T.DIMTEXT}({depth}){T.RESET}")
+
+    line2 = (f"Elapsed {T.HEAD}{hms(elapsed)}{T.RESET}  "
+             f"{T.DIMTEXT}·{T.RESET}  {consortium_phase_chips(d)}{verif_str}")
+
+    lines = [head, line2]
+    if inner_chips:
+        lines.append(f"  {T.DIMTEXT}Inner:{T.RESET} {inner_chips}")
+    if d.get("current_task"):
+        lines.append(f"{T.DIMTEXT}{(d.get('current_task') or '')[:inner]}{T.RESET}")
+    lines.append(big_bar(pct, inner))
+    if eta_str:
+        lines.append(eta_str)
+    bottom = last_llm
+    if hb_str:
+        bottom = (f"{bottom}  {T.DIMTEXT}·{T.RESET}  {hb_str}"
+                  if bottom else hb_str)
+    if bottom:
+        lines.append(bottom)
+    return panel("Overall Progress · consortium", lines, width, accent=T.HILITE)
 
 
 def stack_compact_panel(width: int) -> list[str]:
@@ -762,14 +1066,20 @@ def stack_vertical(panels: list[list[str]], spacer: bool = True) -> list[str]:
 # ─── Compose full frame ──────────────────────────────────────────────────────
 def build_frame(width: int, height: int, refresh: int) -> list[str]:
     out: list[str] = []
-    research = find_active_research()
+    # v8 — unified active-session finder. Picks consortium when one is
+    # running, falls back to research, falls back to whichever finished
+    # most recently. The renderer branches on `_kind` ("consortium" vs
+    # "research") so both pipeline types light up the Overall Progress
+    # hero with their own metrics.
+    active = find_active()
+    research = active if (active and active.get("_kind") == "research") else None
     is_compact = height < 42  # squeeze more if user has shorter terminal
 
     # 1. Header (full width)
     out += header_panel(width, refresh)
 
     # 2. Overall Progress hero (full width)
-    out += progress_hero(research, width)
+    out += progress_hero(active, width)
 
     # 3. Two-column main section
     if width >= 160 and research:
