@@ -153,18 +153,106 @@ def _short(s: str | None, n: int) -> str:
 
 
 def _phase_pct(session: dict[str, Any]) -> int:
-    """Derive an 0-100 progress percent from the phases list."""
+    """Derive a 0-100 progress percent from the phases list using
+    per-phase weights. v8 — research is fast, thinking + implementation
+    each cost ~35% of the run, so a flat 25% per phase under-counts
+    early progress and over-counts late."""
     phases = session.get("phases") or []
     if not phases:
         return 0
-    completed = sum(1 for p in phases if p.get("status") == "completed")
-    in_progress = sum(1 for p in phases if p.get("status") == "in_progress")
-    pct = int((completed / len(phases)) * 100)
-    if in_progress:
-        # Half-credit for the in-flight phase so the bar advances even
-        # before completion.
-        pct += int(50 / len(phases))
-    return min(pct, 100)
+    weights = {
+        "scope": 5, "research": 25, "thinking": 35, "implementation": 35,
+    }
+    total = sum(weights.values())
+    accumulated = 0.0
+    for p in phases:
+        name = p.get("name") or ""
+        status = p.get("status") or "pending"
+        w = weights.get(name, 100 / max(len(phases), 1))
+        if status == "completed":
+            accumulated += w
+        elif status == "in_progress":
+            # 50% credit while in-flight + a small bump for inner-phase
+            # tracking via current_task heuristic.
+            accumulated += w * _inner_phase_pct(session, name)
+    return int(min(100.0, (accumulated / total) * 100.0))
+
+
+# Engine-internal phase orders we can detect inside `current_task`.
+_THINKING_INNER = [
+    "understand", "decompose", "explore", "evaluate", "synthesize", "critique",
+]
+_CODE_INNER = [
+    "triage", "model_prep", "plan", "implement",
+    "execute", "analyze", "test", "debug", "review",
+]
+
+
+def _inner_phase_pct(session: dict[str, Any], phase_name: str) -> float:
+    """0.0–1.0 estimated completion of the active phase.
+
+    Reads `current_task` for keywords from the engine's inner phase
+    order. Falls back to 0.5 (half done) if no match — better than 0
+    because in-progress phases always represent partial completion.
+    """
+    task = (session.get("current_task") or "").lower()
+    if phase_name == "thinking":
+        order = _THINKING_INNER
+    elif phase_name == "implementation":
+        order = _CODE_INNER
+    else:
+        return 0.5
+    for i, name in enumerate(order):
+        if name in task:
+            return (i + 0.5) / len(order)
+    return 0.4
+
+
+def _consortium_eta(session: dict[str, Any]) -> tuple[str, float] | None:
+    """Linear-extrapolation ETA from elapsed time and progress %."""
+    pct = _phase_pct(session)
+    if pct <= 0 or pct >= 99:
+        return None
+    started = _parse_iso(session.get("started_at"))
+    if started is None:
+        return None
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    if elapsed < 10:
+        return None
+    remaining = elapsed * (100 - pct) / max(pct, 1)
+    return (_humanise_age(remaining), remaining)
+
+
+def _gate_counts(session: dict[str, Any]) -> tuple[int, int, int]:
+    """Return (passed, passed_warn, failed) gate counts."""
+    verifs = session.get("verifications") or []
+    ok = sum(1 for v in verifs if v.get("status") == "passed")
+    warn = sum(1 for v in verifs if v.get("status") == "passed_warn")
+    fail = sum(1 for v in verifs if v.get("status") == "failed")
+    return ok, warn, fail
+
+
+def _find_active_session(sessions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the most-active consortium session for the hero panel.
+
+    Prefers `started`/`running` over terminal states, and within each
+    bucket prefers the most recent heartbeat."""
+    if not sessions:
+        return None
+    running = [s for s in sessions if s.get("status") in ("started", "running")]
+    if running:
+        running.sort(
+            key=lambda s: s.get("last_heartbeat_at") or s.get("started_at") or "",
+            reverse=True,
+        )
+        return running[0]
+    sessions_sorted = sorted(
+        sessions,
+        key=lambda s: s.get("completed_at") or s.get("last_heartbeat_at")
+                       or s.get("started_at") or "",
+        reverse=True,
+    )
+    return sessions_sorted[0]
 
 
 # ─── pollers (one task per data source) ────────────────────────────────────
@@ -478,6 +566,148 @@ def render_health_panel(state: WatchState) -> Panel:
     return Panel(Group(*parts), title="System Health", border_style=base_color)
 
 
+def render_active_pipeline_hero(state: WatchState) -> Panel:
+    """Full-width hero showing the most-active consortium session with
+    a prominent progress bar, phase chips, inner-phase chips, ETA and
+    gate counts. The headline panel — what the user looks at first."""
+    active = _find_active_session(state.consortium_sessions)
+    if not active:
+        return Panel(
+            Align.center(Text(
+                "No active consortium pipeline\n"
+                "(start one from the Consortium card in More settings)",
+                style="dim",
+            )),
+            title="Active Pipeline",
+            border_style="purple",
+            padding=(1, 2),
+        )
+
+    sid = (active.get("session_id") or "?")[:8]
+    scope = active.get("scope") or {}
+    goal = scope.get("goal") or scope.get("title") or "?"
+    depth = scope.get("depth") or "?"
+    status = str(active.get("status") or "?")
+    cur_phase = active.get("current_phase") or "—"
+    pct = _phase_pct(active)
+
+    started = _parse_iso(active.get("started_at"))
+    elapsed = ((datetime.now(timezone.utc) - started).total_seconds()
+               if started else 0)
+    hb = _parse_iso(active.get("last_heartbeat_at"))
+    hb_age = ((datetime.now(timezone.utc) - hb).total_seconds()
+              if hb else None)
+    ok, warn, fail = _gate_counts(active)
+    eta = _consortium_eta(active)
+
+    status_color = {
+        "started": "cyan", "running": "cyan",
+        "ok": "green", "cancelled": "yellow",
+        "interrupted": "magenta", "error": "red",
+    }.get(status, "white")
+    border_color = {
+        "ok": "green", "error": "red", "cancelled": "yellow",
+        "interrupted": "magenta",
+    }.get(status, "purple")
+
+    # ── Title row ──
+    title_row = Text.assemble(
+        ("🏛 ", "purple bold"),
+        (sid, "bold cyan"),
+        ("  "),
+        (status.upper(), f"bold {status_color}"),
+        ("  ·  ", "dim"),
+        (_short(goal, 80), "bold white"),
+        ("  ", ""),
+        (f"({depth})", "dim"),
+    )
+
+    # ── Phase chips row ──
+    phases = active.get("phases") or []
+    phase_chips = Text()
+    for i, p in enumerate(phases):
+        name = p.get("name") or "?"
+        st = p.get("status") or "pending"
+        label = name.title() if len(name) <= 14 else name[:14]
+        glyph, col = {
+            "completed": ("✓ ", "green"),
+            "in_progress": ("◉ ", "yellow"),
+            "failed": ("✗ ", "red"),
+            "skipped": ("⤳ ", "dim yellow"),
+        }.get(st, ("⋯ ", "dim"))
+        phase_chips.append(glyph, style=col)
+        phase_chips.append(label, style=f"bold {col}" if st == "in_progress" else col)
+        if i < len(phases) - 1:
+            phase_chips.append("  │  ", style="dim")
+
+    # ── Inner phase chips for the active phase ──
+    inner_text = Text()
+    if cur_phase == "thinking":
+        order = _THINKING_INNER
+    elif cur_phase == "implementation":
+        order = _CODE_INNER
+    else:
+        order = []
+    if order:
+        task = (active.get("current_task") or "").lower()
+        active_idx = -1
+        for i, name in enumerate(order):
+            if name in task:
+                active_idx = i
+                break
+        inner_text.append("Inner: ", style="dim")
+        for i, name in enumerate(order):
+            if active_idx >= 0 and i < active_idx:
+                inner_text.append(f"✓ {name}  ", style="green")
+            elif active_idx == i:
+                inner_text.append(f"◉ {name}  ", style="bold yellow")
+            else:
+                inner_text.append(f"⋯ {name}  ", style="dim")
+
+    # ── Progress bar ──
+    bar_width = 60
+    filled = int(bar_width * pct / 100)
+    bar = Text()
+    bar_color = (
+        "green" if pct >= 67 else "yellow" if pct >= 33 else "magenta"
+    )
+    bar.append("█" * filled, style=bar_color)
+    bar.append("░" * (bar_width - filled), style="dim")
+    bar.append(f"  {pct:>3}%", style=f"bold {bar_color}")
+
+    # ── Stats row ──
+    stats = Text()
+    stats.append(f"Elapsed {_humanise_age(elapsed)}", style="cyan")
+    stats.append("  ·  ", style="dim")
+    if eta:
+        stats.append(f"ETA ~{eta[0]}", style="cyan")
+        stats.append("  ·  ", style="dim")
+    stats.append("Gates: ", style="dim")
+    stats.append(f"✓{ok} ", style="green")
+    stats.append(f"⚠{warn} ", style="yellow")
+    stats.append(f"✗{fail}", style="red")
+    if hb_age is not None:
+        stats.append("  ·  ", style="dim")
+        hb_color = "green" if hb_age < 30 else "yellow" if hb_age < 90 else "red"
+        stats.append(f"♥ {hb_age:.0f}s", style=hb_color)
+
+    return Panel(
+        Group(
+            title_row,
+            Text(""),
+            phase_chips,
+            inner_text if inner_text.plain else Text(""),
+            Text(""),
+            bar,
+            Text(""),
+            stats,
+        ),
+        title="Active Pipeline",
+        border_style=border_color,
+        padding=(0, 2),
+    )
+
+
 def render_consortium_panel(state: WatchState) -> Panel:
     if not state.consortium_sessions:
         return Panel(
@@ -697,9 +927,14 @@ def render_footer(state: WatchState) -> Panel:
 
 
 def build_layout(state: WatchState) -> Layout:
-    """Compose the full screen layout."""
+    """Compose the full screen layout.
+
+    v8 — adds a full-width Active Pipeline hero panel at the top so the
+    user sees overall progress %, phase chips and ETA at a glance
+    without hunting through the multi-column session table."""
     layout = Layout()
     layout.split_column(
+        Layout(name="hero", size=12),
         Layout(name="top", size=8),
         Layout(name="middle", ratio=2),
         Layout(name="bottom", ratio=1),
@@ -715,6 +950,7 @@ def build_layout(state: WatchState) -> Layout:
         Layout(name="events", ratio=2),
     )
 
+    layout["hero"].update(render_active_pipeline_hero(state))
     layout["health"].update(render_health_panel(state))
     layout["other"].update(render_other_modes_panel(state))
     layout["ollama"].update(render_ollama_panel(state))
