@@ -134,18 +134,40 @@ async def _persist(session_id: str, session: Dict[str, Any]) -> None:
         logger.debug("consortium_persist_failed: %s", exc)
 
 
-async def _load(session_id: str) -> Optional[Dict[str, Any]]:
-    session = _sessions.get(session_id)
-    if session:
-        return session
+async def _load(
+    session_id: str,
+    *,
+    prefer_redis: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Load a session payload.
+
+    By default returns the local in-memory copy when present (the bg
+    task's own mutations are reflected here without a Redis round-trip),
+    falling back to Redis on a cache miss.
+
+    v7 — when ``prefer_redis=True``, always query Redis first. Used by
+    the read-only status / events / cancel endpoints to avoid serving
+    stale data when a request lands on a *different* replica than the
+    one running the bg task. Cross-replica caches diverge naturally
+    (each replica only updates its own local dict), so the only source
+    of truth across replicas is Redis."""
+    if not prefer_redis:
+        session = _sessions.get(session_id)
+        if session:
+            return session
     try:
         cached = await cache_manager.get_json(_cache_key(session_id))
         if isinstance(cached, dict):
-            _sessions[session_id] = cached
+            # Don't overwrite the local cache when prefer_redis=True —
+            # the bg task on this replica might be mid-mutation and the
+            # Redis copy is a strict subset of those local mutations.
+            if not prefer_redis:
+                _sessions[session_id] = cached
             return cached
     except Exception:  # pragma: no cover
         pass
-    return None
+    # Last resort — return local cache even if we asked for Redis.
+    return _sessions.get(session_id)
 
 
 def _event_queue(session_id: str) -> asyncio.Queue:
@@ -414,6 +436,25 @@ async def _run_session(session_id: str) -> None:
 
     cancel_pump_task = asyncio.create_task(_cancel_pump())
 
+    # v7 — heartbeat pump. Long LLM calls (CPU qwen2.5:7b takes 60-90s
+    # per call) leave gaps where the bg task emits no consortium
+    # events, which means on_event doesn't fire and the heartbeat
+    # stamp doesn't refresh. Without this, the zombie sweeper would
+    # mark a perfectly-healthy session as interrupted just because it's
+    # mid-LLM-call. Stamping every 20s keeps live sessions visibly
+    # alive (well below the 90s zombie threshold).
+    async def _heartbeat_pump() -> None:
+        try:
+            while True:
+                await asyncio.sleep(20)
+                session["last_heartbeat_at"] = _now()
+                await _persist(session_id, session)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug("consortium_heartbeat_pump_failed: %s", exc)
+    heartbeat_pump_task = asyncio.create_task(_heartbeat_pump())
+
     if task:
         _active_tasks[session_id] = task
 
@@ -447,6 +488,10 @@ async def _run_session(session_id: str) -> None:
             cancel_pump_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await cancel_pump_task
+        if heartbeat_pump_task and not heartbeat_pump_task.done():
+            heartbeat_pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await heartbeat_pump_task
         await _persist(session_id, session)
 
 
@@ -468,7 +513,9 @@ async def event_stream(
     drained concurrently; either source can deliver an event first and
     the other path is deduped via ``event_id``.
     """
-    session = await _load(session_id)
+    # v7 — Redis-first so cross-replica subscribers get the right
+    # snapshot to seed the SSE stream.
+    session = await _load(session_id, prefer_redis=True)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     _require_owner(session, user)
@@ -599,7 +646,10 @@ async def get_status(
     session_id: str,
     user: Optional[User] = Depends(get_optional_user),
 ):
-    session = await _load(session_id)
+    # v7 — always query Redis so cross-replica reads see fresh data
+    # (the bg task's own replica updates Redis on every event, but
+    # other replicas' local caches are frozen at session creation).
+    session = await _load(session_id, prefer_redis=True)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     _require_owner(session, user)
@@ -622,7 +672,11 @@ async def cancel_session(
     session_id: str,
     user: Optional[User] = Depends(get_optional_user),
 ):
-    session = await _load(session_id)
+    # v7 — Redis-first because we need to set cancel_requested in the
+    # canonical Redis copy regardless of which replica the bg task is
+    # on. The pub/sub publish below propagates the signal to the bg
+    # task's replica.
+    session = await _load(session_id, prefer_redis=True)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     _require_owner(session, user)
@@ -664,7 +718,9 @@ async def download_artifact(
     folders (research/, thinking/, code/), ``verifications.json``, and
     ``bundle.json``. This endpoint zips them on the fly so the user
     gets a single downloadable file."""
-    session = await _load(session_id)
+    # v7 — Redis-first read so we see the most recent artifact_dir +
+    # status, even when the request lands on the non-running replica.
+    session = await _load(session_id, prefer_redis=True)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     _require_owner(session, user)
