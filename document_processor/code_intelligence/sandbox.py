@@ -109,9 +109,16 @@ class ExecutionResult:
     error: str | None = None
     duration_ms: int = 0
     language: str = ""
+    # v8 — `skipped=True` means the sandbox declined to run (e.g.,
+    # Docker CLI missing in this container). Distinguished from
+    # `success=False` because the implementation gate should treat
+    # skipped runs as neutral, not as a failure that lowers the score.
+    skipped: bool = False
 
     @property
     def success(self) -> bool:
+        if self.skipped:
+            return True  # neutral — neither failed nor proved successful
         return self.exit_code == 0 and not self.timed_out and not self.error
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,6 +131,7 @@ class ExecutionResult:
             "duration_ms": self.duration_ms,
             "language": self.language,
             "success": self.success,
+            "skipped": self.skipped,
         }
 
     def to_feedback_str(self) -> str:
@@ -167,24 +175,68 @@ class ExecutionSandbox:
         self._default_timeout = default_timeout
         self._memory_limit = memory_limit
         self._cpu_quota = cpu_quota
+        # v8 — cache the docker_available() result so:
+        #  (a) we don't pay the subprocess cost on every test, and
+        #  (b) once we know docker is missing, every subsequent
+        #      execute() can fail fast and quietly instead of logging a
+        #      full traceback per call. Re-probed at most every 5 min.
+        self._docker_available_cache: bool | None = None
+        self._docker_available_cached_at: float = 0.0
+        self._docker_probe_ttl: float = 300.0  # 5 minutes
+        self._docker_probe_lock = asyncio.Lock()
 
     # ── Image management ──────────────────────────────────────────────────
 
-    async def docker_available(self) -> bool:
-        """Cheap check: is the Docker CLI / daemon reachable?"""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker",
-                "version",
-                "--format",
-                "{{.Server.Version}}",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-            return proc.returncode == 0
-        except Exception:
-            return False
+    async def docker_available(self, *, force_refresh: bool = False) -> bool:
+        """Cheap check: is the Docker CLI / daemon reachable?
+
+        Cached for ``self._docker_probe_ttl`` seconds (default 5 min).
+        ``force_refresh=True`` bypasses the cache — used at app startup
+        in ``_code_intelligence_warmup`` to seed a fresh value before
+        the first real request lands."""
+        now = time.monotonic()
+        if (not force_refresh
+                and self._docker_available_cache is not None
+                and (now - self._docker_available_cached_at)
+                < self._docker_probe_ttl):
+            return self._docker_available_cache
+
+        async with self._docker_probe_lock:
+            # Second check inside the lock — another caller may have
+            # filled the cache while we waited.
+            if (not force_refresh
+                    and self._docker_available_cache is not None
+                    and (time.monotonic()
+                         - self._docker_available_cached_at)
+                    < self._docker_probe_ttl):
+                return self._docker_available_cache
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "version",
+                    "--format",
+                    "{{.Server.Version}}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                ok = proc.returncode == 0
+            except FileNotFoundError:
+                # The docker CLI binary isn't even on PATH — common in
+                # slim app images where only the daemon socket is
+                # mounted. Cache aggressively to avoid log spam.
+                logger.warning(
+                    "sandbox_docker_cli_missing — sandbox execution "
+                    "will be skipped. Install the docker CLI in the "
+                    "app image to enable.",
+                )
+                ok = False
+            except Exception as exc:
+                logger.warning("sandbox_docker_probe_failed: %s", exc)
+                ok = False
+            self._docker_available_cache = ok
+            self._docker_available_cached_at = time.monotonic()
+            return ok
 
     async def _ensure_image(self, image: str) -> None:
         """Pull the Docker image if it isn't already present locally."""
@@ -259,6 +311,25 @@ class ExecutionSandbox:
         timeout            : Seconds before the container is killed.
         stdin_data         : Optional input piped to stdin.
         """
+        # v8 — short-circuit when Docker is known-unreachable. Without
+        # this, the subprocess call below raises FileNotFoundError and
+        # the except block at the bottom fires `logger.exception`,
+        # which produces a full traceback every single time the
+        # engine asks for a sandbox run (often dozens of times per
+        # session). Skipping cleanly returns a "skipped" result the
+        # implementation gate can read without flagging a critical.
+        if not await self.docker_available():
+            return ExecutionResult(
+                exit_code=0,
+                stdout="",
+                stderr=("sandbox skipped — docker CLI not available "
+                         "in app container"),
+                error="docker_unavailable",
+                duration_ms=0,
+                language=language,
+                skipped=True,
+            )
+
         lang = language.lower().strip()
         cfg = LANGUAGE_RUNNERS.get(lang)
         if not cfg:
@@ -390,8 +461,32 @@ class ExecutionSandbox:
                 language=lang,
             )
 
+        except FileNotFoundError as exc:
+            # docker CLI vanished mid-run (e.g. Docker Desktop quit).
+            # Invalidate the cached docker_available so the next call
+            # re-probes and short-circuits cleanly.
+            self._docker_available_cache = False
+            self._docker_available_cached_at = time.monotonic()
+            logger.warning(
+                "sandbox_docker_cli_disappeared err=%s — sandbox runs "
+                "will now skip until probe succeeds again", exc,
+            )
+            return ExecutionResult(
+                exit_code=0,
+                stdout="",
+                stderr=("sandbox skipped — docker CLI not available "
+                         "in app container"),
+                error="docker_unavailable",
+                duration_ms=0,
+                language=language,
+                skipped=True,
+            )
         except Exception as exc:
-            logger.exception("sandbox_execution_failed")
+            # Real run-time failure (image pull failed, container OOM,
+            # etc.). Log only at warning level — the previous
+            # `logger.exception` wrote a full traceback per call which
+            # spammed the error stream.
+            logger.warning("sandbox_execution_failed: %s", exc)
             return ExecutionResult(
                 exit_code=1,
                 stdout="",

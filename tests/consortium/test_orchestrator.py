@@ -213,11 +213,17 @@ async def test_bundle_writes_artifact_directory(tmp_path: Path):
         decision={"chosen": "a"},
     )
     orch.implementation = ImplementationArtifact(
-        code="print('hi')", tests="def test(): assert 1",
+        code="import pygame\nprint('hi')",
+        tests="import pytest\ndef test_hi(): assert 1",
         language="python", deliverable_markdown="## Implementation",
         static_analysis={"critical_count": 0},
         execution_results=[{"success": True}],
-        review={"verdict": "approve"},
+        review={
+            "verdict": "approve",
+            "summary": "Looks fine",
+            "strengths": ["clean", "tested"],
+            "weaknesses": [{"title": "no docstring", "detail": "main.py lacks a module docstring"}],
+        },
     )
     orch.verifications = [
         VerificationGate(phase="research",       status="passed", score=80, summary="ok"),
@@ -228,14 +234,172 @@ async def test_bundle_writes_artifact_directory(tmp_path: Path):
     assert isinstance(bundle, ConsortiumBundle)
     assert bundle.readme_markdown.startswith("# ")
     out = tmp_path / "out"
+
+    # Top-level metadata stays at the root for stable contract.
     assert (out / "README.md").exists()
     assert (out / "scope.json").exists()
     assert (out / "verifications.json").exists()
     assert (out / "bundle.json").exists()
-    assert (out / "research" / "summary.md").exists()
-    assert (out / "thinking" / "design.md").exists()
-    assert (out / "code" / "main.py").read_text(encoding="utf-8") == "print('hi')"
-    assert (out / "code" / "tests.py").read_text(encoding="utf-8") == "def test(): assert 1"
+
+    # New conventional layout: src/, tests/, docs/, reports/.
+    assert (out / "src" / "main.py").read_text(encoding="utf-8") == "import pygame\nprint('hi')"
+    assert (out / "tests" / "test_main.py").read_text(encoding="utf-8") == "import pytest\ndef test_hi(): assert 1"
+    assert (out / "tests" / "__init__.py").exists()
+    assert (out / "docs" / "design.md").exists()
+    assert (out / "docs" / "alternatives.json").exists()
+    assert (out / "docs" / "research_summary.md").exists()
+    assert (out / "docs" / "research_sources.json").exists()
+    assert (out / "docs" / "review.md").exists()
+    assert (out / "reports" / "static_analysis.json").exists()
+    assert (out / "reports" / "execution_results.json").exists()
+
+    # Python-specific scaffolding: pip detects only third-party imports
+    # (pytest is included for the tests file; pygame for main).
+    reqs = (out / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    assert "pygame" in reqs
+    assert "pytest" in reqs
+    # Stdlib must never leak into requirements.txt.
+    assert all(x not in reqs for x in ("os", "sys", "json", "ast"))
+
+    run_sh = (out / "run.sh").read_text(encoding="utf-8")
+    assert run_sh.startswith("#!/usr/bin/env bash")
+    # Run script invokes pytest via the venv's python — exact string is
+    # `"$VENV/bin/python" -m pytest tests/`. Match the suffix so the test
+    # is robust to variable-name churn.
+    assert "-m pytest tests/" in run_sh
+    assert "setup" in run_sh and "clean" in run_sh
+
+    pyproject = (out / "pyproject.toml").read_text(encoding="utf-8")
+    assert "[project]" in pyproject
+    assert "pygame" in pyproject  # dep block carries detected pip names
+
+    # The review is rendered as proper markdown, not a JSON dump.
+    review_md = (out / "docs" / "review.md").read_text(encoding="utf-8")
+    assert review_md.startswith("# Adversarial review")
+    assert "approve" in review_md
+    assert "no docstring" in review_md
+
+    # README surfaces the Quick Start block when there's a Python entry point.
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "## Quick start" in readme
+    assert "bash run.sh" in readme
+
+
+# ── Artifact-bundle helpers (direct unit coverage) ──────────────────
+
+
+def test_extract_python_requirements_filters_stdlib_and_aliases():
+    """AST walk must catch top-level imports + map known aliases."""
+    src_main = (
+        "import os\n"
+        "import sys\n"
+        "import json\n"
+        "import pygame\n"
+        "from PIL import Image\n"
+        "from bs4 import BeautifulSoup\n"
+        "import cv2\n"
+        "import yaml\n"
+        "from sklearn.model_selection import train_test_split\n"
+        "from . import helpers\n"  # relative — must be ignored
+    )
+    src_tests = "import pytest\nimport os\n"
+    reqs = ConsortiumOrchestrator._extract_python_requirements(src_main, src_tests)
+    # Stdlib filtered.
+    for stdlib in ("os", "sys", "json"):
+        assert stdlib not in reqs
+    # Third-party aliases mapped to pip names.
+    assert "Pillow" in reqs
+    assert "beautifulsoup4" in reqs
+    assert "opencv-python" in reqs
+    assert "PyYAML" in reqs
+    assert "scikit-learn" in reqs
+    # Plain third-party preserved.
+    assert "pygame" in reqs
+    assert "pytest" in reqs
+    # Result is sorted (stable ordering helps diffability).
+    assert reqs == sorted(reqs)
+
+
+def test_extract_python_requirements_handles_syntax_error():
+    """Partially invalid code shouldn't break the bundle."""
+    bad = "def broken(:\n    return\n"
+    good = "import requests\n"
+    reqs = ConsortiumOrchestrator._extract_python_requirements(bad, good)
+    assert reqs == ["requests"]
+
+
+def test_extract_python_requirements_empty_inputs():
+    assert ConsortiumOrchestrator._extract_python_requirements() == []
+    assert ConsortiumOrchestrator._extract_python_requirements(None, "") == []
+
+
+def test_render_review_markdown_full_payload():
+    md = ConsortiumOrchestrator._render_review_markdown({
+        "verdict": "approve_with_changes",
+        "score": 78,
+        "severity": "medium",
+        "summary": "Mostly good but missing edge cases.",
+        "strengths": ["clear structure", "good naming"],
+        "weaknesses": [
+            {"title": "no input validation",
+             "detail": "main.py does not check argv length"},
+        ],
+        "suggestions": ["Add type hints"],
+        "untracked_field": "should land in raw payload",
+    })
+    assert md.startswith("# Adversarial review")
+    assert "approve_with_changes" in md
+    assert "Score**: 78" in md
+    assert "Severity**: medium" in md
+    assert "## Summary" in md
+    assert "Mostly good" in md
+    assert "## Strengths" in md
+    assert "clear structure" in md
+    assert "## Weaknesses" in md
+    assert "no input validation" in md
+    assert "## Suggestions" in md
+    assert "Add type hints" in md
+    assert "## Raw review payload" in md
+    assert "untracked_field" in md
+
+
+def test_render_review_markdown_empty_returns_placeholder():
+    md = ConsortiumOrchestrator._render_review_markdown({})
+    assert "No review produced" in md
+
+
+def test_build_run_sh_includes_pytest_when_tests_present():
+    sh = ConsortiumOrchestrator._build_run_sh(has_tests=True)
+    assert sh.startswith("#!/usr/bin/env bash")
+    assert "-m pytest tests/" in sh
+    assert "case " in sh and "setup)" in sh and "clean)" in sh
+
+
+def test_build_run_sh_skips_pytest_when_no_tests():
+    sh = ConsortiumOrchestrator._build_run_sh(has_tests=False)
+    assert "no tests in this bundle" in sh
+    assert "pytest" not in sh
+
+
+def test_build_pyproject_toml_quotes_summary_safely():
+    toml = ConsortiumOrchestrator._build_pyproject_toml(
+        name="My Cool Project!",
+        summary='A "snake game" — fast & fun',
+        requirements=["pygame", "Pillow"],
+    )
+    assert "[project]" in toml
+    # Slug normalised: lowercase + non-alnum collapsed.
+    assert 'name = "my-cool-project"' in toml
+    # Quotes inside the summary are escaped, not raw.
+    assert '\\"snake game\\"' in toml
+    assert "pygame" in toml and "Pillow" in toml
+
+
+def test_build_pyproject_toml_handles_empty_requirements():
+    toml = ConsortiumOrchestrator._build_pyproject_toml(
+        name="x", summary="", requirements=[],
+    )
+    assert "dependencies = []" in toml
 
 
 # ── Cancellation ────────────────────────────────────────────────────
