@@ -40,10 +40,12 @@ Design notes
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
 import re
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -696,21 +698,87 @@ class ConsortiumOrchestrator:
         return bundle
 
     def _build_readme_markdown(self) -> str:
+        """Synthesize the top-level README.
+
+        Sections (in order): title, one-line summary, Quick start (so the
+        user can run `bash run.sh` and see something), Project structure
+        (so they know where each artifact lives), Scope, Phase results,
+        Implementation deliverable, Design document, Research summary.
+        """
         s = self.scope
+        is_python = (s.language or "python") == "python"
+        impl = self.implementation
+
         rows: list[str] = []
         rows.append(f"# {s.title or 'Consortium project'}\n")
-        rows.append(f"> {s.summary}\n")
+        if s.summary:
+            rows.append(f"> {s.summary}\n")
+
+        # Quick start — give the user a copy-pasteable command first.
+        rows.append("## Quick start\n")
+        if is_python and impl and impl.code:
+            rows.append("```bash")
+            rows.append("# 1. Bootstrap venv + install requirements")
+            rows.append("bash run.sh setup")
+            rows.append("")
+            rows.append("# 2. Run the entry point")
+            rows.append("bash run.sh run")
+            if impl.tests:
+                rows.append("")
+                rows.append("# 3. Run the test suite")
+                rows.append("bash run.sh test")
+            rows.append("```\n")
+        else:
+            rows.append("_No runnable entry point detected — see "
+                        "`docs/design.md` for the design and `src/` for "
+                        "the generated artefact._\n")
+
+        # Project structure — explicit map so the user knows where things live.
+        rows.append("## Project structure\n")
+        rows.append("```")
+        rows.append(".")
+        rows.append("├── README.md                    ← this file")
+        if is_python and impl and impl.code:
+            rows.append("├── requirements.txt             ← auto-detected from imports")
+            rows.append("├── run.sh                       ← venv bootstrap + run + test")
+            rows.append("├── pyproject.toml               ← project metadata")
+            rows.append("├── .gitignore")
+        rows.append("├── scope.json                   ← user goal + triage results")
+        rows.append("├── verifications.json           ← per-phase quality gates")
+        rows.append("├── bundle.json                  ← full structured envelope")
+        if impl and impl.code:
+            rows.append("├── src/")
+            rows.append(f"│   └── main.{'py' if is_python else 'txt'}")
+        if impl and impl.tests:
+            rows.append("├── tests/")
+            rows.append(f"│   └── test_main.{'py' if is_python else 'txt'}")
+        rows.append("├── docs/")
+        if self.thinking:
+            rows.append("│   ├── design.md                ← decision + alternatives")
+            rows.append("│   ├── alternatives.json")
+        if self.research:
+            rows.append("│   ├── research_summary.md      ← citations + summary")
+            rows.append("│   └── research_sources.json")
+        if impl:
+            rows.append("│   └── review.md                ← adversarial review")
+        if impl and (impl.static_analysis or impl.execution_results):
+            rows.append("└── reports/")
+            rows.append("    ├── static_analysis.json")
+            rows.append("    └── execution_results.json")
+        rows.append("```\n")
+
         rows.append("## Scope\n")
-        rows.append(f"- **Depth**: {s.depth}")
-        rows.append(f"- **Language**: {s.language or 'python'}")
-        rows.append(f"- **Deliverable**: {s.deliverable_type}")
+        rows.append(f"- **Depth**: `{s.depth}`")
+        rows.append(f"- **Language**: `{s.language or 'python'}`")
+        rows.append(f"- **Deliverable**: `{s.deliverable_type}`")
         if s.constraints:
             rows.append("\n### Constraints\n" +
                         "\n".join(f"- {c}" for c in s.constraints))
         if s.success_criteria:
             rows.append("\n### Success criteria\n" +
                         "\n".join(f"- {c}" for c in s.success_criteria))
-        rows.append("\n## Phases\n")
+
+        rows.append("\n## Phase results\n")
         for v in self.verifications:
             badge = {"passed": "✓", "passed_warn": "⚠", "failed": "✗"}.get(
                 v.status, "?",
@@ -718,9 +786,10 @@ class ConsortiumOrchestrator:
             rows.append(f"- {badge} **{v.phase}** — score {v.score} · {v.summary}")
             for f in v.findings:
                 rows.append(f"    - {f}")
-        if self.implementation and self.implementation.deliverable_markdown:
+
+        if impl and impl.deliverable_markdown:
             rows.append("\n## Implementation deliverable\n")
-            rows.append(self.implementation.deliverable_markdown)
+            rows.append(impl.deliverable_markdown)
         if self.thinking and self.thinking.deliverable_markdown:
             rows.append("\n## Design document\n")
             rows.append(self.thinking.deliverable_markdown)
@@ -729,60 +798,361 @@ class ConsortiumOrchestrator:
             rows.append(self.research.summary_markdown)
         return "\n".join(rows)
 
+    # ─── Artifact-bundle helpers ────────────────────────────────────────
+
+    # Mapping from import-name to pip-name for the well-known mismatches
+    # the consortium tends to hit. Anything not listed maps 1:1.
+    _IMPORT_TO_PIP_NAME: dict[str, str] = {
+        "PIL": "Pillow",
+        "cv2": "opencv-python",
+        "sklearn": "scikit-learn",
+        "yaml": "PyYAML",
+        "bs4": "beautifulsoup4",
+        "skimage": "scikit-image",
+        "Crypto": "pycryptodome",
+        "OpenGL": "PyOpenGL",
+        "magic": "python-magic",
+        "dateutil": "python-dateutil",
+        "serial": "pyserial",
+        "lxml": "lxml",
+        "wx": "wxPython",
+    }
+
+    @staticmethod
+    def _extract_python_requirements(*sources: str | None) -> list[str]:
+        """Parse Python source(s) and return third-party pip names.
+
+        Walks the AST so we don't get fooled by strings/comments. Strips
+        out anything in ``sys.stdlib_module_names`` (3.10+) plus a small
+        backstop set for older runtimes, then maps known import-name →
+        pip-name aliases.
+        """
+        modules: set[str] = set()
+        for src in sources:
+            if not src:
+                continue
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:
+                # Code may be partially invalid — skip rather than break the bundle.
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name:
+                            modules.add(alias.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom):
+                    # Relative imports (level > 0) reference local files,
+                    # not packages — skip them.
+                    if node.level == 0 and node.module:
+                        modules.add(node.module.split(".")[0])
+
+        stdlib = set(getattr(sys, "stdlib_module_names", set()))
+        # Safety net for a few names that aren't in stdlib_module_names
+        # but should never end up in requirements.txt.
+        stdlib.update({"__future__", "typing_extensions", "tests", "test"})
+
+        third_party = (
+            m for m in modules
+            if m and m not in stdlib and not m.startswith("_")
+        )
+        # Sort by pip-name (post-aliasing) so requirements.txt is
+        # alphabetical the way a human reads it, not by the import name.
+        return sorted({
+            ConsortiumOrchestrator._IMPORT_TO_PIP_NAME.get(m, m)
+            for m in third_party
+        })
+
+    @staticmethod
+    def _build_run_sh(*, has_tests: bool) -> str:
+        """Generate a venv-bootstrapped run.sh for Python projects.
+
+        The script is idempotent: ``setup`` only creates the venv if it
+        doesn't exist, ``run`` calls setup transitively, ``clean`` wipes
+        the venv. All paths are relative to the script's own directory
+        so it works regardless of where the user invokes it from.
+        """
+        test_clause = (
+            '"$VENV/bin/python" -m pytest tests/ -v "$@"'
+            if has_tests
+            else 'echo "no tests in this bundle"'
+        )
+        return f"""#!/usr/bin/env bash
+# Auto-generated by AMOR Consortium.
+# Bootstraps a Python virtualenv and runs the project.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+cd "$HERE"
+VENV="$HERE/.venv"
+PY="${{PYTHON:-python3}}"
+
+setup() {{
+    if [[ ! -d "$VENV" ]]; then
+        "$PY" -m venv "$VENV"
+    fi
+    "$VENV/bin/pip" install --upgrade pip --quiet
+    if [[ -s requirements.txt ]]; then
+        "$VENV/bin/pip" install -r requirements.txt
+    fi
+}}
+
+run() {{
+    "$VENV/bin/python" src/main.py "$@"
+}}
+
+run_tests() {{
+    {test_clause}
+}}
+
+case "${{1:-run}}" in
+    setup)  setup ;;
+    run)    setup; shift || true; run "$@" ;;
+    test)   setup; shift || true; run_tests "$@" ;;
+    clean)  rm -rf "$VENV" ;;
+    *)      echo "usage: $0 {{setup|run|test|clean}}" >&2; exit 1 ;;
+esac
+"""
+
+    @staticmethod
+    def _build_pyproject_toml(*, name: str, summary: str,
+                              requirements: list[str]) -> str:
+        """Minimal pyproject.toml — enough that pip/uv recognises the project."""
+        # Slugify name for the [project] block.
+        slug = re.sub(r"[^a-z0-9_-]+", "-", (name or "project").lower()).strip("-")
+        if not slug:
+            slug = "project"
+        # Quote summary safely for TOML
+        safe_summary = (summary or "").replace("\\", "\\\\").replace('"', '\\"')
+        deps_block = ",\n".join(f'    "{r}"' for r in requirements)
+        if deps_block:
+            deps_block = f"[\n{deps_block},\n]"
+        else:
+            deps_block = "[]"
+        return f"""[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{slug}"
+version = "0.1.0"
+description = "{safe_summary}"
+requires-python = ">=3.10"
+dependencies = {deps_block}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+"""
+
+    @staticmethod
+    def _build_gitignore() -> str:
+        return (
+            ".venv/\n"
+            "__pycache__/\n"
+            "*.pyc\n"
+            "*.pyo\n"
+            ".pytest_cache/\n"
+            ".mypy_cache/\n"
+            ".coverage\n"
+            "*.egg-info/\n"
+            "dist/\n"
+            "build/\n"
+        )
+
+    @staticmethod
+    def _render_review_markdown(review: dict[str, Any]) -> str:
+        """Turn the adversarial reviewer's dict into proper markdown.
+
+        The review schema (from CodeIntelligenceEngine) carries:
+          verdict, summary, strengths[], weaknesses[], suggestions[],
+          severity (sometimes), score (sometimes).
+
+        Anything we don't recognize gets dumped as fenced JSON at the
+        bottom so nothing is silently lost.
+        """
+        if not review:
+            return "# Review\n\n_No review produced for this run._\n"
+
+        rows: list[str] = ["# Adversarial review\n"]
+        verdict = str(review.get("verdict") or "").strip()
+        if verdict:
+            badge = {
+                "approve":         "✓",
+                "approve_with_changes": "⚠",
+                "request_changes": "⚠",
+                "reject":          "✗",
+            }.get(verdict, "•")
+            rows.append(f"**Verdict**: {badge} `{verdict}`")
+        score = review.get("score")
+        if score is not None:
+            rows.append(f"**Score**: {score}")
+        severity = review.get("severity")
+        if severity:
+            rows.append(f"**Severity**: {severity}")
+        summary = str(review.get("summary") or "").strip()
+        if summary:
+            rows.append(f"\n## Summary\n\n{summary}")
+
+        for label, key in (
+            ("Strengths",   "strengths"),
+            ("Weaknesses",  "weaknesses"),
+            ("Suggestions", "suggestions"),
+            ("Risks",       "risks"),
+        ):
+            items = review.get(key)
+            if isinstance(items, list) and items:
+                rows.append(f"\n## {label}\n")
+                for it in items:
+                    if isinstance(it, dict):
+                        title = it.get("title") or it.get("issue") or ""
+                        detail = it.get("detail") or it.get("description") or ""
+                        line = f"- **{title}**" if title else "- "
+                        if detail:
+                            line += f" — {detail}" if title else detail
+                        rows.append(line)
+                    else:
+                        rows.append(f"- {it}")
+
+        # Anything unhandled gets dumped at the bottom for debugging.
+        known = {"verdict", "score", "severity", "summary",
+                 "strengths", "weaknesses", "suggestions", "risks"}
+        extra = {k: v for k, v in review.items() if k not in known}
+        if extra:
+            rows.append("\n## Raw review payload\n")
+            rows.append("```json")
+            rows.append(json.dumps(extra, indent=2, ensure_ascii=False))
+            rows.append("```")
+        return "\n".join(rows) + "\n"
+
     @staticmethod
     def _write_artifact_dir(bundle: ConsortiumBundle, dst: Path) -> None:
+        """Write a runnable, conventional project layout to ``dst``.
+
+        Layout::
+
+            <dst>/
+              README.md, requirements.txt, run.sh, pyproject.toml, .gitignore
+              scope.json, verifications.json, bundle.json     ← top-level metadata
+              src/main.<ext>
+              tests/__init__.py, tests/test_main.<ext>
+              docs/design.md, docs/alternatives.json,
+              docs/research_summary.md, docs/research_sources.json,
+              docs/review.md
+              reports/static_analysis.json, reports/execution_results.json
+
+        Non-Python deliverables skip the Python-specific scaffolding
+        (requirements.txt, run.sh, pyproject.toml).
+        """
         dst.mkdir(parents=True, exist_ok=True)
+        impl = bundle.implementation
+        language = (impl.language if impl else None) or bundle.scope.language or "python"
+        is_python = language == "python"
+        ext = "py" if is_python else "txt"
+
+        # ── Top-level metadata ──────────────────────────────────────────
         (dst / "README.md").write_text(bundle.readme_markdown, encoding="utf-8")
         (dst / "scope.json").write_text(
-            json.dumps(bundle.scope.to_dict(), indent=2), encoding="utf-8",
+            json.dumps(bundle.scope.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
-        if bundle.research:
-            (dst / "research").mkdir(exist_ok=True)
-            (dst / "research" / "sources.json").write_text(
-                json.dumps(bundle.research.sources, indent=2), encoding="utf-8",
-            )
-            (dst / "research" / "summary.md").write_text(
-                bundle.research.summary_markdown, encoding="utf-8",
-            )
-        if bundle.thinking:
-            (dst / "thinking").mkdir(exist_ok=True)
-            (dst / "thinking" / "design.md").write_text(
-                bundle.thinking.deliverable_markdown, encoding="utf-8",
-            )
-            (dst / "thinking" / "alternatives.json").write_text(
-                json.dumps(bundle.thinking.alternatives, indent=2), encoding="utf-8",
-            )
-        if bundle.implementation:
-            code_dir = dst / "code"
-            code_dir.mkdir(exist_ok=True)
-            if bundle.implementation.code:
-                ext = "py" if (bundle.implementation.language or "python") == "python" else "txt"
-                (code_dir / f"main.{ext}").write_text(
-                    bundle.implementation.code, encoding="utf-8",
-                )
-            if bundle.implementation.tests:
-                ext = "py" if (bundle.implementation.language or "python") == "python" else "txt"
-                (code_dir / f"tests.{ext}").write_text(
-                    bundle.implementation.tests, encoding="utf-8",
-                )
-            (code_dir / "review.md").write_text(
-                json.dumps(bundle.implementation.review, indent=2), encoding="utf-8",
-            )
-            (code_dir / "static_analysis.json").write_text(
-                json.dumps(bundle.implementation.static_analysis or {}, indent=2),
-                encoding="utf-8",
-            )
-            (code_dir / "execution_results.json").write_text(
-                json.dumps(bundle.implementation.execution_results, indent=2),
-                encoding="utf-8",
-            )
         (dst / "verifications.json").write_text(
-            json.dumps([v.to_dict() for v in bundle.verifications], indent=2),
+            json.dumps([v.to_dict() for v in bundle.verifications],
+                       indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         (dst / "bundle.json").write_text(
-            json.dumps(bundle.to_dict(), indent=2), encoding="utf-8",
+            json.dumps(bundle.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
+
+        # ── src/ + tests/ ───────────────────────────────────────────────
+        if impl and impl.code:
+            src_dir = dst / "src"
+            src_dir.mkdir(exist_ok=True)
+            (src_dir / f"main.{ext}").write_text(impl.code, encoding="utf-8")
+        if impl and impl.tests:
+            tests_dir = dst / "tests"
+            tests_dir.mkdir(exist_ok=True)
+            if is_python:
+                (tests_dir / "__init__.py").write_text("", encoding="utf-8")
+            (tests_dir / f"test_main.{ext}").write_text(impl.tests, encoding="utf-8")
+
+        # ── docs/ ───────────────────────────────────────────────────────
+        docs_dir = dst / "docs"
+        docs_written = False
+        if bundle.thinking:
+            docs_dir.mkdir(exist_ok=True)
+            docs_written = True
+            (docs_dir / "design.md").write_text(
+                bundle.thinking.deliverable_markdown or "# Design\n", encoding="utf-8",
+            )
+            (docs_dir / "alternatives.json").write_text(
+                json.dumps(bundle.thinking.alternatives, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        if bundle.research:
+            docs_dir.mkdir(exist_ok=True)
+            docs_written = True
+            (docs_dir / "research_summary.md").write_text(
+                bundle.research.summary_markdown or "# Research\n", encoding="utf-8",
+            )
+            (docs_dir / "research_sources.json").write_text(
+                json.dumps(bundle.research.sources, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        if impl:
+            docs_dir.mkdir(exist_ok=True)
+            docs_written = True
+            (docs_dir / "review.md").write_text(
+                ConsortiumOrchestrator._render_review_markdown(impl.review or {}),
+                encoding="utf-8",
+            )
+        if not docs_written:
+            # Touch the dir so the README's tree is honest.
+            docs_dir.mkdir(exist_ok=True)
+
+        # ── reports/ ────────────────────────────────────────────────────
+        if impl and (impl.static_analysis or impl.execution_results):
+            reports_dir = dst / "reports"
+            reports_dir.mkdir(exist_ok=True)
+            (reports_dir / "static_analysis.json").write_text(
+                json.dumps(impl.static_analysis or {}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (reports_dir / "execution_results.json").write_text(
+                json.dumps(impl.execution_results, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        # ── Python-specific scaffolding ─────────────────────────────────
+        if is_python and impl and (impl.code or impl.tests):
+            requirements = ConsortiumOrchestrator._extract_python_requirements(
+                impl.code, impl.tests,
+            )
+            (dst / "requirements.txt").write_text(
+                ("\n".join(requirements) + "\n") if requirements else "",
+                encoding="utf-8",
+            )
+            (dst / "run.sh").write_text(
+                ConsortiumOrchestrator._build_run_sh(has_tests=bool(impl.tests)),
+                encoding="utf-8",
+            )
+            try:
+                # Make run.sh executable on POSIX. No-op on Windows.
+                (dst / "run.sh").chmod(0o755)
+            except (OSError, NotImplementedError):
+                pass
+            (dst / "pyproject.toml").write_text(
+                ConsortiumOrchestrator._build_pyproject_toml(
+                    name=bundle.scope.title or "consortium-project",
+                    summary=bundle.scope.summary or "",
+                    requirements=requirements,
+                ),
+                encoding="utf-8",
+            )
+            (dst / ".gitignore").write_text(
+                ConsortiumOrchestrator._build_gitignore(), encoding="utf-8",
+            )
 
     # ─── Run ────────────────────────────────────────────────────────────
 
