@@ -71,6 +71,10 @@ except ImportError:  # pragma: no cover
 
 _EVENT_QUEUE_MAXSIZE = 500
 _CONSORTIUM_EVENT_CHANNEL = "amor:consortium:events:{session_id}"
+# v7 — separate cancel channel so a /cancel POST landing on a
+# different replica than the bg task can still propagate the signal.
+# The bg task subscribes; the cancel route publishes.
+_CONSORTIUM_CANCEL_CHANNEL = "amor:consortium:cancel:{session_id}"
 
 
 # Optional active-cancel registry — we keep the asyncio.Task so the
@@ -90,6 +94,14 @@ def _now() -> str:
 
 def _cache_key(session_id: str) -> str:
     return f"{SESSION_CACHE_PREFIX}{session_id}"
+
+
+# v7 — heartbeat staleness threshold. A session whose last on_event
+# was more than this many seconds ago AND is still "started" is a
+# zombie (its bg task died with a container restart). The startup +
+# periodic sweepers mark it as "interrupted" so /status doesn't keep
+# claiming it's running and the user can launch a fresh pipeline.
+_ZOMBIE_HEARTBEAT_THRESHOLD_S = 90
 
 
 def _require_client_id(x_client_id: Optional[str]) -> str:
@@ -231,6 +243,7 @@ async def start_consortium(
         "client_id": client_id,
         "status": "started",
         "started_at": _now(),
+        "last_heartbeat_at": _now(),
         "completed_at": None,
         "scope": scope.to_dict(),
         "phases": [
@@ -282,6 +295,11 @@ async def _run_session(session_id: str) -> None:
         # would otherwise leak un-dedup-able events.
         if not event.get("event_id"):
             event = {**event, "event_id": uuid4().hex}
+        # v7 — heartbeat. Stamps "I am alive" so the periodic zombie
+        # sweeper knows this session is still running (vs orphaned by
+        # a container restart). Updated on every event = at every
+        # phase boundary or finer.
+        session["last_heartbeat_at"] = _now()
         # Apply cancel signal to the scope so the orchestrator notices
         # at the next phase boundary.
         if session.get("cancel_requested"):
@@ -344,7 +362,58 @@ async def _run_session(session_id: str) -> None:
         artifact_dir=artifact_dir,
     )
 
+    # v7 — sidecar task subscribed to the cancel pub/sub channel. When
+    # a /cancel hits a different replica than this one, the cancel
+    # route publishes here and we lift the signal into the local
+    # `scope.cancel_requested` so the orchestrator picks it up at the
+    # next phase boundary (or asyncio cancels the task outright).
+    cancel_channel = _CONSORTIUM_CANCEL_CHANNEL.format(session_id=session_id)
     task = asyncio.current_task()
+    cancel_pump_task: Optional[asyncio.Task] = None
+
+    async def _cancel_pump() -> None:
+        """Listen for cross-replica cancel signals.
+
+        Two delivery paths:
+          1. Live pub/sub on ``cancel_channel`` — fast (<10ms typical)
+             but loses messages published before our subscribe.
+          2. Periodic Redis GET on the persisted session payload — catches
+             the race window where the cancel POST landed *before* our
+             pub/sub subscription was established.
+        """
+        async def _do_cancel(reason: str) -> None:
+            scope.cancel_requested = True
+            session["cancel_requested"] = True
+            logger.info(
+                "consortium_cancel_signal_received session=%s via=%s",
+                session_id, reason,
+            )
+            if task and not task.done():
+                task.cancel()
+
+        # Path (2) — initial pre-subscribe poll. Handles "cancel POSTed
+        # before subscribe completed" within the first ~10ms after task
+        # entry. After this we rely on pub/sub.
+        try:
+            cached = await cache_manager.get_json(_cache_key(session_id))
+            if isinstance(cached, dict) and cached.get("cancel_requested"):
+                await _do_cancel("redis-pre-subscribe-check")
+                return
+        except Exception as exc:
+            logger.debug("consortium_cancel_pre_check_failed: %s", exc)
+
+        # Path (1) — long-lived pub/sub subscription.
+        try:
+            async for _evt in cache_manager.subscribe_events(cancel_channel):
+                await _do_cancel("pubsub")
+                return
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug("consortium_cancel_pump_failed: %s", exc)
+
+    cancel_pump_task = asyncio.create_task(_cancel_pump())
+
     if task:
         _active_tasks[session_id] = task
 
@@ -353,12 +422,31 @@ async def _run_session(session_id: str) -> None:
         session["bundle"] = bundle.to_dict()
         # Status was already set in on_event when "consortium_completed"
         # arrived — keep whatever it landed on (ok / error / cancelled).
+    except asyncio.CancelledError:
+        # External cancel (asyncio task.cancel()). Mark + emit so SSE
+        # subscribers see the terminal frame instead of dangling.
+        logger.info("consortium_runner_cancelled session=%s", session_id)
+        session["status"] = "cancelled"
+        session["completed_at"] = _now()
+        await on_event({
+            "type": "consortium_cancelled",
+            "session_id": session_id,
+        })
+        await on_event({
+            "type": "consortium_completed",
+            "status": "cancelled",
+            "session_id": session_id,
+        })
     except Exception as exc:
         logger.exception("consortium_runner_failed session=%s", session_id)
         session["status"] = "error"
         session["error"] = str(exc)
     finally:
         _active_tasks.pop(session_id, None)
+        if cancel_pump_task and not cancel_pump_task.done():
+            cancel_pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await cancel_pump_task
         await _persist(session_id, session)
 
 
@@ -540,12 +628,25 @@ async def cancel_session(
     _require_owner(session, user)
     session["cancel_requested"] = True
     await _persist(session_id, session)
-    # If the task is still running on this replica, cancel directly so
-    # mid-engine waits unblock immediately. Otherwise the orchestrator
-    # picks up the flag at its next phase boundary.
+
+    # v7 — three-tier cancel propagation:
+    #   1. Local replica: cancel the asyncio task directly so a
+    #      mid-LLM-call `await` unblocks immediately.
+    #   2. Cross-replica: publish to the cancel pub/sub channel; the
+    #      bg task on the other replica's _cancel_pump picks it up,
+    #      sets scope.cancel_requested, and cancels its own task.
+    #   3. Persisted state: cancel_requested=True is written to Redis
+    #      so even a future replica that loads the session sees it.
     task = _active_tasks.get(session_id)
     if task and not task.done():
         task.cancel()
+    try:
+        await cache_manager.publish_event(
+            _CONSORTIUM_CANCEL_CHANNEL.format(session_id=session_id),
+            {"type": "cancel", "session_id": session_id},
+        )
+    except Exception as exc:
+        logger.debug("consortium_cancel_publish_failed: %s", exc)
     return {"ok": True, "session_id": session_id}
 
 
@@ -588,3 +689,137 @@ async def download_artifact(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─── v7 zombie sweeper (heartbeat-based) ──────────────────────────────────
+#
+# When an app container is restarted mid-pipeline, the bg task dies but
+# the session payload in Redis stays "started". Without this sweeper
+# /status would forever claim the session is running and the user would
+# never see a clean "interrupted" state. Two entry points:
+#
+#   * ``mark_zombies_at_startup`` — run once at lifespan startup. Every
+#     "started" session whose heartbeat is older than the threshold
+#     gets marked "interrupted" with a synthetic terminal event.
+#   * ``sweep_zombies_periodic`` — run by the existing _sse_queue_sweeper
+#     every 5 minutes for the same effect on long-running deployments.
+
+
+async def _enumerate_session_keys() -> list[str]:
+    """List every consortium_session:* key in Redis."""
+    keys: list[str] = []
+    try:
+        if not cache_manager.redis:
+            await cache_manager.connect()
+        cursor = 0
+        while True:
+            cursor, batch = await cache_manager.redis.scan(
+                cursor=cursor,
+                match=f"{SESSION_CACHE_PREFIX}*",
+                count=200,
+            )
+            if batch:
+                keys.extend(
+                    k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                    for k in batch
+                )
+            if cursor == 0:
+                break
+    except Exception as exc:
+        logger.debug("consortium_enumerate_keys_failed: %s", exc)
+    return keys
+
+
+def _is_zombie(session: Dict[str, Any], threshold_s: int) -> bool:
+    """A session is a zombie when it claims to be running but its
+    heartbeat is older than ``threshold_s``. Sessions that already
+    completed / failed / cancelled are not zombies."""
+    if (session.get("status") or "started") not in {"started", "running"}:
+        return False
+    hb = session.get("last_heartbeat_at") or session.get("started_at")
+    if not hb:
+        return True  # Missing heartbeat is itself zombie evidence.
+    try:
+        # Parse ISO-8601 timestamp.
+        from datetime import datetime as _dt  # noqa: PLC0415
+        hb_dt = _dt.fromisoformat(hb.replace("Z", "+00:00"))
+    except Exception:
+        return True
+    age = (datetime.now(timezone.utc) - hb_dt).total_seconds()
+    return age > threshold_s
+
+
+async def _mark_session_interrupted(session_id: str, session: Dict[str, Any]) -> None:
+    """Flip a zombie session to ``interrupted`` + persist + emit a
+    terminal SSE event so any reconnected client closes its stream."""
+    session["status"] = "interrupted"
+    session["completed_at"] = _now()
+    session["error"] = (
+        "Pipeline was interrupted (likely an app container restart). "
+        "Start a new session to continue."
+    )
+    await _persist(session_id, session)
+    # Best-effort terminal event over Redis pub/sub so any subscribed
+    # SSE client unblocks.
+    try:
+        await cache_manager.publish_event(
+            _CONSORTIUM_EVENT_CHANNEL.format(session_id=session_id),
+            {
+                "type": "consortium_completed",
+                "status": "interrupted",
+                "session_id": session_id,
+                "event_id": uuid4().hex,
+            },
+        )
+    except Exception as exc:
+        logger.debug("consortium_terminal_publish_failed: %s", exc)
+
+
+async def mark_zombies_at_startup() -> int:
+    """Lifespan-hook entry point. Returns the number of sessions
+    marked interrupted. Failure-quiet — startup never blocks on this."""
+    threshold = _ZOMBIE_HEARTBEAT_THRESHOLD_S
+    keys = await _enumerate_session_keys()
+    flipped = 0
+    for key in keys:
+        try:
+            session = await cache_manager.get_json(key)
+            if not isinstance(session, dict):
+                continue
+            if _is_zombie(session, threshold):
+                sid = key[len(SESSION_CACHE_PREFIX):]
+                await _mark_session_interrupted(sid, session)
+                flipped += 1
+                logger.info("consortium_zombie_marked session=%s", sid)
+        except Exception as exc:
+            logger.debug("consortium_zombie_check_failed key=%s err=%s", key, exc)
+    if flipped:
+        logger.info("consortium_zombies_swept count=%d", flipped)
+    return flipped
+
+
+async def sweep_zombies_periodic() -> int:
+    """Periodic-sweeper entry point. Same logic, different name so the
+    main lifespan loop can call this from its 5-minute tick."""
+    return await mark_zombies_at_startup()
+
+
+async def sweep_stale_event_queues() -> int:
+    """Drop event queues whose backing session has reached a terminal
+    state. Mirrors the helper in code_intelligence_routes / thinking_routes.
+    """
+    dropped = 0
+    for sid in list(_event_queues.keys()):
+        try:
+            session = await _load(sid)
+            if not session:
+                _event_queues.pop(sid, None)
+                dropped += 1
+                continue
+            status = session.get("status")
+            if status in {"ok", "error", "cancelled", "interrupted"}:
+                _event_queues.pop(sid, None)
+                dropped += 1
+        except Exception:
+            pass
+    return dropped

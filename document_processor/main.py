@@ -124,12 +124,23 @@ async def _sse_queue_sweeper() -> None:
                 c_dropped = await code_intelligence_routes.sweep_stale_event_queues()
             except Exception:
                 pass
-            if t_dropped or r_dropped or c_dropped:
+            # v7 — also sweep consortium zombies + queues.
+            cons_zombies = 0
+            cons_dropped = 0
+            try:
+                from .api import consortium_routes
+                cons_zombies = await consortium_routes.sweep_zombies_periodic()
+                cons_dropped = await consortium_routes.sweep_stale_event_queues()
+            except Exception:
+                pass
+            if t_dropped or r_dropped or c_dropped or cons_zombies or cons_dropped:
                 logger.info(
                     "sse_queue_sweep",
                     thinking=t_dropped,
                     research=r_dropped,
                     code=c_dropped,
+                    consortium_zombies=cons_zombies,
+                    consortium_queues=cons_dropped,
                 )
         except Exception as exc:
             logger.warning("sse_queue_sweep_failed", error=str(exc))
@@ -238,6 +249,29 @@ async def lifespan(app: FastAPI):
         # Phase D4 sweeper task — must outlive every request.
         sweeper_task = _asyncio_main.create_task(_sse_queue_sweeper())
         logger.info("sse_queue_sweeper_started")
+
+        # v7 — at startup, mark any consortium sessions whose bg task
+        # died with a previous container as "interrupted". Without
+        # this, /status would forever claim the dead session is still
+        # running. Fire-and-forget so a Redis hiccup never blocks
+        # startup. Multi-replica safe: every replica races to the same
+        # work but each session-flip is idempotent (status field check).
+        if CONSORTIUM_AVAILABLE:
+            async def _consortium_zombie_sweep_at_startup() -> None:
+                try:
+                    from .api import consortium_routes as _cr
+                    flipped = await _cr.mark_zombies_at_startup()
+                    if flipped:
+                        logger.info(
+                            "consortium_zombies_marked_at_startup count=%d",
+                            flipped,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "consortium_zombie_sweep_at_startup_failed",
+                        error=str(e),
+                    )
+            _asyncio_main.create_task(_consortium_zombie_sweep_at_startup())
 
         # Code Intelligence warm-up — fire and forget.
         if CODE_INTELLIGENCE_AVAILABLE:
