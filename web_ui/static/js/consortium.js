@@ -202,14 +202,56 @@
         }
 
         async _cancel(sessionId) {
-            try {
-                await fetch(`/api/consortium/${encodeURIComponent(sessionId)}/cancel`, {
-                    method: 'POST',
-                    headers: authHeaders(),
-                });
-            } catch (err) {
-                console.warn('Cancel failed:', err);
+            // v7 — immediate UI feedback. Disable the button + flip the
+            // status pill to "cancelling…" the instant the user clicks,
+            // so they don't think the click was lost while the bg task
+            // finishes the current LLM call (can be 30+ seconds).
+            const view = this._activeViewEl;
+            const cancelBtn = view?.querySelector('.consortium-cancel');
+            const statusEl = view?.querySelector('[data-status]');
+            if (cancelBtn) {
+                cancelBtn.disabled = true;
+                const span = cancelBtn.querySelector('span') || cancelBtn;
+                span.textContent = 'Cancelling…';
             }
+            if (statusEl) {
+                statusEl.textContent = 'cancelling';
+                statusEl.dataset.value = 'cancelling';
+            }
+            this._appendLog?.('○ cancel requested');
+
+            // Fire the request. We expect the SSE stream to deliver a
+            // `consortium_cancelled` event within a few seconds; if it
+            // doesn't (e.g., the bg task is genuinely stuck), the
+            // force-quit timer below flips the UI to "cancelled" and
+            // unblocks the user.
+            try {
+                const resp = await fetch(
+                    `/api/consortium/${encodeURIComponent(sessionId)}/cancel`,
+                    { method: 'POST', headers: authHeaders() },
+                );
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            } catch (err) {
+                console.warn('Cancel POST failed:', err);
+                this._appendLog?.(`✗ cancel POST failed: ${err.message}`);
+            }
+
+            // Force-quit timer — 8 seconds is enough for a clean
+            // cancel; past that we declare the session done from the
+            // UI's perspective regardless of what the bg task does.
+            if (this._forceQuitTimer) clearTimeout(this._forceQuitTimer);
+            this._forceQuitTimer = setTimeout(() => {
+                if (this._eventSource) {
+                    try { this._eventSource.close(); } catch (_) {}
+                    this._eventSource = null;
+                }
+                if (statusEl && statusEl.dataset.value === 'cancelling') {
+                    statusEl.textContent = 'cancelled';
+                    statusEl.dataset.value = 'cancelled';
+                }
+                if (cancelBtn) cancelBtn.hidden = true;
+                this._appendLog?.('○ force-quit (no terminal event arrived)');
+            }, 8000);
         }
 
         // ── Event rendering ───────────────────────────────────────────
@@ -278,10 +320,18 @@
                 if (dl) dl.hidden = (status !== 'ok');
                 this._renderReadme();
                 this._appendLog(`● done (${status})`);
+                if (this._forceQuitTimer) {
+                    clearTimeout(this._forceQuitTimer);
+                    this._forceQuitTimer = null;
+                }
                 return;
             }
             if (t === 'consortium_cancelled') {
                 this._appendLog('○ cancelled');
+                if (this._forceQuitTimer) {
+                    clearTimeout(this._forceQuitTimer);
+                    this._forceQuitTimer = null;
+                }
                 return;
             }
             if (t === 'consortium_error') {

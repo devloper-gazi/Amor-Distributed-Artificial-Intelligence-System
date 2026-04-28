@@ -4102,6 +4102,18 @@ body.dark-mode .depth-menu {
     background: rgba(255, 200, 96, 0.18);
     color: #ffc860;
 }
+.consortium-view-status[data-value="cancelling"] {
+    background: rgba(255, 200, 96, 0.14);
+    color: #ffc860;
+    animation: consortiumStatusPulse 1s ease-in-out infinite;
+}
+.consortium-view-status[data-value="interrupted"] {
+    background: rgba(180, 130, 255, 0.18);
+    color: #c8a4ff;
+}
+@keyframes consortiumStatusPulse {
+    50% { opacity: 0.55; }
+}
 .consortium-view-status[data-value="error"] {
     background: rgba(220, 110, 110, 0.18);
     color: #ff8a8a;
