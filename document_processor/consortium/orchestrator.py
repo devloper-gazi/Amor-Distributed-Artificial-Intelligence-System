@@ -631,16 +631,32 @@ class ConsortiumOrchestrator:
                 findings.append(f"{high} high-severity static-analysis findings")
                 score -= 10
         # Execution: any failure is a warning, all passing is a bonus.
+        # v8 — sandbox-skipped runs (docker CLI unavailable) are
+        # ignored so a missing local sandbox doesn't lower the gate
+        # score on every implementation. The skipped flag is set by
+        # ExecutionSandbox.execute when docker isn't on PATH.
         if i.execution_results:
-            failed = sum(
-                1 for r in i.execution_results
-                if isinstance(r, dict) and not r.get("success", True)
-            )
-            if failed:
-                findings.append(f"{failed} execution result(s) failed")
-                score -= 10
-            else:
-                score += 10
+            real_results = [
+                r for r in i.execution_results
+                if isinstance(r, dict) and not r.get("skipped", False)
+            ]
+            skipped_count = len(i.execution_results) - len(real_results)
+            if skipped_count and not real_results:
+                findings.append(
+                    f"{skipped_count} sandbox run(s) skipped — "
+                    "docker CLI unavailable in app container"
+                )
+                # No score penalty when we couldn't even try.
+            elif real_results:
+                failed = sum(
+                    1 for r in real_results
+                    if not r.get("success", True)
+                )
+                if failed:
+                    findings.append(f"{failed} execution result(s) failed")
+                    score -= 10
+                else:
+                    score += 10
         if i.review and i.review.get("verdict") == "approve":
             score += 5
         score = max(0.0, min(100.0, score))
