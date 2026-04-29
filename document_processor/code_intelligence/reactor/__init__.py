@@ -22,6 +22,12 @@ package) doesn't poison the whole reactor at import time.
 
 from __future__ import annotations
 
+from .benchmarker import (
+    BenchmarkFit,
+    BenchmarkRecord,
+    BenchmarkResult,
+    PerformanceBenchmarker,
+)
 from .config import ReactorConfig
 from .symbolic_complexity import (
     FunctionComplexity,
@@ -30,7 +36,11 @@ from .symbolic_complexity import (
 )
 
 __all__ = [
+    "BenchmarkFit",
+    "BenchmarkRecord",
+    "BenchmarkResult",
     "FunctionComplexity",
+    "PerformanceBenchmarker",
     "ReactorConfig",
     "SymbolicComplexity",
     "SymbolicComplexityAnalyzer",
