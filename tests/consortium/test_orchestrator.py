@@ -402,6 +402,122 @@ def test_build_pyproject_toml_handles_empty_requirements():
     assert "dependencies = []" in toml
 
 
+# ── Pluggable implementation engine (quick_code dispatch) ───────────
+
+
+@pytest.mark.asyncio
+async def test_implementation_engine_quick_code_dispatches_to_quickcode_engine(
+    monkeypatch,
+):
+    """When ConsortiumScope.implementation_engine == 'quick_code', the
+    orchestrator must construct a QuickCodeEngine instead of a
+    CodeIntelligenceEngine, then ingest its bundle through the
+    to_implementation_artifact() adapter so downstream gate scoring
+    + bundle writing don't change."""
+    from document_processor.consortium import orchestrator as orch_mod
+    from document_processor.consortium.models import ImplementationArtifact
+
+    # Spy: a fake QuickCodeEngine that records its construction args
+    # and returns a populated bundle synchronously.
+    constructed: dict = {}
+
+    class _SpyQuickCode:
+        def __init__(self, *, session_id, request, on_event=None, **kw):
+            constructed["session_id"] = session_id
+            constructed["request"] = request
+            constructed["on_event"] = on_event
+            self._on_event = on_event
+
+        async def run(self):
+            from document_processor.quick_code.models import (
+                QuickCodeAlternative, QuickCodeBundle,
+                QuickCodeReasoning, QuickCodeRequest,
+                QuickCodeVerification,
+            )
+            # Emit one inner event so we can verify the relay works.
+            if self._on_event:
+                await self._on_event({
+                    "type": "quick_code_phase_complete", "phase": "verify",
+                })
+            return QuickCodeBundle(
+                session_id="qc-sid",
+                request=QuickCodeRequest(prompt="x", language="python"),
+                code="print('quick')",
+                tests="def test_q(): assert 1",
+                reasoning=QuickCodeReasoning(
+                    alternatives=[QuickCodeAlternative(
+                        label="A",
+                        scores={"clarity": 0.8, "math_soundness": 0.8,
+                                "performance": 0.7, "edge_cases": 0.7},
+                    )],
+                    chosen_label="A",
+                ),
+                verification=QuickCodeVerification(score=85.0),
+                deliverable_markdown="# Quick result",
+            )
+
+    # Patch the lazy `from ..quick_code import QuickCodeEngine` inside
+    # _phase_implementation by monkey-patching the package attribute.
+    # Python resolves `from pkg import Name` against `pkg.Name`, so
+    # patching the package module catches the lazy import.
+    import document_processor.quick_code as qc_module
+    monkeypatch.setattr(qc_module, "QuickCodeEngine", _SpyQuickCode)
+
+    relay_events: list[dict] = []
+
+    async def collect(evt):
+        relay_events.append(evt)
+
+    scope = ConsortiumScope(
+        goal="Build a thing", language="python",
+        implementation_engine="quick_code",
+    )
+    orch = ConsortiumOrchestrator(
+        session_id="cons-1", scope=scope, on_event=collect,
+    )
+    impl = await orch._phase_implementation()
+
+    # Spy was constructed with the expected scope fields.
+    assert constructed.get("session_id") == "cons-1"
+    qc_req = constructed["request"]
+    assert qc_req.prompt == "Build a thing"
+    assert qc_req.language == "python"
+
+    # Adapter mapped QuickCodeBundle → ImplementationArtifact correctly.
+    assert isinstance(impl, ImplementationArtifact)
+    assert impl.code == "print('quick')"
+    assert impl.tests == "def test_q(): assert 1"
+    assert impl.plan["engine"] == "quick_code"
+
+    # Phase events made it out: phase_start, the inner relay event
+    # (prefixed with consortium:implementation:), phase_complete with
+    # engine="quick_code", and the consortium_gate.
+    types = [e["type"] for e in relay_events]
+    assert "consortium_phase_start" in types
+    assert any(t.startswith("consortium:implementation:")
+               for t in types)
+    complete = next(
+        e for e in relay_events
+        if e["type"] == "consortium_phase_complete"
+    )
+    assert complete["phase"] == "implementation"
+    assert complete.get("engine") == "quick_code"
+
+    # Gate appended + emitted.
+    assert len(orch.verifications) == 1
+    assert orch.verifications[0].phase == "implementation"
+    assert any(e["type"] == "consortium_gate" for e in relay_events)
+
+
+@pytest.mark.asyncio
+async def test_implementation_engine_default_unchanged():
+    """Default scope still routes through the existing 9-phase
+    CodeIntelligenceEngine — no regression."""
+    scope = ConsortiumScope(goal="Build a thing", language="python")
+    # No engine override → existing default.
+    assert scope.implementation_engine == "code_intelligence"
+
+
 # ── Cancellation ────────────────────────────────────────────────────
 
 

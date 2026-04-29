@@ -204,6 +204,15 @@ class ConsortiumStartRequest(BaseModel):
     research_depth: Optional[str] = Field(None, max_length=20)
     thinking_effort: Optional[str] = Field(None, max_length=20)
     implementation_effort: Optional[str] = Field(None, max_length=20)
+    implementation_engine: str = Field(
+        "code_intelligence",
+        max_length=24,
+        description=(
+            "Which engine to use for the Implement phase. "
+            "`code_intelligence` = full 9-phase pipeline (default). "
+            "`quick_code` = 5-phase reasoning-first lite pipeline."
+        ),
+    )
 
 
 class ConsortiumStartResponse(BaseModel):
@@ -246,6 +255,9 @@ async def start_consortium(
     session_id = str(uuid4())
 
     depth = _normalize_tier(body.depth, "medium")
+    impl_engine = (body.implementation_engine or "code_intelligence").strip().lower()
+    if impl_engine not in {"code_intelligence", "quick_code"}:
+        impl_engine = "code_intelligence"
     scope = ConsortiumScope(
         goal=body.goal.strip(),
         depth=depth,                  # type: ignore[arg-type]
@@ -255,6 +267,7 @@ async def start_consortium(
         research_depth=_normalize_tier(body.research_depth, depth),  # type: ignore[arg-type]
         thinking_effort=_normalize_tier(body.thinking_effort, depth),  # type: ignore[arg-type]
         implementation_effort=_normalize_tier(body.implementation_effort, depth),  # type: ignore[arg-type]
+        implementation_engine=impl_engine,  # type: ignore[arg-type]
     )
 
     artifact_dir = _ARTIFACT_ROOT / session_id

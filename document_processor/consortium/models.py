@@ -47,6 +47,13 @@ class ConsortiumScope:
     deliverable_type: str = "code_module"
     allow_external_research: bool = True
     cancel_requested: bool = False
+    # v8 — pluggable implementation engine. Default keeps the v5
+    # behaviour (the full 9-phase Code Intelligence pipeline). Set to
+    # ``"quick_code"`` to swap in the lighter 5-phase reasoning-first
+    # pipeline; the orchestrator handles the dispatch and the bundle
+    # adapter so downstream gate scoring + artifact bundling are
+    # identical regardless of which engine ran.
+    implementation_engine: Literal["code_intelligence", "quick_code"] = "code_intelligence"
 
     # Triage-derived (filled by Phase 1)
     title: str = ""
