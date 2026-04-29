@@ -496,11 +496,15 @@ function setupWelcomeCards() {
             const effort = pill.dataset.effort;
             if (effort === 'quick' || effort === 'pro') {
                 state.codingEffort = effort;
-                pill.parentElement?.querySelectorAll('.effort-pill').forEach((p) => {
+                const rail = pill.parentElement;
+                rail?.querySelectorAll('.effort-pill').forEach((p) => {
                     const active = p === pill;
                     p.classList.toggle('active', active);
                     p.setAttribute('aria-selected', active ? 'true' : 'false');
                 });
+                // Drive the sliding thumb via a data-attribute on the
+                // rail (CSS reacts via [data-active="pro"]::before).
+                if (rail) rail.dataset.active = effort;
             }
             return;
         }
