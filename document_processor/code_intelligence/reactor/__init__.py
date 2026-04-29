@@ -29,6 +29,13 @@ from .benchmarker import (
     PerformanceBenchmarker,
 )
 from .config import ReactorConfig
+from .property_tests import (
+    Invariant,
+    InvariantOutcome,
+    PropertyTestGenerator,
+    PropertyTestResult,
+    PropertyTestRunner,
+)
 from .symbolic_complexity import (
     FunctionComplexity,
     SymbolicComplexity,
@@ -40,7 +47,12 @@ __all__ = [
     "BenchmarkRecord",
     "BenchmarkResult",
     "FunctionComplexity",
+    "Invariant",
+    "InvariantOutcome",
     "PerformanceBenchmarker",
+    "PropertyTestGenerator",
+    "PropertyTestResult",
+    "PropertyTestRunner",
     "ReactorConfig",
     "SymbolicComplexity",
     "SymbolicComplexityAnalyzer",
