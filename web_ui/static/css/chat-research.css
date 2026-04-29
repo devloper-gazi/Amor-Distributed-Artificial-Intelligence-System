@@ -4267,3 +4267,58 @@ body.dark-mode .depth-menu {
     .consortium-grid { grid-template-columns: 1fr; }
     .consortium-phase-list { grid-template-columns: 1fr 1fr; }
 }
+
+
+/* ==================== Quick Code Chat tile — Quick/Pro toggle pill ==================== */
+.capability-card-quickcode {
+    position: relative;
+}
+.capability-card-quickcode .effort-toggle {
+    display: inline-flex;
+    gap: 4px;
+    margin-top: 12px;
+    padding: 3px;
+    background: var(--mono-bg-primary, #14141f);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 999px;
+    align-self: flex-start;
+}
+.capability-card-quickcode .effort-pill {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--mono-text-secondary, #b0b0c0);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 4px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+.capability-card-quickcode .effort-pill:hover {
+    color: var(--mono-text-primary, #e8e8e8);
+}
+.capability-card-quickcode .effort-pill.active {
+    background: rgba(125, 207, 255, 0.18);
+    color: rgba(160, 220, 255, 1);
+    box-shadow: inset 0 0 0 1px rgba(125, 207, 255, 0.35);
+}
+.capability-card-quickcode .effort-pill:focus-visible {
+    outline: 2px solid rgba(125, 207, 255, 0.55);
+    outline-offset: 2px;
+}
+.capability-card-quickcode .capability-card-badge {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: rgba(125, 207, 255, 0.2);
+    color: rgba(160, 220, 255, 1);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+

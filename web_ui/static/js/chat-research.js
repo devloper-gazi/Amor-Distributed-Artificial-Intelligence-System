@@ -1464,6 +1464,20 @@ class ChatController {
     // ignored for code intelligence by design (zero-API engine).
 
     async _runCodeIntelligence(message, typingId) {
+        // v8 — dispatcher between the two coding pipelines:
+        //   state.codingEffort === 'quick' → POST /api/quick-code/start
+        //                                    (5-phase reasoning-first)
+        //   state.codingEffort === 'pro'   → POST /api/code/start
+        //                                    (9-phase Code Intelligence)
+        const effortTier = (typeof state !== 'undefined' && state?.codingEffort)
+            || 'quick';
+        if (effortTier === 'quick') {
+            return this._runQuickCode(message, typingId);
+        }
+        return this._runProCodeIntelligence(message, typingId);
+    }
+
+    async _runProCodeIntelligence(message, typingId) {
         if (typeof CodeView !== 'function') {
             throw new Error('CodeView component is not loaded');
         }
@@ -1573,15 +1587,235 @@ class ChatController {
         if (runError) throw runError;
     }
 
-    _mountCodeCard(view) {
+    // ────────────────────────────────────────────────────── Quick Code Chat (lite)
+    //
+    // 5-phase reasoning-first pipeline. Fewer LLM calls than the
+    // 9-phase Code Intelligence engine, but reasons about clarity /
+    // math soundness / performance / edge cases before writing code.
+    //
+    //   1. POST /api/quick-code/start                → returns session_id
+    //   2. SSE  /api/quick-code/{sid}/events         → live phase events
+    //   3. GET  /api/quick-code/{sid}/status         → final snapshot for
+    //      code/tests rendering (the SSE stream carries phase ticks but
+    //      not the generated artefacts themselves to keep events small)
+
+    async _runQuickCode(message, typingId) {
+        if (typeof CodeView !== 'function') {
+            throw new Error('CodeView component is not loaded');
+        }
+
+        const depthSelect = document.getElementById('researchDepth');
+        const effort = depthSelect?.value || 'medium';
+
+        const view = new CodeView(message, effort, null);
+        this.removeTypingIndicator(typingId);
+        this._mountCodeCard(view, /* labelOverride= */ 'Quick Code Chat');
+
+        let session;
+        try {
+            const res = await this._authFetch('/api/quick-code/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: message,
+                    language: null,
+                    effort,
+                    code_context: null,
+                    allow_refine: true,
+                    max_refine: 2,
+                    chat_session_id: this.chatSessionId || null,
+                    preferred_model: this._readPreferredModel() || null,
+                }),
+                signal: this._currentAbortController?.signal,
+            });
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (_) {}
+                throw new Error(
+                    `Failed to start QuickCode (${res.status})${detail ? ' - ' + detail : ''}`
+                );
+            }
+            session = await res.json();
+        } catch (err) {
+            view.handleEvent({ type: 'error', message: err.message });
+            throw err;
+        }
+
+        this._currentCodeBackendId = session.session_id;
+        this._persistActiveCode(session.session_id);
+        view.showTimeline({ session_id: session.session_id, phases: [] });
+
+        let runError = null;
+        try {
+            try {
+                await this._streamQuickCode(session.session_id, view);
+            } catch (sseErr) {
+                console.warn('QuickCode SSE failed, polling fallback:', sseErr);
+                await this._pollQuickCode(session.session_id, view);
+            }
+            // Fetch the final bundle so the CodeView can render the
+            // generated code, tests, and review.
+            try {
+                const finalRes = await this._authFetch(
+                    `/api/quick-code/${encodeURIComponent(session.session_id)}/status`,
+                );
+                if (finalRes.ok) {
+                    const snap = await finalRes.json();
+                    const bundle = snap?.bundle;
+                    if (bundle?.code) {
+                        view.handleEvent({
+                            type: 'code_ready', code: bundle.code,
+                            language: bundle.request?.language || 'python',
+                        });
+                    }
+                    if (bundle?.tests) {
+                        view.handleEvent({ type: 'test_ready', code: bundle.tests });
+                    }
+                    if (bundle?.deliverable_markdown) {
+                        view.handleEvent({
+                            type: 'deliverable_ready',
+                            markdown: bundle.deliverable_markdown,
+                        });
+                    }
+                    if (bundle?.verification?.execution) {
+                        view.handleEvent({
+                            type: 'execution_result',
+                            result: bundle.verification.execution,
+                        });
+                    }
+                    if (bundle?.verification?.static) {
+                        view.handleEvent({
+                            type: 'static_analysis_result',
+                            result: bundle.verification.static,
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('QuickCode final fetch failed (non-fatal):', e);
+            }
+        } catch (err) {
+            runError = err;
+            try {
+                view.handleEvent({
+                    type: 'error',
+                    message: err.message || 'QuickCode failed',
+                });
+            } catch (_) {}
+        } finally {
+            this._clearActiveCode();
+        }
+
+        const snap = view.toSnapshot();
+        const assistantMsg = {
+            role: 'assistant',
+            content: runError ? `QuickCode failed: ${runError.message}` : '',
+            aiType: 'local-quick-code',
+            format: 'code',
+            extras: { code: snap, error: runError ? runError.message : undefined },
+        };
+        this.messageHistory.push(assistantMsg);
+        try { await this.persistChatMessage(assistantMsg); } catch (persistErr) {
+            console.warn('Failed to persist QuickCode snapshot:', persistErr);
+        }
+
+        if (runError) throw runError;
+    }
+
+    _streamQuickCode(sessionId, view) {
+        // Reuse the generic SSE loop, but translate quick_code_*
+        // event types into the shape CodeView already understands.
+        // The translation table keeps CodeView blissfully unaware of
+        // which engine produced the events.
+        const translate = (evt) => {
+            if (!evt || typeof evt !== 'object') return null;
+            const t = String(evt.type || '');
+            if (t === 'quick_code_phase_start') {
+                return { type: 'phase_start', phase: evt.phase,
+                         label: this._quickPhaseLabel(evt.phase) };
+            }
+            if (t === 'quick_code_phase_complete') {
+                return { type: 'phase_complete', phase: evt.phase,
+                         detail: evt.reasoning || evt.verification || {} };
+            }
+            if (t === 'quick_code_completed') {
+                return { type: 'done' };
+            }
+            if (t === 'quick_code_cancelled') {
+                return { type: 'cancelled' };
+            }
+            if (t === 'quick_code_error') {
+                return { type: 'error', message: evt.error || 'QuickCode failed' };
+            }
+            if (t === 'quick_code_snapshot') {
+                return { type: 'snapshot', ...evt };
+            }
+            return null;  // ignore quick_code_gate, refine_iteration, started
+        };
+        return this._sseLoop({
+            url: (token) => `/api/quick-code/${sessionId}/events${
+                token ? `?access_token=${encodeURIComponent(token)}` : ''
+            }`,
+            view,
+            failureMessage: 'QuickCode failed',
+            translate,
+        });
+    }
+
+    async _pollQuickCode(sessionId, view) {
+        const start = Date.now();
+        const TIMEOUT_MS = 30 * 60 * 1000;
+        while (true) {
+            if (Date.now() - start > TIMEOUT_MS) {
+                throw new Error('QuickCode polling timed out');
+            }
+            await new Promise(r => setTimeout(r, 800));
+            try {
+                const resp = await this._authFetch(
+                    `/api/quick-code/${encodeURIComponent(sessionId)}/status`,
+                );
+                if (!resp.ok) {
+                    if (resp.status === 404) throw new Error('QuickCode session lost');
+                    continue;
+                }
+                const snap = await resp.json();
+                view.handleEvent({ type: 'snapshot', ...snap });
+                if (snap.status === 'ok') {
+                    view.handleEvent({ type: 'done' });
+                    return;
+                }
+                if (snap.status === 'error') {
+                    throw new Error(snap.error || 'QuickCode failed');
+                }
+                if (snap.status === 'cancelled') {
+                    view.handleEvent({ type: 'cancelled' });
+                    return;
+                }
+            } catch (e) {
+                console.warn('QuickCode polling error:', e);
+            }
+        }
+    }
+
+    _quickPhaseLabel(phase) {
+        return ({
+            triage:    'Triage',
+            reason:    'Reasoning',
+            implement: 'Implementing',
+            verify:    'Verifying',
+            refine:    'Refining',
+        })[phase] || phase || '';
+    }
+
+    _mountCodeCard(view, labelOverride) {
         const wrap = document.createElement('div');
         wrap.className = 'message assistant local-code';
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const headerLabel = labelOverride || 'Code Intelligence';
         wrap.innerHTML = `
             <div class="message-bubble code-bubble">
                 <div class="message-header">
                     <div class="message-avatar">⚙</div>
-                    <span class="message-name">Code Intelligence</span>
+                    <span class="message-name">${headerLabel}</span>
                     <span class="message-time">${time}</span>
                 </div>
                 <div class="message-content code-content"></div>
@@ -3450,7 +3684,7 @@ class ChatController {
      * Returns a Promise that resolves on `done` or rejects on terminal
      * error (5 reconnect failures, or `error` event with a message).
      */
-    _sseLoop({ url, view, failureMessage = 'Stream failed' }) {
+    _sseLoop({ url, view, failureMessage = 'Stream failed', translate = null }) {
         return new Promise((resolve, reject) => {
             let es = null;
             let completed = false;
@@ -3475,10 +3709,24 @@ class ChatController {
                 }
                 es.onmessage = (e) => {
                     if (!e.data) return;
-                    let evt;
-                    try { evt = JSON.parse(e.data); } catch (_) { return; }
+                    let raw;
+                    try { raw = JSON.parse(e.data); } catch (_) { return; }
                     // Reset retry counter on any successful message — we're alive.
                     reconnects = 0;
+                    // v8 — optional translate hook lets sibling pipelines
+                    // (QuickCode etc.) reuse this loop without teaching
+                    // CodeView about every engine's event vocabulary.
+                    // Returning null from `translate` drops the event.
+                    let evt = raw;
+                    if (typeof translate === 'function') {
+                        try {
+                            evt = translate(raw);
+                        } catch (transErr) {
+                            console.warn('SSE translate threw:', transErr);
+                            evt = raw;
+                        }
+                        if (!evt) return;  // dropped by translator
+                    }
                     try { view.handleEvent(evt); } catch (handlerErr) {
                         console.warn('view.handleEvent threw:', handlerErr);
                     }
