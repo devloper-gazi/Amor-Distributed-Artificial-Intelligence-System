@@ -100,6 +100,7 @@ class QuickCodeEngine:
         sandbox: Any | None = None,
         static_harness: Any | None = None,
         role_setter: Callable[[str | None], Any] | None = None,
+        mesh: Any | None = None,
     ) -> None:
         if not request.prompt or not request.prompt.strip():
             raise ValueError("QuickCodeRequest.prompt is required")
@@ -111,6 +112,10 @@ class QuickCodeEngine:
         self._static_harness = static_harness
         self._role_setter = role_setter
         self._started_at = _now_iso()
+        # v9 — Multi-ML Mesh. Lazily constructed in _ensure_mesh() so
+        # tests that pass `request.use_mesh=False` don't pay the
+        # import cost of the mesh package.
+        self._mesh = mesh
 
         self.bundle = QuickCodeBundle(
             session_id=self.session_id,
@@ -168,6 +173,33 @@ class QuickCodeEngine:
             self._llm_call = _llm_call_local
         return self._llm_call
 
+    async def _ensure_mesh(self) -> Any | None:
+        """Lazily build a MultiMLMesh when use_mesh=True. Returns None
+        if the mesh module is unavailable (import failure) — engine
+        then degrades to single-path behaviour."""
+        if not self.request.use_mesh:
+            return None
+        if self._mesh is not None:
+            return self._mesh
+        try:
+            from ..code_intelligence.mesh import MultiMLMesh  # noqa: PLC0415
+        except Exception as exc:
+            logger.warning("quick_code_mesh_import_failed: %s", exc)
+            return None
+        llm = await self._ensure_llm()
+
+        def _cancel_check() -> bool:
+            return bool(self.request.cancel_requested)
+
+        self._mesh = MultiMLMesh(
+            llm_call=llm,
+            on_event=self._emit,
+            role_setter=self._role_setter,
+            cancel_check=_cancel_check,
+            session_id=self.session_id,
+        )
+        return self._mesh
+
     # ─── Phase 1: Triage ────────────────────────────────────────────────
 
     async def _phase_triage(self) -> dict[str, Any]:
@@ -206,9 +238,58 @@ class QuickCodeEngine:
     async def _phase_reason(self) -> QuickCodeReasoning:
         self._check_cancel()
         await self._emit({"type": "quick_code_phase_start", "phase": "reason"})
+
+        # v9 — when the Multi-ML Mesh is enabled, fan out reasoning to
+        # N parallel specialists (general / math / performance /
+        # edge_case). The aggregator merges, dedupes, and re-scores
+        # via the composite formula. Failure of any single specialist
+        # is non-fatal — the aggregator just sees fewer inputs.
+        mesh = await self._ensure_mesh()
+        reasoning: QuickCodeReasoning
+        if mesh is not None:
+            try:
+                aggregated = await mesh.run_reasoning(
+                    user_prompt=self.request.prompt,
+                    code_context=self.request.code_context,
+                    triage=self.bundle.triage,
+                )
+                reasoning = aggregated.reasoning
+                # Persist the per-specialist envelope on the bundle so
+                # the SSE / artifact / metrics writer can introspect it.
+                self.bundle.mesh_reasoning = aggregated.to_dict()
+            except Exception as exc:
+                logger.warning("quick_code_mesh_reasoning_failed: %s", exc)
+                reasoning = await self._reason_single_path()
+        else:
+            reasoning = await self._reason_single_path()
+
+        # Engine recomputes the chosen alternative locally — the
+        # aggregator already does this, but we keep this defensive
+        # check so single-path runs and any future mesh changes share
+        # the same audit trail.
+        chosen = self._pick_best(reasoning.alternatives)
+        if chosen is not None and reasoning.chosen_label != chosen.label:
+            reasoning.findings.append(
+                f"engine override: chosen {reasoning.chosen_label or '?'} "
+                f"→ {chosen.label} (composite {chosen.composite:.2f})"
+            )
+            reasoning.chosen_label = chosen.label
+        self.bundle.reasoning = reasoning
+
+        await self._emit({
+            "type": "quick_code_phase_complete",
+            "phase": "reason",
+            "reasoning": reasoning.to_dict(),
+        })
+        gate = self._gate_reasoning(reasoning)
+        self.bundle.gates.append(gate)
+        await self._emit({"type": "quick_code_gate", "gate": gate.to_dict()})
+        return reasoning
+
+    async def _reason_single_path(self) -> QuickCodeReasoning:
+        """Fallback / non-mesh path — one LLM call producing JSON."""
         llm = await self._ensure_llm()
         max_tokens = _EFFORT_TO_MAX_TOKENS.get(self.request.effort, 1500)
-
         token = self._set_role("reasoner")
         try:
             raw = await llm(
@@ -222,31 +303,7 @@ class QuickCodeEngine:
             )
         finally:
             self._reset_role(token)
-
-        reasoning = self._parse_reasoning(raw or "")
-        # Re-pick the chosen alternative locally — the model's `chosen`
-        # field is advisory only.
-        chosen = self._pick_best(reasoning.alternatives)
-        if chosen is not None:
-            if reasoning.chosen_label != chosen.label:
-                # Audit line so the user sees we overrode the model.
-                reasoning.findings.append(
-                    f"engine override: model picked "
-                    f"{reasoning.chosen_label or '?'} but composite favours "
-                    f"{chosen.label} ({chosen.composite:.2f})"
-                )
-                reasoning.chosen_label = chosen.label
-        self.bundle.reasoning = reasoning
-
-        await self._emit({
-            "type": "quick_code_phase_complete",
-            "phase": "reason",
-            "reasoning": reasoning.to_dict(),
-        })
-        gate = self._gate_reasoning(reasoning)
-        self.bundle.gates.append(gate)
-        await self._emit({"type": "quick_code_gate", "gate": gate.to_dict()})
-        return reasoning
+        return self._parse_reasoning(raw or "")
 
     def _parse_reasoning(self, raw: str) -> QuickCodeReasoning:
         """Parse the reasoner's JSON. On any parse failure synthesize a
@@ -705,6 +762,181 @@ class QuickCodeEngine:
             summary=f"iterations={iterations} · critical_remaining={final_critical}",
         )
 
+    # ─── Phase 6: Code Audit (mesh) ─────────────────────────────────────
+
+    async def _phase_code_audit(self) -> dict[str, Any] | None:
+        """Mesh phase — N auditors review the FINAL code in parallel."""
+        if not self.request.use_mesh:
+            return None
+        if not (self.bundle.code or "").strip():
+            return None
+        mesh = await self._ensure_mesh()
+        if mesh is None:
+            return None
+        self._check_cancel()
+        await self._emit({"type": "quick_code_phase_start", "phase": "audit"})
+        try:
+            audit = await mesh.run_code_audit(
+                user_prompt=self.request.prompt,
+                code=self.bundle.code or "",
+                tests=self.bundle.tests,
+                language=(self.bundle.triage.get("language")
+                          or self.request.language or "python"),
+            )
+        except Exception as exc:
+            logger.warning("quick_code_mesh_audit_failed: %s", exc)
+            return None
+        audit_dict = audit.to_dict()
+        self.bundle.mesh_audit = audit_dict
+        await self._emit({
+            "type": "quick_code_phase_complete",
+            "phase": "audit",
+            "audit": audit_dict,
+        })
+        gate = self._gate_code_audit(audit)
+        self.bundle.gates.append(gate)
+        await self._emit({"type": "quick_code_gate", "gate": gate.to_dict()})
+        return audit_dict
+
+    def _gate_code_audit(self, audit: Any) -> QuickCodeGate:
+        """Score the auditor mesh: base 70, +5 per non-error auditor
+        with `approve` verdict, −10 per `reject`, capped 0..100."""
+        base = 70.0
+        findings: list[str] = []
+        if not getattr(audit, "auditors", None):
+            findings.append("no auditors ran")
+        else:
+            for a in audit.auditors:
+                if a.error:
+                    findings.append(f"{a.role_label}: {a.error[:160]}")
+                    continue
+                if a.verdict == "approve":
+                    base += 5
+                elif a.verdict == "approve_with_changes":
+                    base -= 2
+                elif a.verdict == "reject":
+                    base -= 10
+                    findings.append(
+                        f"{a.role_label} REJECT (conf {a.confidence:.2f}): "
+                        f"{a.summary[:160]}"
+                    )
+        score = max(0.0, min(100.0, base))
+        status: Any = (
+            "passed"      if score >= 80
+            else "passed_warn" if score >= 60
+            else "failed"
+        )
+        return QuickCodeGate(
+            phase="audit", status=status, score=round(score, 1),
+            findings=findings,
+            summary=(
+                f"avg_conf={getattr(audit, 'average_confidence', 0.0):.2f} · "
+                f"any_reject={'yes' if getattr(audit, 'any_rejected', False) else 'no'}"
+            ),
+        )
+
+    # ─── Phase 7: Meta-arbiter (mesh) ───────────────────────────────────
+
+    async def _phase_meta_arbiter(self) -> dict[str, Any] | None:
+        """Mesh phase — single arbiter call synthesises everything."""
+        if not self.request.use_mesh:
+            return None
+        if not (self.bundle.code or "").strip():
+            return None
+        mesh = await self._ensure_mesh()
+        if mesh is None:
+            return None
+        self._check_cancel()
+        await self._emit({"type": "quick_code_phase_start", "phase": "arbiter"})
+
+        # Reconstruct mesh_audit from the dict we stashed earlier.
+        from ..code_intelligence.mesh import MeshCodeAudit  # noqa: PLC0415
+        from ..code_intelligence.mesh.code_auditors import (  # noqa: PLC0415
+            AuditorOutput,
+        )
+        audit_obj: Any = None
+        if self.bundle.mesh_audit:
+            try:
+                audit_obj = MeshCodeAudit(
+                    auditors=[
+                        AuditorOutput(**{
+                            k: v for k, v in a.items()
+                            if k in {"role", "role_label", "verdict",
+                                     "confidence", "summary", "payload",
+                                     "error"}
+                        })
+                        for a in (self.bundle.mesh_audit.get("auditors") or [])
+                    ],
+                    findings=list(self.bundle.mesh_audit.get("findings") or []),
+                )
+            except Exception:
+                audit_obj = None
+
+        chosen_summary = ""
+        chosen_rationale = ""
+        if self.bundle.reasoning:
+            if self.bundle.reasoning.chosen:
+                chosen_summary = self.bundle.reasoning.chosen.summary
+            chosen_rationale = self.bundle.reasoning.rationale
+
+        try:
+            verdict = await mesh.run_meta_arbiter(
+                user_prompt=self.request.prompt,
+                chosen_summary=chosen_summary,
+                chosen_rationale=chosen_rationale,
+                code=self.bundle.code or "",
+                tests=self.bundle.tests,
+                execution_summary=self._compact_exec_feedback(
+                    self.bundle.verification or _EmptyVerification(),
+                ),
+                static_summary=self._compact_static_feedback(
+                    self.bundle.verification or _EmptyVerification(),
+                ),
+                mesh_audit=audit_obj,
+                refine_iterations=self.bundle.refine_iterations,
+            )
+        except Exception as exc:
+            logger.warning("quick_code_meta_arbiter_failed: %s", exc)
+            return None
+
+        verdict_dict = verdict.to_dict()
+        self.bundle.meta_verdict = verdict_dict
+        await self._emit({
+            "type": "quick_code_phase_complete",
+            "phase": "arbiter",
+            "meta_verdict": verdict_dict,
+        })
+        gate = self._gate_meta_arbiter(verdict)
+        self.bundle.gates.append(gate)
+        await self._emit({"type": "quick_code_gate", "gate": gate.to_dict()})
+        return verdict_dict
+
+    def _gate_meta_arbiter(self, verdict: Any) -> QuickCodeGate:
+        """Score = production_readiness directly, with a status mapped
+        from the verdict string."""
+        readiness = float(getattr(verdict, "production_readiness", 0.0) or 0.0)
+        status: Any = (
+            "passed"      if getattr(verdict, "verdict", "") == "approve" and readiness >= 80
+            else "passed_warn" if getattr(verdict, "verdict", "") in {"approve", "approve_with_changes"}
+            else "failed"
+        )
+        findings: list[str] = []
+        for r in (getattr(verdict, "top_risks", None) or []):
+            findings.append(
+                f"[{r.get('severity', '?')}] {r.get('description', '')[:200]}"
+            )
+        if getattr(verdict, "error", None):
+            findings.append(f"arbiter error: {verdict.error[:200]}")
+        return QuickCodeGate(
+            phase="arbiter", status=status, score=round(readiness, 1),
+            findings=findings,
+            summary=(
+                f"verdict={getattr(verdict, 'verdict', '?')} · "
+                f"conf={getattr(verdict, 'confidence', 0.0):.2f} · "
+                f"readiness={readiness:.0f}"
+            ),
+        )
+
     # ─── Run ────────────────────────────────────────────────────────────
 
     async def run(self) -> QuickCodeBundle:
@@ -723,6 +955,13 @@ class QuickCodeEngine:
             self._check_cancel()
             if self.request.max_refine > 0 and self.request.allow_refine:
                 await self._phase_refine_if_needed()
+            # v9 — Multi-ML Mesh post-processing. Each phase is fail-soft
+            # (returns None on any error) so the bundle still ships even
+            # if the mesh is misconfigured.
+            self._check_cancel()
+            await self._phase_code_audit()
+            self._check_cancel()
+            await self._phase_meta_arbiter()
         except asyncio.CancelledError:
             self.bundle.deliverable_markdown = "*Cancelled by user.*"
             self.bundle.completed_at = _now_iso()
@@ -801,6 +1040,65 @@ class QuickCodeEngine:
         if self.bundle.refine_iterations:
             rows.append(f"\n## Refinement\n- iterations: {self.bundle.refine_iterations}")
 
+        # v9 — Mesh-driven sections come BEFORE the raw gate list so
+        # the most actionable signal (production-readiness) is at the
+        # top of the human-readable summary.
+        if self.bundle.meta_verdict:
+            mv = self.bundle.meta_verdict
+            rows.append("\n## Production-readiness verdict\n")
+            rows.append(
+                f"- **Verdict**: `{mv.get('verdict', '?')}` · "
+                f"confidence **{float(mv.get('confidence', 0.0) or 0.0):.2f}**"
+            )
+            rows.append(
+                f"- **Production-readiness**: {float(mv.get('production_readiness', 0.0) or 0.0):.0f} / 100"
+            )
+            summary = mv.get("summary") or ""
+            if summary:
+                rows.append(f"\n_Arbiter summary_: {summary}")
+            risks = mv.get("top_risks") or []
+            if risks:
+                rows.append("\n### Top risks")
+                for r in risks:
+                    rows.append(
+                        f"- **[{r.get('severity', '?')}]** {r.get('description', '')}"
+                    )
+            strengths = mv.get("top_strengths") or []
+            if strengths:
+                rows.append("\n### Top strengths")
+                for s in strengths:
+                    rows.append(f"- {s}")
+
+        if self.bundle.mesh_audit:
+            ma = self.bundle.mesh_audit
+            rows.append("\n## Mesh code audit\n")
+            for aud in ma.get("auditors") or []:
+                badge = {"approve": "✓", "approve_with_changes": "⚠",
+                         "reject": "✗", "unknown": "?"}.get(
+                            aud.get("verdict") or "unknown", "?")
+                role_label = aud.get("role_label", aud.get("role", "?"))
+                conf = float(aud.get("confidence", 0.0) or 0.0)
+                summary = aud.get("summary") or aud.get("error") or ""
+                rows.append(
+                    f"- {badge} **{role_label}** "
+                    f"(conf {conf:.2f}): {summary[:240]}"
+                )
+
+        if self.bundle.mesh_reasoning:
+            mr = self.bundle.mesh_reasoning
+            picks = mr.get("per_specialist_picks") or {}
+            consensus = mr.get("consensus_count")
+            if picks or consensus is not None:
+                rows.append("\n## Mesh reasoning\n")
+                if consensus is not None:
+                    rows.append(f"- consensus on {consensus} alternative(s)")
+                if picks:
+                    picks_str = ", ".join(
+                        f"`{role}`→**{label}**"
+                        for role, label in sorted(picks.items())
+                    )
+                    rows.append(f"- per-specialist picks: {picks_str}")
+
         rows.append("\n## Phase gates\n")
         for g in self.bundle.gates:
             badge = {"passed": "✓", "passed_warn": "⚠", "failed": "✗"}.get(g.status, "?")
@@ -825,3 +1123,14 @@ class QuickCodeEngine:
     def _truncate(s: str, n: int) -> str:
         s = (s or "").strip()
         return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+class _EmptyVerification:
+    """Sentinel used when a phase needs to call the
+    `_compact_exec_feedback` / `_compact_static_feedback` helpers
+    before any real verification has run yet (e.g. cancellation paths).
+    Mirrors the QuickCodeVerification shape with empty fields."""
+    execution = None
+    static = None
+    score = 0.0
+    severities: dict[str, int] = {}

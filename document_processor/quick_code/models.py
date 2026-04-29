@@ -63,6 +63,13 @@ class QuickCodeRequest:
     max_refine: int = 2
     role_overrides: dict[str, str] = field(default_factory=dict)
     cancel_requested: bool = False
+    # v9 — Multi-ML Mesh enhancement. When True (default), the engine
+    # runs reasoning across N parallel specialists, audits the
+    # generated code with N parallel auditors, and synthesises a
+    # production-readiness verdict via the meta-arbiter. Each step
+    # fails open: a mesh phase that errors degrades to single-path
+    # behaviour without aborting the run.
+    use_mesh: bool = True
 
     def normalize(self) -> "QuickCodeRequest":
         """Clamp `max_refine` to [0, MAX_REFINE_ITERATIONS] and apply
@@ -218,6 +225,12 @@ class QuickCodeBundle:
     deliverable_markdown: str = ""
     started_at: str = ""
     completed_at: str = ""
+    # v9 — Multi-ML Mesh outputs. Stored as plain dicts to keep the
+    # bundle JSON-serializable without taking a hard import on the
+    # mesh package (the bundle ships across HTTP/SSE/Mongo).
+    mesh_reasoning: dict[str, Any] | None = None  # AggregatedReasoning.to_dict()
+    mesh_audit: dict[str, Any] | None = None      # MeshCodeAudit.to_dict()
+    meta_verdict: dict[str, Any] | None = None    # MetaVerdict.to_dict()
 
     # ─── Adapter into Consortium's ImplementationArtifact ─────────────
 
@@ -316,4 +329,7 @@ class QuickCodeBundle:
             "deliverable_markdown": self.deliverable_markdown,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "mesh_reasoning": self.mesh_reasoning,
+            "mesh_audit": self.mesh_audit,
+            "meta_verdict": self.meta_verdict,
         }

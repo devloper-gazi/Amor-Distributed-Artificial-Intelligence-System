@@ -22,6 +22,17 @@ from document_processor.quick_code import (
 )
 
 
+def _req(**kwargs):
+    """Test helper — defaults `use_mesh=False` so the existing
+    test suite continues to exercise the single-path engine semantics
+    that were in place before the v9 Multi-ML Mesh landed. Mesh-
+    specific tests opt back in by passing `use_mesh=True` explicitly
+    (see test_engine_mesh.py for those).
+    """
+    kwargs.setdefault("use_mesh", False)
+    return QuickCodeRequest(**kwargs)
+
+
 # ─── Fakes ─────────────────────────────────────────────────────────
 
 
@@ -206,7 +217,7 @@ async def test_run_emits_phases_in_order():
     })
     engine = QuickCodeEngine(
         session_id="t1",
-        request=QuickCodeRequest(prompt="hello", language="python",
+        request=_req(prompt="hello", language="python",
                                  max_refine=0),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm,
@@ -240,7 +251,7 @@ async def test_completed_event_summarizes_gates():
     })
     engine = QuickCodeEngine(
         session_id="t2",
-        request=QuickCodeRequest(prompt="x", max_refine=0),
+        request=_req(prompt="x", max_refine=0),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm, sandbox=FakeSandbox(), static_harness=FakeStaticHarness(),
     )
@@ -268,7 +279,7 @@ async def test_reasoning_malformed_json_falls_back_to_single_path():
     })
     engine = QuickCodeEngine(
         session_id="t3",
-        request=QuickCodeRequest(prompt="x", max_refine=0),
+        request=_req(prompt="x", max_refine=0),
         llm_call=llm, sandbox=FakeSandbox(), static_harness=FakeStaticHarness(),
     )
     bundle = await engine.run()
@@ -304,7 +315,7 @@ async def test_reasoning_engine_overrides_chosen_when_composite_disagrees():
     })
     engine = QuickCodeEngine(
         session_id="t4",
-        request=QuickCodeRequest(prompt="x", max_refine=0),
+        request=_req(prompt="x", max_refine=0),
         llm_call=llm, sandbox=FakeSandbox(), static_harness=FakeStaticHarness(),
     )
     bundle = await engine.run()
@@ -319,7 +330,7 @@ async def test_reasoning_engine_overrides_chosen_when_composite_disagrees():
 def test_reason_gate_passed_when_full_payload():
     engine = QuickCodeEngine(
         session_id="g1",
-        request=QuickCodeRequest(prompt="x"),
+        request=_req(prompt="x"),
         llm_call=FakeLLM({}),
     )
     from document_processor.quick_code.models import QuickCodeReasoning
@@ -344,7 +355,7 @@ def test_reason_gate_passed_when_full_payload():
 def test_reason_gate_passed_warn_when_minimal():
     engine = QuickCodeEngine(
         session_id="g2",
-        request=QuickCodeRequest(prompt="x"),
+        request=_req(prompt="x"),
         llm_call=FakeLLM({}),
     )
     from document_processor.quick_code.models import QuickCodeReasoning
@@ -362,7 +373,7 @@ def test_reason_gate_passed_warn_when_minimal():
 def test_verify_gate_failed_when_exec_failed_and_no_refine_budget():
     engine = QuickCodeEngine(
         session_id="g3",
-        request=QuickCodeRequest(prompt="x", max_refine=0),
+        request=_req(prompt="x", max_refine=0),
         llm_call=FakeLLM({}),
     )
     from document_processor.quick_code.models import QuickCodeVerification
@@ -381,7 +392,7 @@ def test_verify_gate_passed_warn_when_exec_skipped():
     """Skipped execution (Docker missing) is neutral, not a failure."""
     engine = QuickCodeEngine(
         session_id="g4",
-        request=QuickCodeRequest(prompt="x", max_refine=0),
+        request=_req(prompt="x", max_refine=0),
         llm_call=FakeLLM({}),
     )
     from document_processor.quick_code.models import QuickCodeVerification
@@ -412,7 +423,7 @@ async def test_refine_skipped_when_verification_clean():
     })
     engine = QuickCodeEngine(
         session_id="r1",
-        request=QuickCodeRequest(prompt="x", max_refine=2),
+        request=_req(prompt="x", max_refine=2),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm, sandbox=FakeSandbox(success=True),
         static_harness=FakeStaticHarness(errors=0),
@@ -473,7 +484,7 @@ async def test_refine_triggers_when_exec_fails():
     sb = FlipSandbox()
     engine = QuickCodeEngine(
         session_id="r2",
-        request=QuickCodeRequest(prompt="x", max_refine=2),
+        request=_req(prompt="x", max_refine=2),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm, sandbox=sb,
         static_harness=FakeStaticHarness(errors=0),
@@ -503,7 +514,7 @@ async def test_refine_caps_at_max_refine():
     })
     engine = QuickCodeEngine(
         session_id="r3",
-        request=QuickCodeRequest(prompt="x", max_refine=2),
+        request=_req(prompt="x", max_refine=2),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm,
         sandbox=FakeSandbox(success=False, exit_code=1, stderr="still broken"),
@@ -529,7 +540,7 @@ async def test_refine_disabled_when_max_refine_exceeds_cap():
     })
     engine = QuickCodeEngine(
         session_id="r4",
-        request=QuickCodeRequest(prompt="x", max_refine=99),
+        request=_req(prompt="x", max_refine=99),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm,
         sandbox=FakeSandbox(success=False, exit_code=1),
@@ -555,7 +566,7 @@ async def test_cancel_short_circuits_remaining_phases():
     })
     engine = QuickCodeEngine(
         session_id="c1",
-        request=QuickCodeRequest(prompt="x", cancel_requested=True),
+        request=_req(prompt="x", cancel_requested=True),
         on_event=lambda e: events.append(e) or asyncio.sleep(0),
         llm_call=llm, sandbox=FakeSandbox(),
         static_harness=FakeStaticHarness(),
@@ -585,7 +596,7 @@ async def test_explicit_language_overrides_triage():
     })
     engine = QuickCodeEngine(
         session_id="lang1",
-        request=QuickCodeRequest(prompt="x", language="go", max_refine=0),
+        request=_req(prompt="x", language="go", max_refine=0),
         llm_call=llm, sandbox=FakeSandbox(),
         static_harness=FakeStaticHarness(),
     )
@@ -602,14 +613,14 @@ def test_constructor_rejects_empty_prompt():
     with pytest.raises(ValueError):
         QuickCodeEngine(
             session_id="e1",
-            request=QuickCodeRequest(prompt="   "),
+            request=_req(prompt="   "),
             llm_call=FakeLLM({}),
         )
 
 
 def test_constructor_assigns_session_id_when_missing():
     engine = QuickCodeEngine(
-        request=QuickCodeRequest(prompt="x"),
+        request=_req(prompt="x"),
         llm_call=FakeLLM({}),
     )
     assert engine.session_id  # non-empty hex
@@ -628,7 +639,7 @@ async def test_deliverable_markdown_lists_alternatives_with_scores():
     })
     engine = QuickCodeEngine(
         session_id="d1",
-        request=QuickCodeRequest(prompt="hello world",
+        request=_req(prompt="hello world",
                                  max_refine=0),
         llm_call=llm, sandbox=FakeSandbox(),
         static_harness=FakeStaticHarness(),
