@@ -41,11 +41,18 @@ from .symbolic_complexity import (
     SymbolicComplexity,
     SymbolicComplexityAnalyzer,
 )
+from .tournament import (
+    CandidateScore,
+    TournamentBundle,
+    TournamentCandidate,
+    TournamentRunner,
+)
 
 __all__ = [
     "BenchmarkFit",
     "BenchmarkRecord",
     "BenchmarkResult",
+    "CandidateScore",
     "FunctionComplexity",
     "Invariant",
     "InvariantOutcome",
@@ -56,4 +63,7 @@ __all__ = [
     "ReactorConfig",
     "SymbolicComplexity",
     "SymbolicComplexityAnalyzer",
+    "TournamentBundle",
+    "TournamentCandidate",
+    "TournamentRunner",
 ]
