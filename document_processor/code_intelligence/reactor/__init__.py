@@ -23,7 +23,15 @@ package) doesn't poison the whole reactor at import time.
 from __future__ import annotations
 
 from .config import ReactorConfig
+from .symbolic_complexity import (
+    FunctionComplexity,
+    SymbolicComplexity,
+    SymbolicComplexityAnalyzer,
+)
 
 __all__ = [
+    "FunctionComplexity",
     "ReactorConfig",
+    "SymbolicComplexity",
+    "SymbolicComplexityAnalyzer",
 ]
