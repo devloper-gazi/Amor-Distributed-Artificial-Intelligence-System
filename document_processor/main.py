@@ -89,6 +89,14 @@ except ImportError as _qc_exc:  # pragma: no cover
     QUICK_CODE_AVAILABLE = False
     logger.warning("QuickCode routes not available: %s", _qc_exc)
 
+# Sentinel — multi-agent local security intelligence (V1)
+try:
+    from .api.sentinel_routes import router as sentinel_router
+    SENTINEL_AVAILABLE = True
+except ImportError as _sentinel_exc:  # pragma: no cover
+    SENTINEL_AVAILABLE = False
+    logger.warning("Sentinel routes not available: %s", _sentinel_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -453,6 +461,11 @@ if CONSORTIUM_AVAILABLE:
 if QUICK_CODE_AVAILABLE:
     app.include_router(quick_code_router)
     logger.info("QuickCode routes included")
+
+# Sentinel — /api/sentinel/* (multi-agent security intelligence)
+if SENTINEL_AVAILABLE:
+    app.include_router(sentinel_router)
+    logger.info("Sentinel routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

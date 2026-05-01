@@ -41,7 +41,31 @@ License: MIT (matches repo).
 
 from __future__ import annotations
 
-__all__: list[str] = [
-    # Public surface — re-exports populated as each commit lands.
-    # Currently scaffold only; subsequent commits add models / engine.
+from .engine import SentinelEngine
+from .models import (
+    AgentRole,
+    AgentVerdict,
+    ConfidenceScore,
+    Finding,
+    RAGContext,
+    ScanProfile,
+    SentinelBundle,
+    SentinelGate,
+    SentinelRequest,
+    SeverityLevel,
+)
+
+
+__all__ = [
+    "AgentRole",
+    "AgentVerdict",
+    "ConfidenceScore",
+    "Finding",
+    "RAGContext",
+    "ScanProfile",
+    "SentinelBundle",
+    "SentinelEngine",
+    "SentinelGate",
+    "SentinelRequest",
+    "SeverityLevel",
 ]
