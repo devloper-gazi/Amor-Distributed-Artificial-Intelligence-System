@@ -54,6 +54,9 @@ from .models import (
     SentinelRequest,
     SeverityLevel,
 )
+# Phase 15 — Evolution Engine.  Imported lazily so a partial install
+# (no pyyaml, no peft) still lets the rest of Sentinel boot.
+from . import evolution  # noqa: F401
 
 
 __all__ = [
@@ -68,4 +71,5 @@ __all__ = [
     "SentinelGate",
     "SentinelRequest",
     "SeverityLevel",
+    "evolution",
 ]
