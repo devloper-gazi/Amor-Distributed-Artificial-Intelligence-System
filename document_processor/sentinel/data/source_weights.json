@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "source": "Sentinel V1 default Bayesian source weights.  These are the priors used when bayesian_merge() combines findings from multiple stages.",
+  "license": "MIT",
+  "weights": {
+    "static_tool":   0.6,
+    "ml_classifier": 0.55,
+    "auditor":       0.75,
+    "reasoner":      0.7,
+    "redteam":       0.9,
+    "patcher":       0.65,
+    "judge":         0.85
+  },
+  "tool_overrides": {
+    "bandit":    0.65,
+    "semgrep":   0.7,
+    "gitleaks":  0.85,
+    "trivy":     0.75,
+    "gosec":     0.7,
+    "cppcheck":  0.7,
+    "pylint":    0.45,
+    "mypy":      0.45
+  }
+}
