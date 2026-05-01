@@ -231,6 +231,10 @@ class QuickCodeBundle:
     mesh_reasoning: dict[str, Any] | None = None  # AggregatedReasoning.to_dict()
     mesh_audit: dict[str, Any] | None = None      # MeshCodeAudit.to_dict()
     meta_verdict: dict[str, Any] | None = None    # MetaVerdict.to_dict()
+    # v10 — Code Synthesis Reactor envelope.  Populated by the new
+    # `_phase_reactor_verify` step when `code_reactor_enabled=True`
+    # in settings. Shape matches `reactor.facade.ReactorBundle.to_dict()`.
+    reactor_bundle: dict[str, Any] | None = None
 
     # ─── Adapter into Consortium's ImplementationArtifact ─────────────
 
@@ -332,4 +336,5 @@ class QuickCodeBundle:
             "mesh_reasoning": self.mesh_reasoning,
             "mesh_audit": self.mesh_audit,
             "meta_verdict": self.meta_verdict,
+            "reactor_bundle": self.reactor_bundle,
         }

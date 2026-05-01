@@ -762,6 +762,107 @@ class QuickCodeEngine:
             summary=f"iterations={iterations} · critical_remaining={final_critical}",
         )
 
+    # ─── Phase 5b: Reactor verify (v10) ─────────────────────────────────
+
+    async def _phase_reactor_verify(self) -> dict[str, Any] | None:
+        """Run the v10 reactor's empirical verification (symbolic +
+        bench + property tests) on the generated code. Returns the
+        ReactorBundle dict on success, None when the reactor is
+        disabled or fails. Always fail-soft."""
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "code_reactor_enabled", True):
+                return None
+        except Exception:
+            return None
+        if not (self.bundle.code or "").strip():
+            return None
+        try:
+            from ..code_intelligence.reactor import (  # noqa: PLC0415
+                CodeSynthesisReactor, ReactorConfig,
+            )
+        except Exception as exc:
+            logger.debug("quick_code_reactor_import_failed: %s", exc)
+            return None
+
+        self._check_cancel()
+        await self._emit({"type": "quick_code_phase_start", "phase": "reactor"})
+
+        try:
+            llm = await self._ensure_llm()
+            sandbox = await self._ensure_sandbox()
+            reactor = CodeSynthesisReactor(
+                config=ReactorConfig.from_settings(),
+                llm_call=llm,
+                sandbox=sandbox,
+                role_setter=self._role_setter,
+            )
+            claimed = ""
+            if self.bundle.reasoning and self.bundle.reasoning.chosen:
+                claimed = (
+                    self.bundle.reasoning.chosen.complexity_estimate or ""
+                )
+            reactor_bundle = await reactor.verify_implementation(
+                code=self.bundle.code,
+                tests=self.bundle.tests,
+                user_prompt=self.request.prompt,
+                triage=self.bundle.triage,
+                claimed_complexity=claimed,
+                language=(self.bundle.triage.get("language")
+                          or self.request.language or "python"),
+            )
+        except Exception as exc:
+            logger.warning("quick_code_reactor_verify_failed: %s", exc)
+            return None
+
+        bundle_dict = reactor_bundle.to_dict()
+        self.bundle.reactor_bundle = bundle_dict
+        await self._emit({
+            "type": "quick_code_phase_complete",
+            "phase": "reactor",
+            "reactor": bundle_dict,
+        })
+        gate = self._gate_reactor(reactor_bundle)
+        self.bundle.gates.append(gate)
+        await self._emit({"type": "quick_code_gate", "gate": gate.to_dict()})
+        return bundle_dict
+
+    def _gate_reactor(self, rb: Any) -> QuickCodeGate:
+        """Score the reactor pass: base 70, +10 if symbolic ran, +10
+        if benchmark ran without claim mismatch, +10 if property tests
+        all passed. Caps 0..100."""
+        score = 70.0
+        findings: list[str] = list(getattr(rb, "findings", []) or [])
+        if getattr(rb, "symbolic", None):
+            score += 10
+        bench = getattr(rb, "benchmark", None) or {}
+        if bench:
+            score += 10
+            if bench.get("claim_vs_measured") == -1:
+                score -= 15
+        props = getattr(rb, "property_tests", None) or {}
+        if props:
+            if props.get("all_passed"):
+                score += 10
+            else:
+                num_failed = int(props.get("num_failed", 0) or 0)
+                score -= 5 * num_failed
+        score = max(0.0, min(100.0, score))
+        status: Any = (
+            "passed"      if score >= 80
+            else "passed_warn" if score >= 60
+            else "failed"
+        )
+        return QuickCodeGate(
+            phase="reactor", status=status, score=round(score, 1),
+            findings=findings,
+            summary=(
+                f"sym={'ran' if getattr(rb, 'symbolic', None) else 'n/a'} · "
+                f"bench={'ran' if bench else 'n/a'} · "
+                f"props={'pass' if props.get('all_passed') else ('fail' if props else 'n/a')}"
+            ),
+        )
+
     # ─── Phase 6: Code Audit (mesh) ─────────────────────────────────────
 
     async def _phase_code_audit(self) -> dict[str, Any] | None:
@@ -955,6 +1056,12 @@ class QuickCodeEngine:
             self._check_cancel()
             if self.request.max_refine > 0 and self.request.allow_refine:
                 await self._phase_refine_if_needed()
+            # v10 — Code Synthesis Reactor empirical verification.
+            # Runs symbolic complexity + bench + property tests against
+            # the (possibly refined) winner. Fail-soft: returns None if
+            # disabled or any subsystem errors.
+            self._check_cancel()
+            await self._phase_reactor_verify()
             # v9 — Multi-ML Mesh post-processing. Each phase is fail-soft
             # (returns None on any error) so the bundle still ships even
             # if the mesh is misconfigured.

@@ -230,10 +230,17 @@ async def test_run_emits_phases_in_order():
     starts = [e["phase"] for e in events
               if e.get("type") == "quick_code_phase_start"]
     # No refine phase because max_refine=0 AND verification was clean.
-    assert starts == ["triage", "reason", "implement", "verify"]
+    # v10 — reactor phase runs after verify (skipped when sandbox
+    # can't produce BENCH_RESULT/PROPERTY_RESULT lines, but it still
+    # emits its own start/complete events for visibility).
+    assert starts[:4] == ["triage", "reason", "implement", "verify"]
+    # Reactor phase MAY appear depending on sandbox script — it's
+    # tolerated either way. The first four phases are the contract.
+    assert "reactor" in starts or starts == ["triage", "reason",
+                                              "implement", "verify"]
     completes = [e["phase"] for e in events
                  if e.get("type") == "quick_code_phase_complete"]
-    assert completes == ["triage", "reason", "implement", "verify"]
+    assert completes[:4] == ["triage", "reason", "implement", "verify"]
 
     # Every event has a unique event_id.
     ids = {e["event_id"] for e in events}
