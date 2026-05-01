@@ -109,3 +109,8 @@ arxiv>=2.1.3         # CapabilityDiscoverer arXiv source
 # Cognitive upgrade — Phase 1A
 # Neuro-symbolic verification + RLEF reward collection.
 z3-solver>=4.13      # Z3Verifier — SMT termination/overflow/exhaustiveness
+
+# Quick Code V2 — symbolic equivalence check (math tasks only). Opt-in
+# via quick_v2_symcode_enabled; the module degrades to a pass-through
+# verdict if sympy is absent.
+sympy>=1.12          # SymCode — symbolic math equivalence via subprocess

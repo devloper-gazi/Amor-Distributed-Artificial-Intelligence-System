@@ -305,6 +305,67 @@ class Settings(BaseSettings):
     # — useful for isolating regressions during a tricky upgrade.
     cognitive_phase_1b_enabled: bool = True
 
+    # ── Quick Code V2 (Adapter pattern over the existing engine) ─────────
+    # Master gate. When False the engine bypasses every V2 phase and the
+    # behaviour is byte-identical to pre-V2 — the safety net for any
+    # regression bisect. Per-feature flags below toggle individual modules
+    # so a single misbehaving component can be isolated without disabling
+    # the whole layer.
+    quick_v2_enabled: bool = True
+    # TaskClassifier — 1.5B router that classifies trivial / simple /
+    # complex / math and (when set) auto-redirects "complex" tasks back
+    # to the Pro Code Intelligence engine.
+    quick_v2_router_enabled: bool = True
+    quick_v2_router_model: str = "qwen2.5:1.5b"
+    quick_v2_router_redirect_to_pro: bool = True
+    # Striatum — Redis cosine ≥ 0.95 fast-path procedural cache.
+    quick_v2_striatum_enabled: bool = True
+    quick_v2_striatum_threshold: float = 0.95
+    quick_v2_striatum_ttl_s: int = 86_400
+    # Bump to invalidate every Striatum cache entry (e.g. after a prompt
+    # template change).
+    quick_v2_striatum_salt: int = 1
+    # SkCoder — BM25 + cosine hybrid retrieval. α below the floor falls
+    # back to a "<FILL_HERE:hint>" placeholder so the coder template can
+    # ask the LLM to fill the gap.
+    quick_v2_sk_enabled: bool = True
+    quick_v2_sk_alpha_floor: float = 0.35
+    quick_v2_sk_top_k: int = 5
+    # SymCode — SymPy subprocess validator (math tasks only).
+    quick_v2_symcode_enabled: bool = True
+    quick_v2_symcode_timeout_s: int = 10
+    # ParselDecomposer — divide-and-conquer + Design-by-Contract.
+    quick_v2_parsel_enabled: bool = True
+    quick_v2_parsel_max_depth: int = 2
+    # MCTS UCT (C=1.41) — gated to mode='pro'; quick mode default-off.
+    quick_v2_use_mcts: bool = False
+    quick_v2_mcts_max_iters: int = 16
+    quick_v2_mcts_c: float = 1.41
+    # SeekerDebugger — 5-agent Scanner→Detector→Predator→Ranker→Handler
+    # pipeline. Replaces the monolithic DebuggerAgent when enabled.
+    quick_v2_use_seeker: bool = True
+    # Anton-Brain — pure prompt shaping (no LLM calls). Budgets ~3200
+    # tokens across IDENTITY / GLOBAL_RULES / TASK_CONTEXT / ERROR_MEMORY.
+    quick_v2_anton_brain_enabled: bool = True
+    quick_v2_anton_brain_budget: int = 3200
+    # ORPO preference-pair export. Ships off by default — flip on when
+    # the offline trainer is ready to consume the collection.
+    quick_v2_orpo_enabled: bool = False
+    quick_v2_orpo_collection: str = "orpo_pairs"
+    # Sandbox tier limits. Quick is the default; Pro doubles memory and
+    # tripples the timeout for harder workloads.
+    quick_v2_sandbox_quick_mem_mb: int = 256
+    quick_v2_sandbox_quick_timeout_s: int = 15
+    quick_v2_sandbox_pro_mem_mb: int = 512
+    quick_v2_sandbox_pro_timeout_s: int = 45
+    # ── Hardware-incompatible flags. Default OFF on this 8 GB GPU host.
+    # Flip them on hosts with ≥ 24 GB GPU memory; the route layer will
+    # still raise 503 if the model is not pulled.
+    quick_v2_specialist_32b_enabled: bool = False  # requires ≥24GB GPU
+    quick_v2_specialist_32b_model: str = ""
+    quick_v2_speculative_decoding_enabled: bool = False  # requires the 32B specialist
+    quick_v2_speculative_draft_model: str = "qwen2.5:1.5b"
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

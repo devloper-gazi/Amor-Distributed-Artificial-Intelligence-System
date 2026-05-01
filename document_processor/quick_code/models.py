@@ -70,15 +70,45 @@ class QuickCodeRequest:
     # fails open: a mesh phase that errors degrades to single-path
     # behaviour without aborting the run.
     use_mesh: bool = True
+    # V2 — Quick / Pro tier toggle.  ``"quick"`` runs the lightweight
+    # 12-phase pipeline with 256 MB / 15 s sandbox limits.  ``"pro"``
+    # opts into MCTS + 512 MB / 45 s sandbox limits and lets the
+    # router auto-redirect to the full Code Intelligence engine for
+    # ``COMPLEX`` tasks.
+    mode: Literal["quick", "pro"] = "quick"
+    # V2 — Optional override for the ``router.TaskClassifier``.  When
+    # set the router phase short-circuits and the supplied bucket is
+    # used directly.  Validated through ``TaskComplexity.coerce`` so
+    # an unknown value silently falls back to ``None``.
+    complexity_hint: str | None = None
 
     def normalize(self) -> "QuickCodeRequest":
-        """Clamp `max_refine` to [0, MAX_REFINE_ITERATIONS] and apply
-        the `allow_refine=False` short-circuit."""
+        """Clamp / lowercase user-facing fields.
+
+        * ``max_refine`` is clamped to ``[0, MAX_REFINE_ITERATIONS]``
+          and zeroed out when ``allow_refine=False``.
+        * ``mode`` is lowercased and clamped to ``{"quick", "pro"}``
+          (default ``"quick"``).
+        * ``complexity_hint`` is normalised to one of the four
+          ``TaskComplexity`` strings; an unknown value is dropped to
+          ``None`` rather than raising — the router will then pick a
+          bucket itself.
+        """
         n = max(0, min(MAX_REFINE_ITERATIONS, int(self.max_refine or 0)))
         if not self.allow_refine:
             n = 0
         # dataclass replace is too heavy for one field; mutate in place.
         self.max_refine = n
+
+        mode = (self.mode or "quick").strip().lower()
+        if mode not in ("quick", "pro"):
+            mode = "quick"
+        self.mode = mode  # type: ignore[assignment]
+
+        hint = (self.complexity_hint or "").strip().lower() or None
+        if hint not in (None, "trivial", "simple", "complex", "math"):
+            hint = None
+        self.complexity_hint = hint
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -244,6 +274,17 @@ class QuickCodeBundle:
     episodic_decision: dict[str, Any] | None = None     # reuse / seed / fresh routing
     rlef_reward: dict[str, Any] | None = None           # composite reward + sink result
 
+    # V2 — adapter outputs. Each populated only when the matching
+    # phase ran and produced something useful. All JSON-serialisable.
+    router_decision: dict[str, Any] | None = None       # TaskClassifier verdict + redirect
+    striatum_hit: dict[str, Any] | None = None          # cosine fast-path metadata
+    parsel_subtasks: list[dict[str, Any]] = field(default_factory=list)  # SubTask dumps
+    sk_snippets: list[dict[str, Any]] = field(default_factory=list)      # CodeSnippet dumps
+    sk_hint: str | None = None                          # <FILL_HERE:...> placeholder when α<floor
+    symcode_result: dict[str, Any] | None = None        # SymValidationResult dump (math only)
+    mcts_audit: list[dict[str, Any]] = field(default_factory=list)       # MCTSNode trail (pro mode)
+    orpo_pairs: list[dict[str, Any]] = field(default_factory=list)       # PreferencePair dumps
+
     # ─── Adapter into Consortium's ImplementationArtifact ─────────────
 
     def to_implementation_artifact(self) -> Any:
@@ -350,4 +391,13 @@ class QuickCodeBundle:
             "z3_verification": self.z3_verification,
             "episodic_decision": self.episodic_decision,
             "rlef_reward": self.rlef_reward,
+            # V2 adapter outputs
+            "router_decision": self.router_decision,
+            "striatum_hit": self.striatum_hit,
+            "parsel_subtasks": list(self.parsel_subtasks),
+            "sk_snippets": list(self.sk_snippets),
+            "sk_hint": self.sk_hint,
+            "symcode_result": self.symcode_result,
+            "mcts_audit": list(self.mcts_audit),
+            "orpo_pairs": list(self.orpo_pairs),
         }

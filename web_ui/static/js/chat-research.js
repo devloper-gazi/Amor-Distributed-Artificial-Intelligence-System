@@ -1641,6 +1641,9 @@ class ChatController {
                     max_refine: 2,
                     chat_session_id: this.chatSessionId || null,
                     preferred_model: this._readPreferredModel() || null,
+                    // V2 — request mode (always 'quick' from this entry
+                    // point; the Pro tile uses _runProCodeIntelligence).
+                    mode: 'quick',
                 }),
                 signal: this._currentAbortController?.signal,
             });
@@ -1652,6 +1655,19 @@ class ChatController {
                 );
             }
             session = await res.json();
+            // V2 — auto-redirect.  When the heuristic router classifies
+            // the prompt as COMPLEX we get told to retry against the
+            // Pro Code Intelligence engine instead of running the
+            // lightweight pipeline to a half-baked answer.
+            if (session && session.redirect_to === '/api/code/start') {
+                view.handleEvent({
+                    type: 'router_redirect',
+                    target: 'pro',
+                    reason: session.redirect_reason || 'router-classified-complex',
+                });
+                this._unmountCurrentCodeCard?.();
+                return this._runProCodeIntelligence(message, typingId);
+            }
         } catch (err) {
             view.handleEvent({ type: 'error', message: err.message });
             throw err;
