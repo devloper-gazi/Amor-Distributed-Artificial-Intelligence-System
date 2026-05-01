@@ -961,8 +961,13 @@ class ChatController {
             if (this.mode === 'thinking') {
                 await this.thinkingWithLocalAI(message, typingId, useClaudeAPI ? 'claude' : 'local');
             } else if (this.mode === 'code') {
-                // Code Intelligence is local-only by design (zero-API
-                // multi-agent engine). The Claude toggle is ignored here.
+                // Code Intelligence tile — always the full 9-phase Pro
+                // pipeline. Local-only by design (multi-agent engine);
+                // the Claude toggle is ignored here.
+                await this._runProCodeIntelligence(message, typingId);
+            } else if (this.mode === 'coding') {
+                // Quick Code Chat tile — Quick (5-phase) or Pro (9-phase)
+                // by the tile's own toggle pill (state.codingEffort).
                 await this._runCodeIntelligence(message, typingId);
             } else if (useClaudeAPI) {
                 await this.processWithClaude(message, typingId);
@@ -1027,9 +1032,19 @@ class ChatController {
                 `/api/thinking/${encodeURIComponent(this._currentThinkingBackendId)}/cancel`,
                 { method: 'POST' }
             ));
-        } else if (mode === 'code' && this._currentCodeBackendId) {
+        } else if ((mode === 'code' || mode === 'coding')
+                   && this._currentCodeBackendId) {
+            // Quick Code Chat (mode='coding') uses /api/quick-code,
+            // Code Intelligence (mode='code') uses /api/code, AND a
+            // mode='coding' user might have toggled to Pro which
+            // routes through /api/code. Track the active engine via
+            // `_currentCodeEnginePath` (set by the runner that
+            // started the session); fall back to /api/code so we
+            // never silently fail-soft when the field is missing.
+            const cancelPath = this._currentCodeEnginePath
+                || (mode === 'coding' ? '/api/quick-code' : '/api/code');
             calls.push(this._authFetch(
-                `/api/code/${encodeURIComponent(this._currentCodeBackendId)}/cancel`,
+                `${cancelPath}/${encodeURIComponent(this._currentCodeBackendId)}/cancel`,
                 { method: 'POST' }
             ));
         } else if (mode === 'research' && !useClaudeAPI && this._currentResearchBackendId) {
@@ -1547,6 +1562,7 @@ class ChatController {
         // Stash the backend session id so the Stop button can hit
         // /api/code/{sid}/cancel directly.
         this._currentCodeBackendId = session.session_id;
+        this._currentCodeEnginePath = '/api/code';
         this._persistActiveCode(session.session_id);
 
         view.showTimeline({ session_id: session.session_id, phases: [] });
@@ -1642,6 +1658,7 @@ class ChatController {
         }
 
         this._currentCodeBackendId = session.session_id;
+        this._currentCodeEnginePath = '/api/quick-code';
         this._persistActiveCode(session.session_id);
         view.showTimeline({ session_id: session.session_id, phases: [] });
 
@@ -3583,6 +3600,9 @@ class ChatController {
 
     _clearActiveCode() {
         try { localStorage.removeItem('amor.activeCode'); } catch (_) {}
+        // Clear the engine-path tag so a stale value doesn't drive
+        // a subsequent cancel call to the wrong endpoint.
+        this._currentCodeEnginePath = null;
     }
 
     _readActiveCode() {

@@ -226,8 +226,10 @@ def test_status_returns_envelope_after_start(client):
                 "phases", "current_phase", "gates"}:
         assert key in body
     # Phase scaffold present even before the bg task runs.
+    # v9 added audit + arbiter (mesh post-processing); v10 added reactor.
     assert {p["name"] for p in body["phases"]} == {
         "triage", "reason", "implement", "verify", "refine",
+        "reactor", "audit", "arbiter",
     }
 
 

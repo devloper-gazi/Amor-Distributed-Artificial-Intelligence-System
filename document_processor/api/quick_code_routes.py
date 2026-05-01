@@ -257,11 +257,16 @@ async def start_quick_code(
         "completed_at": None,
         "request": request.to_dict(),
         "phases": [
-            {"name": "triage",    "label": "Triage",            "status": "pending"},
-            {"name": "reason",    "label": "Reasoning",         "status": "pending"},
-            {"name": "implement", "label": "Implementing",      "status": "pending"},
-            {"name": "verify",    "label": "Verifying",         "status": "pending"},
-            {"name": "refine",    "label": "Refining (if any)", "status": "pending"},
+            {"name": "triage",    "label": "Triage",                "status": "pending"},
+            {"name": "reason",    "label": "Reasoning",             "status": "pending"},
+            {"name": "implement", "label": "Implementing",          "status": "pending"},
+            {"name": "verify",    "label": "Verifying",             "status": "pending"},
+            {"name": "refine",    "label": "Refining (if any)",     "status": "pending"},
+            # v10 — empirical performance + property tests on the winner.
+            {"name": "reactor",   "label": "Reactor verification",  "status": "pending"},
+            # v9 — Multi-ML Mesh post-processing.
+            {"name": "audit",     "label": "Mesh code audit",       "status": "pending"},
+            {"name": "arbiter",   "label": "Meta-arbiter verdict",  "status": "pending"},
         ],
         "current_phase": None,
         "gates": [],
