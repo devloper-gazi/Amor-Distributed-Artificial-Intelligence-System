@@ -409,6 +409,25 @@ class Settings(BaseSettings):
     sentinel_use_xgboost_ranker: bool = False
     sentinel_use_isolation_forest: bool = False
 
+    # ── Phase 15 — Evolution Engine (genome / ledger / proposals) ────
+    sentinel_evolution_enabled: bool = True
+    # Filesystem root for ledger.jsonl, prompts/, agents/, adapters/,
+    # students/, rules/, architecture/, distillation/.  The path is
+    # auto-created on first write.
+    sentinel_evolution_root: str = "data/sentinel/evolution"
+    sentinel_evolution_actor_default: str = "console"
+    sentinel_evolution_max_ledger_page: int = 500
+    sentinel_evolution_require_user_consent: bool = True
+    # Per-subsystem manual-trigger gates.  Off by default — flipped
+    # on by an operator from the Evolution Console.
+    sentinel_evolution_allow_prompt_trigger: bool = True
+    sentinel_evolution_allow_rule_trigger: bool = True
+    sentinel_evolution_allow_spawn_trigger: bool = True
+    sentinel_evolution_allow_dag_trigger: bool = True
+    sentinel_evolution_allow_lora_trigger: bool = False  # opt-in
+    sentinel_evolution_allow_distill_trigger: bool = False  # opt-in
+    sentinel_evolution_allow_curriculum_trigger: bool = True
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

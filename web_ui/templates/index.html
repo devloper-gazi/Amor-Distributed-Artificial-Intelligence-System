@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="/static/css/thinking-view.css?v={{ static_version }}">
     <link rel="stylesheet" href="/static/css/auth.css?v={{ static_version }}">
     <link rel="stylesheet" href="/static/css/sentinel.css?v={{ static_version }}">
+    <link rel="stylesheet" href="/static/css/sentinel-evolution.css?v={{ static_version }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -182,6 +183,12 @@
                         <h3>Sentinel</h3>
                         <p>Multi-agent swarm + 7-layer ML pipeline + RAG · 100% local, zero telemetry</p>
                         <span class="capability-card-badge">v1</span>
+                        <button type="button"
+                                class="capability-card-action"
+                                id="sentinel-evolution-console-btn"
+                                title="Open the Evolution Console">
+                            ⚙ Evolution Console
+                        </button>
                     </div>
                 </div>
 
@@ -1299,5 +1306,6 @@
     <script src="/static/js/chat-research.js?v={{ static_version }}"></script>
     <script src="/static/js/consortium.js?v={{ static_version }}"></script>
     <script src="/static/js/sentinel.js?v={{ static_version }}"></script>
+    <script src="/static/js/sentinel-evolution.js?v={{ static_version }}"></script>
 </body>
 </html>

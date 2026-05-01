@@ -97,6 +97,16 @@ except ImportError as _sentinel_exc:  # pragma: no cover
     SENTINEL_AVAILABLE = False
     logger.warning("Sentinel routes not available: %s", _sentinel_exc)
 
+# Sentinel Evolution Console — Phase 15 operator surface
+try:
+    from .api.sentinel_evolution_routes import router as sentinel_evolution_router
+    SENTINEL_EVOLUTION_AVAILABLE = True
+except ImportError as _sentinel_evo_exc:  # pragma: no cover
+    SENTINEL_EVOLUTION_AVAILABLE = False
+    logger.warning(
+        "Sentinel Evolution routes not available: %s", _sentinel_evo_exc,
+    )
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -466,6 +476,11 @@ if QUICK_CODE_AVAILABLE:
 if SENTINEL_AVAILABLE:
     app.include_router(sentinel_router)
     logger.info("Sentinel routes included")
+
+# Sentinel Evolution Console — /api/sentinel/evolution/*
+if SENTINEL_EVOLUTION_AVAILABLE:
+    app.include_router(sentinel_evolution_router)
+    logger.info("Sentinel Evolution routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
