@@ -41,6 +41,10 @@ from .symbolic_complexity import (
     SymbolicComplexity,
     SymbolicComplexityAnalyzer,
 )
+from .bandit import BanditPosterior, SpecialistBandit
+from .llm_cache import CacheKey, SemanticLLMCache, wrap_llm_call
+from .rag import CodeCorpusRAG, CorpusPattern, RetrievalResult
+from .speculative import speculative_run
 from .tournament import (
     CandidateScore,
     TournamentBundle,
@@ -49,6 +53,15 @@ from .tournament import (
 )
 
 __all__ = [
+    "BanditPosterior",
+    "CacheKey",
+    "CodeCorpusRAG",
+    "CorpusPattern",
+    "RetrievalResult",
+    "SemanticLLMCache",
+    "SpecialistBandit",
+    "speculative_run",
+    "wrap_llm_call",
     "BenchmarkFit",
     "BenchmarkRecord",
     "BenchmarkResult",
