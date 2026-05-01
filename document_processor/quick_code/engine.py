@@ -797,8 +797,15 @@ class QuickCodeEngine:
                 sandbox=sandbox,
                 role_setter=self._role_setter,
             )
+            # Phase 1B — prefer the LogicEngine's complexity_hint as
+            # the source of truth (it's the value Z3 verified against,
+            # not a stochastic LLM guess). Fall back to the reasoning
+            # specialist's claim, then the empty string.
             claimed = ""
-            if self.bundle.reasoning and self.bundle.reasoning.chosen:
+            skel = self.bundle.logic_skeleton or {}
+            if skel.get("complexity_hint"):
+                claimed = str(skel["complexity_hint"])
+            elif self.bundle.reasoning and self.bundle.reasoning.chosen:
                 claimed = (
                     self.bundle.reasoning.chosen.complexity_estimate or ""
                 )
@@ -1040,13 +1047,362 @@ class QuickCodeEngine:
 
     # ─── Run ────────────────────────────────────────────────────────────
 
+    # ─── Phase 1B: Cognitive upgrade ────────────────────────────────────
+
+    async def _phase_episodic_recall(self) -> dict[str, Any] | None:
+        """Look up past sessions similar to the current prompt.
+
+        Phase 1B records the routing decision (reuse / seed / fresh)
+        on the bundle but does NOT short-circuit the pipeline yet —
+        the engine always runs the full flow this round so we can
+        observe the reuse-rate without committing to skip work.
+        Future rounds can flip the short-circuit once we trust the
+        retrieval quality.
+        """
+        if not self._cognitive_phase_1b_enabled():
+            return None
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "episodic_memory_enabled", True):
+                return None
+            from local_ai.episodic_memory import (  # noqa: PLC0415
+                EpisodicMemoryStore, hash_embedder,
+            )
+        except Exception as exc:
+            logger.debug("quick_code_episodic_import_failed: %s", exc)
+            return None
+
+        self._check_cancel()
+        await self._emit({
+            "type": "quick_code_phase_start", "phase": "episodic_recall",
+        })
+        try:
+            store = self._get_episodic_store()
+            decision = await store.decide(self.request.prompt)
+        except Exception as exc:
+            logger.debug("quick_code_episodic_decide_failed: %s", exc)
+            return None
+        decision_dict = decision.to_dict()
+        self.bundle.episodic_decision = decision_dict
+        await self._emit({
+            "type": "quick_code_phase_complete", "phase": "episodic_recall",
+            "decision": decision_dict,
+        })
+        return decision_dict
+
+    async def _phase_logic_skeleton(self) -> dict[str, Any] | None:
+        """Run LogicEngine + Z3Verifier on the user prompt.
+
+        Both outputs land on the bundle. The skeleton's
+        ``complexity_hint`` later seeds the Reactor's claimed-Big-O
+        check so the benchmark can flag a candidate that's measurably
+        slower than the verified contract.
+        """
+        if not self._cognitive_phase_1b_enabled():
+            return None
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "z3_verification_enabled", True):
+                return None
+            from local_ai.logic_engine import LogicEngine  # noqa: PLC0415
+            from local_ai.z3_verifier import Z3Verifier  # noqa: PLC0415
+        except Exception as exc:
+            logger.debug("quick_code_logic_import_failed: %s", exc)
+            return None
+
+        self._check_cancel()
+        await self._emit({
+            "type": "quick_code_phase_start", "phase": "logic_skeleton",
+        })
+        try:
+            strategy = getattr(settings, "logic_engine_strategy", "rule_based")
+            engine = LogicEngine(strategy=strategy)
+            skeleton = await engine.generate(self.request.prompt)
+            self.bundle.logic_skeleton = skeleton.to_dict()
+            verdict_dict: dict[str, Any] | None = None
+            if skeleton.verifier_skeleton is not None:
+                verifier = Z3Verifier(
+                    timeout_ms=int(
+                        getattr(settings, "z3_timeout_seconds", 30) * 1000
+                    ),
+                )
+                report = verifier.verify_skeleton(skeleton.verifier_skeleton)
+                verdict_dict = report.to_dict()
+                self.bundle.z3_verification = verdict_dict
+        except Exception as exc:
+            logger.debug("quick_code_logic_skeleton_failed: %s", exc)
+            return None
+
+        await self._emit({
+            "type": "quick_code_phase_complete", "phase": "logic_skeleton",
+            "complexity_hint": skeleton.complexity_hint,
+            "matched_template": skeleton.matched_template,
+            "z3_overall": (verdict_dict or {}).get("overall"),
+        })
+        return self.bundle.logic_skeleton
+
+    async def _phase_persist_episode(self) -> dict[str, Any] | None:
+        """Write the (verified, passing) session to EpisodicMemory.
+
+        Only stored when the verification gate passed AND we have
+        non-empty code. Best-effort: storage failure is logged and
+        the run completes normally.
+        """
+        if not self._cognitive_phase_1b_enabled():
+            return None
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "episodic_memory_enabled", True):
+                return None
+            from local_ai.episodic_memory import (  # noqa: PLC0415
+                EpisodicMemoryEntry,
+            )
+        except Exception as exc:
+            logger.debug("quick_code_episodic_store_import_failed: %s", exc)
+            return None
+
+        if not (self.bundle.code or "").strip():
+            return None
+        v = self.bundle.verification
+        pass_rate = self._compute_test_pass_rate()
+        # Don't persist failures or skipped runs — they pollute the
+        # similarity search with low-quality matches.
+        min_rate = float(getattr(settings, "rlef_min_pass_rate", 0.8))
+        if pass_rate < min_rate:
+            return None
+
+        try:
+            entry = EpisodicMemoryEntry(
+                session_id=self.session_id,
+                user_query=self.request.prompt,
+                algorithm_skeleton=self.bundle.logic_skeleton or {},
+                final_code=self.bundle.code or "",
+                test_pass_rate=pass_rate,
+                language=(
+                    self.bundle.triage.get("language")
+                    or self.request.language or "python"
+                ),
+                complexity=(
+                    (self.bundle.logic_skeleton or {}).get("complexity_hint")
+                    or ""
+                ),
+                tags=self._derive_tags(),
+            )
+            store = self._get_episodic_store()
+            await store.store(entry)
+            await self._emit({
+                "type": "quick_code_phase_complete", "phase": "episodic_store",
+                "stored": True, "content_hash": entry.content_hash,
+            })
+            return {"stored": True, "content_hash": entry.content_hash}
+        except Exception as exc:
+            logger.debug("quick_code_episodic_store_failed: %s", exc)
+            return None
+
+    async def _phase_emit_rlef(self) -> dict[str, Any] | None:
+        """Build + persist + publish the RLEF reward at end of run."""
+        if not self._cognitive_phase_1b_enabled():
+            return None
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "rlef_enabled", True):
+                return None
+            from local_ai.rlef_collector import RLEFCollector  # noqa: PLC0415
+        except Exception as exc:
+            logger.debug("quick_code_rlef_import_failed: %s", exc)
+            return None
+
+        try:
+            collector = self._get_rlef_collector()
+            v = self.bundle.verification
+            exec_data = (v.execution if v else {}) or {}
+            static_data = (v.static if v else {}) or {}
+            severity_counts = static_data.get("severity_counts") or {}
+            had_runtime_error = bool(
+                exec_data and not exec_data.get("skipped")
+                and not exec_data.get("success")
+            )
+            z3_passed = (
+                (self.bundle.z3_verification or {}).get("overall") == "pass"
+            )
+            reward = collector.build_reward(
+                session_id=self.session_id,
+                code_hash=self._code_hash(),
+                test_pass_rate=self._compute_test_pass_rate(),
+                compilation_success=(
+                    not had_runtime_error and bool(self.bundle.code)
+                ),
+                runtime_error=(
+                    str(exec_data.get("stderr") or exec_data.get("error") or "")[:400]
+                    if had_runtime_error else None
+                ),
+                execution_time_ms=float(exec_data.get("duration_ms", 0.0) or 0.0),
+                z3_was_verified=z3_passed,
+                mcts_iterations_used=int(self.bundle.refine_iterations or 0),
+                language=(
+                    self.bundle.triage.get("language")
+                    or self.request.language or "python"
+                ),
+                task_type=str(self.bundle.triage.get("task_type") or ""),
+                extras={
+                    "static_errors": int(severity_counts.get("error", 0) or 0),
+                    "static_security": int(severity_counts.get("security", 0) or 0),
+                },
+            )
+            sink_result = await collector.collect(reward)
+            payload = {
+                **reward.to_dict(),
+                "sink_result": sink_result,
+            }
+            self.bundle.rlef_reward = payload
+            await self._emit({
+                "type": "quick_code_phase_complete", "phase": "rlef_emit",
+                "reward_score": reward.reward_score,
+                "sink_result": sink_result,
+            })
+            return payload
+        except Exception as exc:
+            logger.debug("quick_code_rlef_emit_failed: %s", exc)
+            return None
+
+    # ── Phase 1B helpers ───────────────────────────────────────────
+
+    @staticmethod
+    def _cognitive_phase_1b_enabled() -> bool:
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            return bool(getattr(settings, "cognitive_phase_1b_enabled", True))
+        except Exception:
+            return True
+
+    def _get_episodic_store(self) -> Any:
+        """Lazy singleton per engine instance."""
+        if getattr(self, "_episodic_store", None) is not None:
+            return self._episodic_store
+        from local_ai.episodic_memory import (  # noqa: PLC0415
+            EpisodicMemoryStore, hash_embedder,
+        )
+        from ..config.settings import settings  # noqa: PLC0415
+        # Best-effort Mongo collection wiring. The recorder is fail-
+        # soft if Mongo is offline.
+        coll = None
+        try:
+            from ..infrastructure.storage import storage_manager  # noqa: PLC0415
+            db = getattr(storage_manager, "mongo_db", None)
+            if db is not None:
+                coll = db["episodic_memory"]
+        except Exception:
+            pass
+        self._episodic_store = EpisodicMemoryStore(
+            collection=coll,
+            embedder=hash_embedder(),     # placeholder until v1B+ wires nomic
+            reuse_threshold=float(
+                getattr(settings, "episodic_reuse_threshold", 0.85)
+            ),
+            seed_threshold=float(
+                getattr(settings, "episodic_seed_threshold", 0.60)
+            ),
+        )
+        return self._episodic_store
+
+    def _get_rlef_collector(self) -> Any:
+        if getattr(self, "_rlef_collector", None) is not None:
+            return self._rlef_collector
+        from local_ai.rlef_collector import RLEFCollector  # noqa: PLC0415
+        from ..config.settings import settings  # noqa: PLC0415
+        coll = None
+        try:
+            from ..infrastructure.storage import storage_manager  # noqa: PLC0415
+            db = getattr(storage_manager, "mongo_db", None)
+            if db is not None:
+                coll = db[
+                    getattr(settings, "rlef_mongo_collection", "rlef_rewards")
+                ]
+        except Exception:
+            pass
+        self._rlef_collector = RLEFCollector(
+            mongo_collection=coll,
+            kafka_producer=None,  # wired in a follow-up round
+            kafka_topic=getattr(
+                settings, "rlef_kafka_topic", "task.rlef_reward",
+            ),
+            fast_threshold_ms=float(
+                getattr(settings, "rlef_fast_threshold_ms", 5000.0),
+            ),
+        )
+        return self._rlef_collector
+
+    def _compute_test_pass_rate(self) -> float:
+        """Derive the pass rate from existing bundle signals.
+
+        Order of preference:
+          1. Reactor's property-test outcomes (Phase 1A invariants run
+             against the actual generated code) — most accurate, but
+             only when the harness ACTUALLY ran. We exclude outcomes
+             that failed because the sandbox didn't emit PROPERTY_RESULT
+             lines (those mean "harness didn't run", not "invariant
+             violated").
+          2. Verification execution + static analysis — broad signal.
+          3. Default 0.0 when nothing usable.
+        """
+        rb = self.bundle.reactor_bundle or {}
+        prop = rb.get("property_tests") or {}
+        outcomes = prop.get("outcomes") or []
+        # Filter out "harness never emitted" outcomes — those are
+        # noise from a sandbox that couldn't run the script, not
+        # signal about the code itself.
+        runnable = [
+            o for o in outcomes
+            if not (o.get("error") or "").startswith("no PROPERTY_RESULT")
+        ]
+        if runnable:
+            passed = sum(1 for o in runnable if o.get("passed"))
+            return round(passed / max(1, len(runnable)), 4)
+        v = self.bundle.verification
+        if v is None:
+            return 0.0
+        exec_data = v.execution or {}
+        if exec_data and exec_data.get("skipped"):
+            return 0.5  # neutral — execution didn't run
+        if exec_data and exec_data.get("success"):
+            return 1.0
+        return 0.0
+
+    def _code_hash(self) -> str:
+        import hashlib  # noqa: PLC0415
+        h = hashlib.sha256((self.bundle.code or "").encode("utf-8", "replace"))
+        return h.hexdigest()[:16]
+
+    def _derive_tags(self) -> list[str]:
+        """Tags help the future learner cluster similar episodes."""
+        tags: list[str] = []
+        triage = self.bundle.triage or {}
+        if triage.get("language"):
+            tags.append(f"lang:{triage['language']}")
+        if triage.get("task_type"):
+            tags.append(f"task:{triage['task_type']}")
+        skel = self.bundle.logic_skeleton or {}
+        if skel.get("matched_template"):
+            tags.append(f"template:{skel['matched_template']}")
+        return tags
+
+    # ─── run() ─────────────────────────────────────────────────────
+
     async def run(self) -> QuickCodeBundle:
         await self._emit({
             "type": "quick_code_started",
             "request": self.request.to_dict(),
         })
         try:
+            # Phase 1B — informational episodic recall (no short-circuit yet).
+            await self._phase_episodic_recall()
+            self._check_cancel()
             await self._phase_triage()
+            self._check_cancel()
+            # Phase 1B — neuro-symbolic skeleton + Z3 sanity gate. The
+            # skeleton's complexity_hint feeds the Reactor's claimed-
+            # Big-O check; the Z3 verdict rides the bundle for the UI.
+            await self._phase_logic_skeleton()
             self._check_cancel()
             await self._phase_reason()
             self._check_cancel()
@@ -1069,6 +1425,12 @@ class QuickCodeEngine:
             await self._phase_code_audit()
             self._check_cancel()
             await self._phase_meta_arbiter()
+            # Phase 1B — persist + emit reward. Both happen AFTER
+            # everything else so they see the final state of the bundle.
+            self._check_cancel()
+            await self._phase_persist_episode()
+            self._check_cancel()
+            await self._phase_emit_rlef()
         except asyncio.CancelledError:
             self.bundle.deliverable_markdown = "*Cancelled by user.*"
             self.bundle.completed_at = _now_iso()

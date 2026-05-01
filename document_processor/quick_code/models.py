@@ -235,6 +235,14 @@ class QuickCodeBundle:
     # `_phase_reactor_verify` step when `code_reactor_enabled=True`
     # in settings. Shape matches `reactor.facade.ReactorBundle.to_dict()`.
     reactor_bundle: dict[str, Any] | None = None
+    # Phase 1B — Cognitive upgrade: neuro-symbolic verification +
+    # episodic memory + RLEF reward emission. Each is populated only
+    # when its phase ran and produced a non-empty result; all are
+    # JSON-serialisable so they ride the SSE stream + artifact bundle.
+    logic_skeleton: dict[str, Any] | None = None        # LogicEngine output
+    z3_verification: dict[str, Any] | None = None       # Z3Verifier report
+    episodic_decision: dict[str, Any] | None = None     # reuse / seed / fresh routing
+    rlef_reward: dict[str, Any] | None = None           # composite reward + sink result
 
     # ─── Adapter into Consortium's ImplementationArtifact ─────────────
 
@@ -337,4 +345,9 @@ class QuickCodeBundle:
             "mesh_audit": self.mesh_audit,
             "meta_verdict": self.meta_verdict,
             "reactor_bundle": self.reactor_bundle,
+            # Phase 1B
+            "logic_skeleton": self.logic_skeleton,
+            "z3_verification": self.z3_verification,
+            "episodic_decision": self.episodic_decision,
+            "rlef_reward": self.rlef_reward,
         }

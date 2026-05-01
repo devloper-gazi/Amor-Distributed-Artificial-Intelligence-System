@@ -282,6 +282,7 @@ class PerformanceBenchmarker:
         if getattr(result, "skipped", False):
             return BenchmarkResult(
                 failed=True, failure_reason="sandbox unavailable (skipped)",
+                claimed_label=claimed_label,
                 raw_stdout_excerpt=getattr(result, "stdout", "") or "",
             )
 
@@ -292,6 +293,7 @@ class PerformanceBenchmarker:
             return BenchmarkResult(
                 failed=True,
                 failure_reason=err or "no BENCH_RESULT lines parsed",
+                claimed_label=claimed_label,
                 raw_stdout_excerpt=stdout[:800],
             )
 

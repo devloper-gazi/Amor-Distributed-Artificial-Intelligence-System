@@ -282,6 +282,29 @@ class Settings(BaseSettings):
     code_bandit_temperature: float = 1.0
     code_bandit_cold_start_threshold: int = 5
 
+    # ── Cognitive upgrade — Phase 1A modules ─────────────────────────────
+    # The .env.example carries human-readable docs; this block mirrors
+    # the names so pydantic-settings can populate them. Each is fail-soft
+    # — disabling a flag falls back to the previous behaviour.
+    logic_engine_strategy: str = "rule_based"
+    z3_verification_enabled: bool = True
+    z3_timeout_seconds: int = 30
+    z3_max_retries: int = 3
+    episodic_memory_enabled: bool = True
+    episodic_reuse_threshold: float = 0.85
+    episodic_seed_threshold: float = 0.60
+    episodic_top_k: int = 3
+    rlef_enabled: bool = True
+    rlef_min_pass_rate: float = 0.8
+    rlef_fast_threshold_ms: float = 5000.0
+    rlef_kafka_topic: str = "task.rlef_reward"
+    rlef_mongo_collection: str = "rlef_rewards"
+    # Master gate for Phase 1B (engine integration of the four Phase 1A
+    # modules into QuickCodeEngine). Setting this to False keeps the
+    # modules importable + tested but the engine never calls into them
+    # — useful for isolating regressions during a tricky upgrade.
+    cognitive_phase_1b_enabled: bool = True
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

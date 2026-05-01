@@ -229,18 +229,20 @@ async def test_run_emits_phases_in_order():
 
     starts = [e["phase"] for e in events
               if e.get("type") == "quick_code_phase_start"]
-    # No refine phase because max_refine=0 AND verification was clean.
-    # v10 — reactor phase runs after verify (skipped when sandbox
-    # can't produce BENCH_RESULT/PROPERTY_RESULT lines, but it still
-    # emits its own start/complete events for visibility).
-    assert starts[:4] == ["triage", "reason", "implement", "verify"]
-    # Reactor phase MAY appear depending on sandbox script — it's
-    # tolerated either way. The first four phases are the contract.
-    assert "reactor" in starts or starts == ["triage", "reason",
-                                              "implement", "verify"]
+    # The CONTRACT this test pins: the four core phases run in the
+    # documented order. Phase 1B introduced an `episodic_recall` step
+    # before triage and a `logic_skeleton` step between triage and
+    # reason — both fail-soft, both before reason. We strip the
+    # Phase 1B + Reactor + mesh phases to leave just the contract.
+    PHASE_1B = {"episodic_recall", "logic_skeleton",
+                "episodic_store", "rlef_emit"}
+    POST = {"reactor", "audit", "arbiter", "refine"}
+    core = [p for p in starts if p not in PHASE_1B and p not in POST]
+    assert core == ["triage", "reason", "implement", "verify"]
     completes = [e["phase"] for e in events
                  if e.get("type") == "quick_code_phase_complete"]
-    assert completes[:4] == ["triage", "reason", "implement", "verify"]
+    core_complete = [p for p in completes if p not in PHASE_1B and p not in POST]
+    assert core_complete == ["triage", "reason", "implement", "verify"]
 
     # Every event has a unique event_id.
     ids = {e["event_id"] for e in events}
