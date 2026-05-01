@@ -317,7 +317,7 @@ class ChatController {
     }
 
     setMode(newMode) {
-        if (['research', 'thinking', 'coding'].includes(newMode)) {
+        if (['research', 'thinking', 'coding', 'sentinel'].includes(newMode)) {
             console.log(`🔄 ChatController mode changed: ${this.mode} → ${newMode}`);
             this.mode = newMode;
             this.updateAIMode();

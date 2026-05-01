@@ -1,0 +1,265 @@
+/* Sentinel — modal launcher + results panel.
+ * Reuses existing tokens from styles.css / chat-research.css; the
+ * accent color is the security-red (#ff8a8a) chosen in styles.css's
+ * topbar dot mapping.
+ *
+ * License: MIT.
+ */
+
+.sentinel-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sentinel-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.sentinel-modal-card {
+    position: relative;
+    z-index: 1;
+    width: min(720px, calc(100vw - 24px));
+    max-height: calc(100vh - 80px);
+    background: var(--mono-bg-primary, #14141f);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 14px;
+    box-shadow: 0 16px 64px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.sentinel-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--mono-border-light, rgba(255, 255, 255, 0.06));
+}
+
+.sentinel-modal-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.sentinel-form {
+    padding: 18px;
+    display: grid;
+    gap: 8px;
+    overflow-y: auto;
+}
+
+.sentinel-form label {
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-top: 4px;
+}
+
+.sentinel-input {
+    width: 100%;
+    background: var(--mono-bg-secondary, #1f2433);
+    color: var(--mono-text-primary, #e8e8e8);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+
+.sentinel-input:focus-visible {
+    outline: 2px solid rgba(255, 138, 138, 0.55);
+    outline-offset: 1px;
+}
+
+textarea.sentinel-input {
+    resize: vertical;
+    min-height: 60px;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+}
+
+.sentinel-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.sentinel-btn {
+    background: var(--mono-bg-secondary, #1f2433);
+    color: var(--mono-text-primary, #e8e8e8);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 8px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.sentinel-btn:hover {
+    border-color: rgba(255, 138, 138, 0.6);
+}
+
+.sentinel-btn.primary {
+    background: rgba(255, 138, 138, 0.18);
+    color: #ff8a8a;
+    border-color: rgba(255, 138, 138, 0.5);
+}
+
+.sentinel-btn.ghost {
+    background: transparent;
+    border-color: transparent;
+}
+
+.sentinel-results {
+    border-top: 1px solid var(--mono-border-light, rgba(255, 255, 255, 0.06));
+    padding: 18px;
+    overflow-y: auto;
+    max-height: calc(100vh - 280px);
+}
+
+.sentinel-results[hidden] { display: none !important; }
+
+.sentinel-results-header h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+}
+
+.sentinel-meta {
+    font-size: 11.5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    margin-bottom: 12px;
+}
+
+.sentinel-status {
+    font-size: 13px;
+    color: var(--mono-text-secondary, #b0b0c0);
+    margin-bottom: 8px;
+}
+
+.sentinel-error {
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid rgba(248, 81, 73, 0.4);
+    color: #ff8a8a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+}
+
+.sentinel-log {
+    background: #0a0d12;
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 8px;
+    padding: 8px 10px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11.5px;
+    color: var(--mono-text-secondary, #b0b0c0);
+    margin-bottom: 12px;
+}
+
+.sentinel-log-row {
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.sentinel-histogram {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+}
+
+.sentinel-hist-bucket {
+    display: inline-block;
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.sentinel-findings {
+    display: grid;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.sentinel-finding {
+    background: var(--mono-bg-secondary, #1f2433);
+    border: 1px solid var(--mono-border-medium, #3a3a55);
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.sentinel-finding-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    margin-bottom: 4px;
+}
+
+.sentinel-tag {
+    display: inline-block;
+    font-size: 9.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border-radius: 999px;
+}
+
+.sentinel-rule {
+    color: var(--mono-text-tertiary, #8a8aa0);
+}
+
+.sentinel-finding-loc {
+    font-size: 11.5px;
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    margin-bottom: 4px;
+    word-break: break-all;
+}
+
+.sentinel-finding-msg {
+    font-size: 12.5px;
+    color: var(--mono-text-secondary, #b0b0c0);
+    line-height: 1.45;
+}
+
+.sentinel-empty {
+    color: var(--mono-text-tertiary, #8a8aa0);
+    font-style: italic;
+    padding: 12px;
+    text-align: center;
+}
+
+@media (max-width: 480px) {
+    .sentinel-modal-card {
+        width: calc(100vw - 16px);
+        border-radius: 12px;
+    }
+    .sentinel-form { padding: 14px; }
+    .sentinel-results { padding: 14px; max-height: calc(100vh - 220px); }
+}

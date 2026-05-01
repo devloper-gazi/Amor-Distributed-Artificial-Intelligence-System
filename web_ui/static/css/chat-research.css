@@ -4171,6 +4171,24 @@ body.dark-mode .depth-menu {
     border-color: rgba(180, 130, 255, 0.7);
     box-shadow: 0 4px 16px rgba(180, 130, 255, 0.15);
 }
+
+/* Sentinel — security module, subtle red hue */
+.capability-card-sentinel {
+    position: relative;
+    background: linear-gradient(135deg,
+        rgba(255, 138, 138, 0.10),
+        rgba(255, 200, 96, 0.04) 80%);
+    border-color: rgba(255, 138, 138, 0.35);
+}
+.capability-card-sentinel:hover {
+    border-color: rgba(255, 138, 138, 0.6);
+    box-shadow: 0 4px 16px rgba(255, 138, 138, 0.18);
+}
+.capability-card-sentinel .capability-card-badge {
+    background: rgba(255, 138, 138, 0.22);
+    color: #ff8a8a;
+}
+
 .capability-card-badge {
     position: absolute;
     top: 10px; right: 10px;
