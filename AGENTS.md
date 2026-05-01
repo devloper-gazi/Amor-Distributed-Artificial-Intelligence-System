@@ -422,6 +422,35 @@ Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
 every Sentinel prompt template for the banned phrase set on every
 build, mirroring the Quick Code V2 test.
 
+## Sentinel — Phase 15 evolution policy
+
+Phase 15 adds nine self-improvement subsystems (governance,
+preferences, prompt evolution, rule synthesis, agent spawning,
+distillation, curriculum, LoRA, DAG mutation) under
+`document_processor/sentinel/evolution/`.  Three rules:
+
+1. **Nothing promotes without an immutable ledger entry.**  Every
+   `*_promoted` / `*_rolled_back` / `agent_spawned` mutation must
+   call `LedgerStore.append(actor, kind, payload)` with a real
+   actor (chat user id or X-Client-Id, never `"system"` for a
+   user-initiated change).  The ledger is hash-chained — entries
+   are immutable post-write.
+2. **Every mutation payload runs through `ImmutableConstraints.
+   check()` first.**  A violation appends a
+   `constraint_check_failed` entry and returns 400 from the route
+   layer; the production pointer never moves.
+3. **Promotion requires either a Pareto improvement or explicit
+   user consent (or both).**  Auto-promotion happens only when the
+   candidate strictly dominates the parent on all measured axes
+   (precision / recall / latency band).  The Console UI never
+   auto-confirms a promote — the operator clicks the button.
+
+The test surface lives at `tests/sentinel/evolution/` (151 tests)
+and gates every commit that touches Phase 15 code.
+
+See `docs/sentinel-evolution.md` for the full subsystem map,
+configuration reference, and disk layout.
+
 ## Related Documentation
 
 - **`README.md`** - Main project documentation, quickstart, and deployment
@@ -431,4 +460,8 @@ build, mirroring the Quick Code V2 test.
 - **`WEB_UI_GUIDE.md`** - Frontend architecture and customization
 - **`QUICK_START.md`** - Fast setup instructions
 - **`DOCKER_FIX_SUMMARY.md`** - Docker troubleshooting and fixes
+- **`docs/sentinel-architecture.md`** - Sentinel V1 multi-agent pipeline
+- **`docs/sentinel-agent-prompts.md`** - All five Sentinel role prompts
+- **`docs/sentinel-ml-models.md`** - Classical ML pipeline + RAG layout
+- **`docs/sentinel-evolution.md`** - Phase 15 Evolution Engine (9 subsystems + Console)
 - **`example_usage.py`** - Python client examples for pipeline APIs
