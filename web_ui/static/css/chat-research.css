@@ -978,6 +978,17 @@ body.dark-mode .sources-section .source-lang-badge {
     left: 0;
     margin-bottom: var(--space-3);
     width: 320px;
+    /* Prevent horizontal overflow on narrow viewports (mobile,
+       split-screen, etc.) by capping width to the viewport with a
+       small safety inset. */
+    max-width: calc(100vw - var(--space-6, 32px));
+    /* Keep the panel anchored within the viewport regardless of how
+       tall its content is.  The AI Model picker section can stretch
+       to ~1000 px when the corpus is large; without this cap the
+       panel would scroll off the top of the screen. */
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background-color: var(--mono-bg-primary);
     border: 1px solid var(--mono-border-medium);
     border-radius: var(--border-radius);
