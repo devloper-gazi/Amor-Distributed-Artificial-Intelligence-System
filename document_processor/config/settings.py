@@ -366,6 +366,49 @@ class Settings(BaseSettings):
     quick_v2_speculative_decoding_enabled: bool = False  # requires the 32B specialist
     quick_v2_speculative_draft_model: str = "qwen2.5:1.5b"
 
+    # ── Sentinel — multi-agent local security intelligence (V1) ─────────
+    # Master gate.  Per-feature flags toggle individual stages so a
+    # misbehaving piece can be disabled without taking down the whole
+    # module.
+    sentinel_enabled: bool = True
+    sentinel_router_redirect_complex: bool = True
+    sentinel_static_swarm_enabled: bool = True
+    sentinel_ml_pipeline_enabled: bool = True
+    sentinel_rag_enabled: bool = True
+    sentinel_rag_table_cwe: str = "sentinel_cwe"
+    sentinel_rag_table_owasp: str = "sentinel_owasp"
+    sentinel_rag_table_history: str = "sentinel_history"
+    sentinel_rag_table_project: str = "sentinel_project"
+    sentinel_critic_loop_enabled: bool = True
+    sentinel_critic_loop_max_iters: int = 3
+    sentinel_self_play_enabled: bool = False
+    sentinel_auditor_voting_n: int = 3
+    sentinel_auditor_temperature: float = 0.2
+    sentinel_reasoner_temperature: float = 0.5
+    sentinel_redteam_temperature: float = 0.7
+    sentinel_patcher_temperature: float = 0.2
+    sentinel_judge_temperature: float = 0.0
+    sentinel_auditor_model: str = "qwen2.5-coder:7b"
+    sentinel_reasoner_model: str = "qwen2.5:7b"
+    sentinel_redteam_model: str = "qwen2.5-coder:7b"
+    sentinel_patcher_model: str = "qwen2.5-coder:7b"
+    sentinel_judge_model: str = "qwen2.5:7b"
+    sentinel_embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    sentinel_default_scan_profile: str = "standard"
+    sentinel_quick_timeout_s: int = 60
+    sentinel_standard_timeout_s: int = 240
+    sentinel_deep_timeout_s: int = 900
+    sentinel_paranoid_timeout_s: int = 1800
+    sentinel_mongo_findings_collection: str = "sentinel_findings"
+    sentinel_mongo_calibration_collection: str = "sentinel_models_calibration"
+    sentinel_kafka_topic: str = "task.sentinel_finding"
+    sentinel_max_repo_size_mb: int = 200
+    sentinel_max_files_per_scan: int = 5_000
+    # Hardware-flag opt-ins (off until upstream ML deps are pulled).
+    sentinel_use_codebert_classifier: bool = False
+    sentinel_use_xgboost_ranker: bool = False
+    sentinel_use_isolation_forest: bool = False
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
