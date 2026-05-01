@@ -531,6 +531,56 @@ class ConsortiumOrchestrator:
         relay = self._make_inner_event_relay("implementation")
         composed_context = self._compose_implementation_context()
 
+        # v8 — pluggable implementation engine. When the scope picks
+        # "quick_code" we swap in the 5-phase reasoning-first pipeline
+        # (smarter than chat, faster than 9-phase). The QuickCode
+        # bundle's adapter produces a populated ImplementationArtifact
+        # so downstream gate scoring + bundle writing don't change.
+        if self.scope.implementation_engine == "quick_code":
+            try:
+                from ..quick_code import (  # noqa: PLC0415
+                    QuickCodeEngine, QuickCodeRequest,
+                )
+                qc_req = QuickCodeRequest(
+                    prompt=self.scope.goal,
+                    language=self.scope.language or "python",
+                    effort=self.scope.implementation_effort,
+                    code_context=composed_context,
+                    allow_refine=True,
+                    max_refine=2,
+                )
+                qc_engine = QuickCodeEngine(
+                    session_id=self.session_id,
+                    request=qc_req,
+                    on_event=relay,
+                )
+                qc_bundle = await qc_engine.run()
+                self.implementation = qc_bundle.to_implementation_artifact()
+                await self._emit({
+                    "type": "consortium_phase_complete",
+                    "phase": "implementation",
+                    "engine": "quick_code",
+                    "code_chars": len(self.implementation.code or ""),
+                    "tests_chars": len(self.implementation.tests or ""),
+                })
+                gate = self._gate_implementation(self.implementation)
+                self.verifications.append(gate)
+                await self._emit({"type": "consortium_gate", "gate": gate.to_dict()})
+                return self.implementation
+            except Exception as exc:
+                logger.warning("consortium_quick_code_failed: %s", exc)
+                self.implementation = ImplementationArtifact(
+                    language=self.scope.language or "python",
+                    deliverable_markdown=f"*QuickCode implementation failed: {exc}*",
+                )
+                await self._emit({
+                    "type": "consortium_phase_complete",
+                    "phase": "implementation",
+                    "engine": "quick_code",
+                    "implementation": self.implementation.to_dict(),
+                })
+                return self.implementation
+
         try:
             from ..api.code_intelligence_routes import (  # noqa: PLC0415
                 _llm_call_local, get_sandbox, get_static_harness,

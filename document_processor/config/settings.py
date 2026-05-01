@@ -249,6 +249,39 @@ class Settings(BaseSettings):
     code_langfuse_public_key: str = ""
     code_langfuse_secret_key: str = ""
 
+    # ── v10: Code Synthesis Reactor ────────────────────────────────────
+    # Master toggle for the empirical-perf + RAG + tournament + bandit
+    # layer that sits on top of the Multi-ML Mesh. Each individual
+    # feature can also be opted out via `code_reactor_features`.
+    code_reactor_enabled: bool = True
+    # Comma-separated set of enabled reactor features. Subset of:
+    #   benchmarker, symbolic_complexity, tournament, property_tests,
+    #   rag, llm_cache, bandit
+    code_reactor_features: str = (
+        "benchmarker,symbolic_complexity,tournament,property_tests,"
+        "rag,llm_cache,bandit"
+    )
+    # TournamentRunner — number of parallel candidate impls per session.
+    code_tournament_n: int = 3
+    code_tournament_max: int = 5
+    # PropertyTestGenerator — also ask the LLM to suggest invariants.
+    code_property_tests_llm_suggest: bool = True
+    # PerformanceBenchmarker — input scales for the progressive bench.
+    code_bench_scales: str = "10,100,1000,10000"
+    code_bench_timeout_per_scale_s: int = 8
+    # CodeCorpusRAG — top-K retrieval + similarity floor.
+    code_rag_top_k: int = 3
+    code_rag_similarity_floor: float = 0.55
+    # SemanticLLMCache — TTL + cosine threshold + invalidation salt.
+    code_llm_cache_ttl_s: int = 86_400
+    code_llm_cache_cosine_threshold: float = 0.92
+    # Bumping this value invalidates every cached LLM call. Bump
+    # whenever a system prompt changes meaningfully.
+    code_reactor_cache_salt: int = 1
+    # SpecialistBandit — exploration knob + cold-start floor.
+    code_bandit_temperature: float = 1.0
+    code_bandit_cold_start_threshold: int = 5
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

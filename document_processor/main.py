@@ -81,6 +81,14 @@ except ImportError as _cons_exc:  # pragma: no cover
     CONSORTIUM_AVAILABLE = False
     logger.warning("Consortium routes not available: %s", _cons_exc)
 
+# QuickCode Mode — 5-phase reasoning-first lite pipeline
+try:
+    from .api.quick_code_routes import router as quick_code_router
+    QUICK_CODE_AVAILABLE = True
+except ImportError as _qc_exc:  # pragma: no cover
+    QUICK_CODE_AVAILABLE = False
+    logger.warning("QuickCode routes not available: %s", _qc_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -441,6 +449,10 @@ if MODEL_ROUTES_AVAILABLE:
 if CONSORTIUM_AVAILABLE:
     app.include_router(consortium_router)
     logger.info("Consortium routes included")
+
+if QUICK_CODE_AVAILABLE:
+    app.include_router(quick_code_router)
+    logger.info("QuickCode routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

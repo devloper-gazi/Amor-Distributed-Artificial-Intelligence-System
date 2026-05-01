@@ -7,6 +7,10 @@ const USER_ID_STORAGE_KEY = 'chat_user_id'; // reserved for future auth
 // ==================== State Management ====================
 const state = {
     currentMode: 'research', // 'research' | 'thinking' | 'coding'
+    // v8 — sub-effort knob inside the coding tile.
+    //   'quick' → POST /api/quick-code/start  (5-phase lite pipeline)
+    //   'pro'   → POST /api/code/start         (9-phase Code Intelligence)
+    codingEffort: 'quick',
     currentSessionId: null,
     sidebarOpen: false,
     darkMode: false,
@@ -482,6 +486,29 @@ function setupWelcomeCards() {
     if (!container) return;
 
     container.addEventListener('click', (e) => {
+        // v8 — Quick/Pro effort pill on the coding tile. Set state and
+        // visually toggle, but DON'T let the click bubble into the
+        // outer card click handler (we don't want to switch modes
+        // just because the user picked a pipeline tier).
+        const pill = e.target.closest('.effort-pill');
+        if (pill) {
+            e.stopPropagation();
+            const effort = pill.dataset.effort;
+            if (effort === 'quick' || effort === 'pro') {
+                state.codingEffort = effort;
+                const rail = pill.parentElement;
+                rail?.querySelectorAll('.effort-pill').forEach((p) => {
+                    const active = p === pill;
+                    p.classList.toggle('active', active);
+                    p.setAttribute('aria-selected', active ? 'true' : 'false');
+                });
+                // Drive the sliding thumb via a data-attribute on the
+                // rail (CSS reacts via [data-active="pro"]::before).
+                if (rail) rail.dataset.active = effort;
+            }
+            return;
+        }
+
         const card = e.target.closest('.capability-card');
         if (!card) return;
 
@@ -493,6 +520,15 @@ function setupWelcomeCards() {
                 window.consortiumController.openLauncher();
             }
             return;
+        }
+        if (cardMode === 'coding') {
+            // The card's own active pill seeds state.codingEffort even
+            // when the user never clicked the pill (default is the one
+            // marked .active in the HTML).
+            const activePill = card.querySelector('.effort-pill.active');
+            if (activePill?.dataset.effort) {
+                state.codingEffort = activePill.dataset.effort;
+            }
         }
         if (cardMode && cardMode !== state.currentMode) {
             switchMode(cardMode).catch(console.error);

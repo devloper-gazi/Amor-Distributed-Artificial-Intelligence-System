@@ -59,6 +59,12 @@ class StaticAnalysisResult:
     syntax_valid: bool = True
     syntax_error: str | None = None
     ast_summary: dict[str, Any] | None = None
+    # v10 — per-function cyclomatic complexity (from radon `cc -j`).
+    # Surfaces what radon was already computing but the harness was
+    # discarding. Used by the Reactor's TournamentRunner to score
+    # candidate implementations on `static_issues` without needing a
+    # second radon pass.
+    per_function_complexity: dict[str, int] = field(default_factory=dict)
 
     def severity_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {
@@ -82,6 +88,7 @@ class StaticAnalysisResult:
             "syntax_error": self.syntax_error,
             "ast_summary": self.ast_summary,
             "severity_counts": self.severity_counts(),
+            "per_function_complexity": dict(self.per_function_complexity),
         }
 
     def to_feedback_str(self) -> str:
@@ -427,6 +434,19 @@ class StaticAnalysisHarness:
                         )
             if complexities:
                 result.complexity_score = sum(complexities) / len(complexities)
+            # v10 — surface per-function complexity. Radon already
+            # gathered this; we just stop discarding it.
+            per_fn: dict[str, int] = {}
+            for blocks in data.values():
+                if not isinstance(blocks, list):
+                    continue
+                for block in blocks:
+                    name = str(block.get("name") or "")
+                    if not name:
+                        continue
+                    per_fn[name] = int(block.get("complexity", 0) or 0)
+            if per_fn:
+                result.per_function_complexity = per_fn
         except (TimeoutError, FileNotFoundError, json.JSONDecodeError):
             pass
         except Exception as exc:  # pragma: no cover

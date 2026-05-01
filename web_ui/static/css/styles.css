@@ -1022,6 +1022,15 @@ body {
     cursor: pointer;
     transition: all var(--transition);
     text-align: center;
+    /* v8 — flex column lets per-card footers (e.g. the QuickCode
+       Quick/Pro toggle) anchor to the bottom via `margin-top: auto`
+       without disturbing the icon → title → description rhythm. The
+       grid container already stretches each cell, so all cards land
+       at equal height regardless of which has a footer. */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    position: relative;
 }
 
 .capability-card:hover {

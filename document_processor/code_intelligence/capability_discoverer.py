@@ -639,36 +639,56 @@ class CapabilityRegistry:
 
     async def list_all(self) -> list[dict[str, Any]]:
         coll = await self._coll()
-        if coll is None:
-            return list(self._fallback.values())
-        try:
-            return [doc async for doc in coll.find({}, {"_id": 0})]
-        except Exception as exc:
-            logger.debug("capability_list_failed: %s", exc)
-            return list(self._fallback.values())
+        # Always include fallback rows — register() may have stashed
+        # entries there when a transient Mongo write failed. Dedup by
+        # `name` so a row in BOTH places shows up only once.
+        results: dict[str, dict[str, Any]] = {}
+        if coll is not None:
+            try:
+                async for doc in coll.find({}, {"_id": 0}):
+                    name = doc.get("name")
+                    if name:
+                        results[name] = doc
+            except Exception as exc:
+                logger.debug("capability_list_failed: %s", exc)
+        for doc in self._fallback.values():
+            name = doc.get("name")
+            if name and name not in results:
+                results[name] = doc
+        return list(results.values())
 
     async def get(self, name: str) -> dict[str, Any] | None:
         coll = await self._coll()
-        if coll is None:
-            for doc in self._fallback.values():
-                if doc.get("name") == name:
+        if coll is not None:
+            try:
+                doc = await coll.find_one({"name": name}, {"_id": 0})
+                if doc is not None:
                     return doc
-            return None
-        try:
-            return await coll.find_one({"name": name}, {"_id": 0})
-        except Exception:
-            return None
+            except Exception:
+                pass
+        # Fall through to the in-process fallback — register() may have
+        # stored the record there when Mongo was unreachable.
+        for doc in self._fallback.values():
+            if doc.get("name") == name:
+                return doc
+        return None
 
     async def unregister(self, name: str) -> bool:
+        deleted = False
         coll = await self._coll()
-        if coll is None:
-            for k, v in list(self._fallback.items()):
-                if v.get("name") == name:
-                    del self._fallback[k]
-                    return True
-            return False
-        try:
-            res = await coll.delete_one({"name": name})
-            return bool(res.deleted_count)
-        except Exception:
-            return False
+        if coll is not None:
+            try:
+                res = await coll.delete_one({"name": name})
+                if res.deleted_count:
+                    deleted = True
+            except Exception:
+                pass
+        # Always also sweep the fallback dict — register() may have
+        # stored the record there when a transient Mongo write failed.
+        # Without this sweep, an unregister against a fallback-only
+        # entry returns False even though the entry exists.
+        for k, v in list(self._fallback.items()):
+            if v.get("name") == name:
+                del self._fallback[k]
+                deleted = True
+        return deleted
