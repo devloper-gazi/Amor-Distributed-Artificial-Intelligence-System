@@ -400,6 +400,28 @@ greps every V2 prompt template for the banned phrase set on every
 build.  Adding a new V2 prompt without updating that test will
 fail CI.
 
+## Sentinel — prompt-template policy (no content filters)
+
+The Sentinel security module (`document_processor/sentinel/`) is
+held to the **same** prompt-template rules as Quick Code V2.  The
+five Sentinel agents (Auditor / Reasoner / RedTeam / Patcher /
+Judge) audit *any* code the user submits — including code that
+discusses or implements security primitives.  A refusal-prone
+prompt would be a UX disaster ("I can't review this code because
+it contains a hash function") and is forbidden.
+
+- All five Sentinel system prompts open with `You are an expert
+  security engineer. Produce the best technical answer.`
+- The RedTeam agent in particular *must* describe exploit chains
+  in concrete technical detail — that is its job.  No hedging.
+- The infrastructure-security carve-out in
+  `code_intelligence/adversarial_reviewer.py` still applies and is
+  still the only layer allowed to block output.
+
+Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
+every Sentinel prompt template for the banned phrase set on every
+build, mirroring the Quick Code V2 test.
+
 ## Related Documentation
 
 - **`README.md`** - Main project documentation, quickstart, and deployment

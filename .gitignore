@@ -44,6 +44,10 @@ logs/
 
 # Data
 data/
+# Sentinel ships small bundled corpora (CWE/OWASP) under
+# document_processor/sentinel/data/ — those are source, not data.
+!document_processor/sentinel/data/
+!document_processor/sentinel/data/**
 *.pdf
 *.docx
 *.xlsx
