@@ -1,14 +1,28 @@
-import { type Component, For } from "solid-js";
+import { type Component, For, createSignal } from "solid-js";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Divider,
+  IconButton,
+  Input,
+  Kbd,
+  ProgressBar,
+  Spinner,
+  StatusPill,
+  Textarea,
+  Tooltip,
+  type Status,
+} from "../components/ui";
 
 /**
  * Component showcase — Storybook-lite preview surface.  Used to
  * verify atom rendering + theme tokens + per-mode accent shifts
  * without spinning up the real chat shell.  Lives at /showcase.
  *
- * In PR-2 this route gains real atoms (Button, Input, Badge,
- * StatusPill, Spinner, ProgressBar, Kbd, Avatar, Divider, Tooltip).
- * For now it renders the design-token palette + the 6 mode accents
- * so we can eyeball the OKLCH values in both light and dark.
+ * Each section corresponds to one atom in the design doc §6 inventory.
+ * When PR-3+ adds molecules and organisms, those get their own
+ * sections.
  */
 const MODES: ReadonlyArray<{
   key: string;
@@ -24,14 +38,14 @@ const MODES: ReadonlyArray<{
   { key: "system", label: "System", glyph: "activity", subtitle: "diagnostics, memory" },
 ];
 
-const STATUS_PILLS: ReadonlyArray<{ key: string; label: string; varName: string }> = [
-  { key: "healthy", label: "Healthy", varName: "--color-status-healthy" },
-  { key: "warming", label: "Warming", varName: "--color-status-warming" },
-  { key: "warning", label: "Warning", varName: "--color-status-warning" },
-  { key: "failed", label: "Failed", varName: "--color-status-failed" },
-];
+const STATUSES: ReadonlyArray<Status> = ["healthy", "warming", "warning", "failed"];
 
 export const Showcase: Component = () => {
+  const [progress, setProgress] = createSignal(38);
+  const [textValue, setTextValue] = createSignal(
+    "Type something to see the autoresize behaviour…",
+  );
+
   const toggleTheme = () => {
     const html = document.documentElement;
     const cur = html.getAttribute("data-theme") ?? "system";
@@ -48,32 +62,25 @@ export const Showcase: Component = () => {
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">Component Showcase</h1>
           <p class="mt-1 text-sm text-text-secondary">
-            PR-1 scaffold &middot; Tailwind v4 @theme tokens
+            12 atoms &middot; Tailwind v4 @theme &middot; per-mode accents
           </p>
         </div>
         <div class="flex items-center gap-2 text-sm">
-          <a href="/" class="text-text-secondary hover:text-text-primary">
+          <a href="/v2" class="text-text-secondary hover:text-text-primary">
             &larr; Back
           </a>
-          <button
-            type="button"
-            onClick={toggleTheme}
-            class="rounded-md border border-border-default bg-bg-elevated px-3 py-1.5 hover:bg-bg-hover"
-          >
+          <Button variant="secondary" size="sm" onClick={toggleTheme}>
             Toggle theme
-          </button>
+          </Button>
         </div>
       </header>
 
-      <div class="mx-auto max-w-5xl space-y-10">
+      <div class="mx-auto max-w-5xl space-y-12">
         {/* Mode accents */}
-        <section>
-          <h2 class="mb-3 text-lg font-medium">Mode accents</h2>
-          <p class="mb-4 text-sm text-text-secondary">
-            One CSS variable shifts per mode.  Chrome stays monochrome;
-            only the focus ring, timeline pill, and header rule pull
-            from <code>--mode-accent</code>.
-          </p>
+        <Section
+          title="Mode accents"
+          subtitle="One CSS variable shifts per mode.  Chrome stays monochrome; only the focus ring, timeline pill, and header rule pull from --mode-accent."
+        >
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <For each={MODES}>
               {(mode) => (
@@ -90,72 +97,226 @@ export const Showcase: Component = () => {
                     <span class="font-medium">{mode.label}</span>
                   </div>
                   <p class="mt-1 text-xs text-text-tertiary">{mode.subtitle}</p>
-                  <p class="mt-2 text-xs font-mono text-text-secondary">
+                  <p class="mt-2 font-mono text-xs text-text-secondary">
                     icon: {mode.glyph}
                   </p>
                 </div>
               )}
             </For>
           </div>
-        </section>
+        </Section>
 
-        {/* Status pills */}
-        <section>
-          <h2 class="mb-3 text-lg font-medium">Status pills</h2>
-          <div class="flex flex-wrap gap-3">
-            <For each={STATUS_PILLS}>
-              {(pill) => (
-                <div class="flex items-center gap-2 rounded-full border border-border-subtle bg-bg-elevated px-3 py-1 text-sm">
-                  <span
-                    aria-hidden="true"
-                    class="h-2 w-2 rounded-full"
-                    style={{ background: `var(${pill.varName})` }}
-                  />
-                  <span>{pill.label}</span>
-                </div>
-              )}
+        {/* Buttons */}
+        <Section title="Button" subtitle="primary / secondary / ghost / danger × sm / md">
+          <div class="space-y-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <Button>Primary</Button>
+              <Button variant="secondary">Secondary</Button>
+              <Button variant="ghost">Ghost</Button>
+              <Button variant="danger">Danger</Button>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <Button size="sm">Small primary</Button>
+              <Button size="sm" variant="secondary">
+                Small secondary
+              </Button>
+              <Button loading>Loading</Button>
+              <Button disabled>Disabled</Button>
+            </div>
+          </div>
+        </Section>
+
+        {/* IconButton */}
+        <Section title="IconButton" subtitle="aria-label required at type level">
+          <div class="flex items-center gap-2">
+            <IconButton aria-label="Send" size="sm">
+              <span aria-hidden="true">→</span>
+            </IconButton>
+            <IconButton aria-label="Open menu">
+              <span aria-hidden="true">≡</span>
+            </IconButton>
+            <IconButton aria-label="Close" disabled>
+              <span aria-hidden="true">×</span>
+            </IconButton>
+          </div>
+        </Section>
+
+        {/* Input */}
+        <Section title="Input" subtitle="prefix / suffix slots + invalid state">
+          <div class="grid max-w-md grid-cols-1 gap-3">
+            <Input placeholder="Plain input" />
+            <Input
+              placeholder="With prefix"
+              prefix={<span aria-hidden="true">@</span>}
+            />
+            <Input
+              placeholder="Invalid"
+              invalid
+              suffix={<span aria-hidden="true">!</span>}
+            />
+            <Input placeholder="Disabled" disabled value="readonly text" />
+          </div>
+        </Section>
+
+        {/* Textarea */}
+        <Section
+          title="Textarea"
+          subtitle="autoresize — uses field-sizing where supported, JS fallback elsewhere"
+        >
+          <div class="max-w-md">
+            <Textarea
+              value={textValue()}
+              onInput={(e) => setTextValue(e.currentTarget.value)}
+              minRows={2}
+              maxRows={8}
+              placeholder="Type to grow…"
+            />
+            <p class="mt-2 text-xs text-text-tertiary">
+              {textValue().length} chars
+            </p>
+          </div>
+        </Section>
+
+        {/* Badge */}
+        <Section title="Badge" subtitle="neutral and accent variants">
+          <div class="flex flex-wrap items-center gap-3">
+            <Badge>Neutral</Badge>
+            <Badge size="md">Neutral md</Badge>
+            <Badge variant="accent">Accent</Badge>
+            <Badge variant="accent" size="md">
+              99+
+            </Badge>
+          </div>
+        </Section>
+
+        {/* StatusPill */}
+        <Section title="StatusPill" subtitle="4 states; warming pulses">
+          <div class="flex flex-wrap items-center gap-3">
+            <For each={STATUSES}>
+              {(s) => <StatusPill status={s} />}
             </For>
           </div>
-        </section>
-
-        {/* Spacing scale */}
-        <section>
-          <h2 class="mb-3 text-lg font-medium">Spacing scale (8-pt)</h2>
-          <div class="space-y-2">
-            <For each={[1, 2, 3, 4, 5, 6, 7, 8, 9]}>
-              {(n) => (
-                <div class="flex items-center gap-3 text-sm">
-                  <span class="w-12 font-mono text-xs text-text-tertiary">
-                    space-{n}
-                  </span>
-                  <span
-                    class="block bg-text-primary"
-                    style={{
-                      height: `var(--spacing-${n})`,
-                      width: `var(--spacing-${n})`,
-                    }}
-                  />
-                </div>
-              )}
-            </For>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <StatusPill status="healthy" size="md" label="API: 8000" />
+            <StatusPill status="warming" size="md" label="Sandbox warming" />
+            <StatusPill status="failed" size="md" label="Backend down" />
           </div>
-        </section>
+        </Section>
 
-        {/* Type scale */}
-        <section>
-          <h2 class="mb-3 text-lg font-medium">Typography</h2>
-          <div class="space-y-2">
-            <p class="text-xs">xs &middot; The quick brown fox</p>
-            <p class="text-sm">sm &middot; The quick brown fox</p>
-            <p class="text-base">base &middot; The quick brown fox</p>
-            <p class="text-lg">lg &middot; The quick brown fox</p>
-            <p class="text-xl">xl &middot; The quick brown fox</p>
-            <p class="text-2xl font-semibold">2xl &middot; The quick brown fox</p>
-            <p class="text-3xl font-semibold">3xl &middot; The quick brown fox</p>
-            <p class="text-4xl font-bold">4xl &middot; The quick brown fox</p>
+        {/* Spinner */}
+        <Section
+          title="Spinner"
+          subtitle="motion-safe spins; motion-reduce shows static dot"
+        >
+          <div class="flex items-center gap-6 text-text-primary">
+            <Spinner size={16} />
+            <Spinner size={20} />
+            <Spinner size={24} />
+            <span class="text-sm text-text-tertiary">Loading…</span>
           </div>
-        </section>
+        </Section>
+
+        {/* ProgressBar */}
+        <Section title="ProgressBar" subtitle="determinate + indeterminate">
+          <div class="space-y-4">
+            <ProgressBar value={progress()} label={`${progress()}% complete`} />
+            <div class="flex items-center gap-3">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setProgress((p) => Math.max(0, p - 10))}
+              >
+                -10
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setProgress((p) => Math.min(100, p + 10))}
+              >
+                +10
+              </Button>
+              <span class="text-sm text-text-tertiary">value: {progress()}</span>
+            </div>
+            <ProgressBar value={null} label="indeterminate" />
+          </div>
+        </Section>
+
+        {/* Kbd */}
+        <Section title="Kbd" subtitle="auto-substitutes Mod for ⌘ / Ctrl per platform">
+          <div class="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+            <span class="inline-flex items-center gap-1.5">
+              Open palette <Kbd>Mod+K</Kbd>
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              Send <Kbd>Mod+Enter</Kbd>
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              Close <Kbd>Esc</Kbd>
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              Cycle <Kbd>Shift+Tab</Kbd>
+            </span>
+          </div>
+        </Section>
+
+        {/* Avatar */}
+        <Section title="Avatar" subtitle="initials fallback + 3 variants × 2 sizes">
+          <div class="flex items-center gap-4">
+            <Avatar variant="user" initials="ad" />
+            <Avatar variant="system" initials="sy" />
+            <Avatar variant="model" initials="qw" />
+            <Avatar variant="user" initials="ad" size={24} />
+            <Avatar variant="system" initials="sy" size={24} />
+          </div>
+        </Section>
+
+        {/* Tooltip */}
+        <Section title="Tooltip" subtitle="hover or keyboard focus to open; 200 ms delay">
+          <div class="flex items-center gap-4">
+            <Tooltip label="Top placement (default)">
+              <Button variant="secondary" size="sm">
+                Hover top
+              </Button>
+            </Tooltip>
+            <Tooltip label="Bottom placement" placement="bottom">
+              <Button variant="secondary" size="sm">
+                Hover bottom
+              </Button>
+            </Tooltip>
+            <Tooltip label="Right placement" placement="right">
+              <IconButton aria-label="Right tooltip">
+                <span aria-hidden="true">i</span>
+              </IconButton>
+            </Tooltip>
+          </div>
+        </Section>
+
+        {/* Divider */}
+        <Section title="Divider" subtitle="horizontal + vertical">
+          <div class="space-y-3">
+            <Divider />
+            <div class="flex h-12 items-center gap-3">
+              <span class="text-sm">Left</span>
+              <Divider orientation="vertical" />
+              <span class="text-sm">Right</span>
+            </div>
+          </div>
+        </Section>
       </div>
     </main>
   );
 };
+
+const Section: Component<{
+  title: string;
+  subtitle?: string;
+  children: import("solid-js").JSX.Element;
+}> = (props) => (
+  <section>
+    <h2 class="mb-1 text-lg font-medium">{props.title}</h2>
+    {props.subtitle ? (
+      <p class="mb-4 text-sm text-text-secondary">{props.subtitle}</p>
+    ) : null}
+    {props.children}
+  </section>
+);
