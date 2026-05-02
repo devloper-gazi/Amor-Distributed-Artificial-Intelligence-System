@@ -22,7 +22,7 @@
  *   onCleanup(() => stream.close());
  */
 
-import { onAuthChange, getAccessToken } from "./api";
+import { onAuthChange, getAccessToken, setAccessToken } from "./api";
 
 export type StreamStatus =
   | "connecting"
@@ -68,6 +68,8 @@ export function openEventStream(opts: OpenStreamOptions): OpenedStream {
   let closed = false;
   let lastStatus: StreamStatus = "connecting";
   let unsubAuth: (() => void) | null = null;
+  let lastEventAt = Date.now();
+  let refreshing = false;
 
   const recentIds = new Map<string, number>();
 
@@ -88,12 +90,54 @@ export function openEventStream(opts: OpenStreamOptions): OpenedStream {
     }
   };
 
+  /**
+   * EventSource doesn't expose HTTP status codes — we only know
+   * "the connection failed".  When the failure is actually a 401
+   * (token expired), retrying with the same expired token loops
+   * forever.  After the second consecutive error we proactively
+   * call ``/api/auth/refresh``: a 200 rotates the in-memory token
+   * (next reconnect picks it up via ``getAccessToken()``); a 401
+   * fires ``setAccessToken(null)`` which cascade-clears the auth
+   * store + bounces the user to /login.
+   */
+  const tryProactiveRefresh = async (): Promise<void> => {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      const resp = await fetch("/api/auth/refresh", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!resp.ok) {
+        setAccessToken(null); // cascade-logout
+        return;
+      }
+      const json = (await resp.json()) as { access_token?: string };
+      if (json.access_token) {
+        setAccessToken(json.access_token); // triggers onAuthChange → reconnect
+      } else {
+        setAccessToken(null);
+      }
+    } catch {
+      // Network error → leave token alone, normal backoff retries
+    } finally {
+      refreshing = false;
+    }
+  };
+
   const scheduleReconnect = () => {
     if (closed) return;
     cleanupES();
     setStatus(retries === 0 ? "reconnecting" : "offline");
     const delay = backoff[Math.min(retries, backoff.length - 1)] ?? 15000;
     retries += 1;
+    // Two consecutive failures with no events in the last 5s → likely
+    // 401 (auth expired), not a transient blip.  Refresh asynchronously
+    // so the next reconnect uses a fresh token.
+    if (retries >= 2 && Date.now() - lastEventAt > 5000) {
+      void tryProactiveRefresh();
+    }
     reconnectTimer = setTimeout(connect, delay);
   };
 
@@ -124,6 +168,7 @@ export function openEventStream(opts: OpenStreamOptions): OpenedStream {
     }
     es.onopen = () => {
       retries = 0;
+      lastEventAt = Date.now();
       setStatus("open");
     };
     es.onerror = () => {
@@ -132,6 +177,7 @@ export function openEventStream(opts: OpenStreamOptions): OpenedStream {
       scheduleReconnect();
     };
     es.onmessage = (evt) => {
+      lastEventAt = Date.now();
       try {
         const data = JSON.parse(evt.data) as SseEvent;
         // Dedup by event_id.
