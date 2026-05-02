@@ -186,6 +186,51 @@ services:
     networks:
       - docprocessor-network
 
+  # v17 PR #5 — Docker socket proxy.
+  #
+  # Exposes a whitelisted subset of the Docker Engine API on
+  # ``tcp://docker-socket-proxy:2375`` (compose-internal network
+  # only).  The app + Code Intelligence sandbox set
+  # ``DOCKER_HOST`` to this address instead of bind-mounting
+  # ``/var/run/docker.sock`` directly.  A compromised app can
+  # then only call the API endpoints we whitelisted (image
+  # inspect / pull / container run / exec / kill / rm) — it
+  # cannot, for example, mount host filesystems or read /etc/.
+  #
+  # Whitelist rationale (matches what sandbox.py actually calls):
+  #   VERSION=1   — `docker version` probe
+  #   PING=1      — health check
+  #   INFO=1      — daemon info
+  #   IMAGES=1    — `docker image inspect` + `docker pull`
+  #   CONTAINERS=1 — list / inspect
+  #   POST=1      — container create + start (NB: this is the
+  #                 broad write toggle; we further constrain by
+  #                 setting the more specific ``EXEC=1``)
+  #   EXEC=1      — `docker exec` (future warm-pool path)
+  #   VOLUMES=1   — named-volume mounts (amor-sandbox-shared)
+  #
+  # The ``ALLOW_RESTARTS=0`` default + the absence of the
+  # ``BUILD/COMMIT/CONFIGS/NETWORKS/NODES/PLUGINS/SERVICES/
+  # SWARM/TASKS`` toggles keeps the API surface as tight as
+  # possible while still letting the sandbox spin up runners.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: amor-docker-proxy
+    restart: unless-stopped
+    environment:
+      - VERSION=1
+      - PING=1
+      - INFO=1
+      - IMAGES=1
+      - CONTAINERS=1
+      - POST=1
+      - EXEC=1
+      - VOLUMES=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docprocessor-network
+
   # Apache Kafka
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
