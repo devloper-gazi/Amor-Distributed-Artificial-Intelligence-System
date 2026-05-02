@@ -109,6 +109,12 @@ class _BaseAgent:
     max_tokens: int = 1500
     temperature: float = 0.2
     llm_call: LLMCall | None = None
+    # Phase 16 Commit F — optional Letta-style 3-tier memory hierarchy.
+    # When ``None``, agents run without persistent memory (backwards-
+    # compat with Phase 15 / V1 behaviour).  Inject a ``MemoryStore``
+    # to enable core / recall / archival reads + writes from the
+    # agent's prompt scaffolding without changing every call site.
+    memory: Any | None = None
 
     async def _call(self, prompt: str) -> str:
         llm = self.llm_call or await self._default_llm()
@@ -124,6 +130,25 @@ class _BaseAgent:
         # Lazy import to avoid circulars at module load.
         from ..api.code_intelligence_routes import _llm_call_local  # noqa: PLC0415
         return _llm_call_local
+
+    async def _default_memory(self):
+        """Lazy memory fallback — only constructed when an agent
+        method actually reads or writes memory.  Returns a
+        process-local ``MemoryStore`` rooted in a temp directory so
+        an out-of-the-box agent has somewhere to write without a
+        configured root.  Cached on the instance after first use."""
+        if self.memory is not None:
+            return self.memory
+        try:
+            from local_ai.memory import make_no_op_store  # noqa: PLC0415
+            self.memory = make_no_op_store()
+        except Exception as exc:  # pragma: no cover
+            logger.debug(
+                "sentinel agent %s memory fallback failed: %s",
+                self.role, exc,
+            )
+            self.memory = None
+        return self.memory
 
 
 # ─────────────────────────────────────────────────────────────────────

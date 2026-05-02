@@ -495,6 +495,22 @@ class Settings(BaseSettings):
     # external MCP client surface is gated.
     enable_mcp_server: bool = False
 
+    # ── Phase 16 Commit F — Letta-style 3-tier memory ──────────────
+    # Filesystem root for ``MemoryStore`` SQLite databases.  Each
+    # session / scope gets its own subtree.
+    memory_root: str = "data/amor_memory"
+    # Recall (ring buffer) — last N turns kept in fast scratchpad.
+    memory_recall_window: int = 50
+    # Core (single-row blob) — always-in-context byte cap.
+    memory_core_max_bytes: int = 2048
+    # Reserved name for the archival LanceDB table once the
+    # SQLite-backed archival is upgraded to vector-indexed storage.
+    memory_archival_table: str = "amor_archival"
+    # Append a ledger entry for every memory write so the immutable
+    # trail covers conversation history too.  Off makes memory
+    # writes silent (no Phase 15 ledger noise).
+    memory_ledger_audit_enabled: bool = True
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
