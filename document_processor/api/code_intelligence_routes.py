@@ -425,6 +425,38 @@ async def start_code_session(
         else "auto:per-role"
     )
 
+    # v17 PR #3 — session-stickiness cookie.  nginx upstream uses
+    # ``hash $cookie_amor_session consistent;`` to bind subsequent
+    # requests for THIS session_id to the same replica that
+    # received the start.  Avoids the round-trip Redis read on
+    # every status/events poll.  When the pinned replica dies, the
+    # client's reconnect lands on another replica and the
+    # ``_publish`` cross-replica Redis fallback (Phase 17 Commit
+    # S) ensures continuity.  ``HttpOnly`` blocks JS reads;
+    # ``SameSite=Lax`` is fine for first-party API.
+    response.set_cookie(
+        key="amor_session",
+        value=session_id,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        max_age=settings.code_session_ttl_seconds,
+    )
+
+    # v17 PR #3 — surface which replica served the request so
+    # multi-replica failover smoke tests can verify the sticky
+    # cookie is actually pinning correctly.  ``HOSTNAME`` is set
+    # by Docker for every container; falls back to ``socket``
+    # gethostname for non-container deploys.
+    try:
+        import os as _os  # noqa: PLC0415
+        import socket as _socket  # noqa: PLC0415
+        response.headers["X-AMOR-Replica"] = (
+            _os.environ.get("HOSTNAME") or _socket.gethostname() or "unknown"
+        )
+    except Exception:  # pragma: no cover
+        response.headers["X-AMOR-Replica"] = "unknown"
+
     session: Dict[str, Any] = {
         "session_id": session_id,
         "user_id": str(user.id),
