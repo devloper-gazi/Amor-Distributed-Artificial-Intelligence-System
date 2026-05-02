@@ -110,13 +110,13 @@ def _get(path: str, *, timeout: float = 30.0) -> httpx.Response:
 def _wait_for_session_complete(
     sid: str, *, timeout_s: float = 600.0, poll_every: float = 4.0,
 ) -> dict[str, Any]:
-    """Poll /api/code/sessions/{sid} until the session reaches a
+    """Poll /api/code/{sid} until the session reaches a
     terminal status (completed / failed / cancelled).  Returns the
     final session snapshot."""
     started = time.time()
     last: dict[str, Any] = {}
     while time.time() - started < timeout_s:
-        r = _get(f"/api/code/sessions/{sid}")
+        r = _get(f"/api/code/{sid}")
         if r.status_code != 200:
             time.sleep(poll_every)
             continue
