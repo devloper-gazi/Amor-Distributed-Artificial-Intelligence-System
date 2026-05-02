@@ -608,28 +608,65 @@ async def _run_session(session_id: str) -> None:
                 models_used[role] = tag
             return models_used
 
-        # Otherwise auto-select per role and pull on first miss.
-        for role in ("planner", "coder", "tester", "debugger", "critic"):
-            spec = await registry.ensure_model(
-                role=role,
-                effort=session["effort"],
-                on_download_start=(
-                    lambda s: on_event({
+        # Phase 16.5 — auto-select WITH session-level spread so a
+        # 2-model rig actually splits planner/critic/debugger onto a
+        # reasoning model and coder/tester onto the code model
+        # (rather than dumping all 5 roles on whichever single model
+        # has the highest base score).  ``select_models_for_session``
+        # returns per-role specs that are guaranteed installed when
+        # at least one viable installed candidate exists for each
+        # role, with a 12-point degradation cap so a role never
+        # drops to a meaningfully worse model just for visual
+        # diversity.
+        roles = ["planner", "coder", "tester", "debugger", "critic"]
+        session_models = registry.select_models_for_session(
+            roles, effort=session["effort"], spread=True,
+        )
+        # Pull any spec that isn't installed yet — happens at most
+        # ``len(distinct_specs)`` times since session_models often
+        # repeats specs across roles on a small rig.
+        already_pulled: set[str] = set()
+        for role in roles:
+            spec = session_models[role]
+            if spec.ollama_tag in already_pulled:
+                models_used[role] = spec.ollama_tag
+                continue
+            if not registry._tag_installed(spec.ollama_tag):  # noqa: SLF001
+                if not settings.code_auto_pull_models:
+                    # No-pull policy: keep the best installed match
+                    # by re-running select_model with installed_only.
+                    fallback, _ = registry.select_model(
+                        role, effort=session["effort"],
+                        installed_only=True,
+                    )
+                    spec = fallback
+                else:
+                    await on_event({
                         "type": "model_download_start",
-                        "model": s.ollama_tag,
-                        "size_gb": s.vram_gb,
-                        "display_name": s.display_name,
+                        "model": spec.ollama_tag,
+                        "size_gb": spec.vram_gb,
+                        "display_name": spec.display_name,
                     })
-                    if settings.code_auto_pull_models else None
-                ),
-                on_progress=_make_pull_progress_for_spec(on_event),
-                on_download_complete=(
-                    lambda s: on_event({
-                        "type": "model_download_complete",
-                        "model": s.ollama_tag,
+                    ok = await registry.pull_model(
+                        spec.ollama_tag,
+                        on_progress=_make_pull_progress(
+                            on_event, spec.ollama_tag,
+                        ),
+                    )
+                    await on_event({
+                        "type": "model_download_complete" if ok
+                                else "model_download_failed",
+                        "model": spec.ollama_tag,
                     })
-                ),
-            )
+                    if not ok:
+                        # Pull failed — degrade to the best installed
+                        # candidate so the run can still proceed.
+                        fallback, _ = registry.select_model(
+                            role, effort=session["effort"],
+                            installed_only=True,
+                        )
+                        spec = fallback
+            already_pulled.add(spec.ollama_tag)
             models_used[role] = spec.ollama_tag
         return models_used
 
