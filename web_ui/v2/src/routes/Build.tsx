@@ -2,7 +2,6 @@ import {
   type Component,
   createSignal,
   createMemo,
-  onCleanup,
   Show,
   For,
 } from "solid-js";
@@ -20,6 +19,7 @@ import {
   openEventStream,
   type OpenedStream,
   type StreamStatus,
+  type SseEvent,
 } from "../lib/sse";
 import type { ChatTurn } from "../lib/types";
 
@@ -47,229 +47,226 @@ const PHASES: ReadonlyArray<{
 type PhaseStatus = "pending" | "running" | "done" | "failed" | "skipped";
 
 let _idCounter = 0;
-const newId = () => `b-${Date.now()}-${++_idCounter}`;
+const newId = (): string => `b-${Date.now()}-${++_idCounter}`;
+
+/* ─── Module-scoped state ──────────────────────────────────────────
+ * Signals created at module level so the user can navigate away
+ * from /build (e.g. to /system) and come back without wiping the
+ * conversation or killing an in-flight pipeline.  ``resetBuild``
+ * clears state on logout. */
+
+const [turns, setTurns] = createSignal<ChatTurn[]>([]);
+const [busy, setBusy] = createSignal(false);
+const [status, setStatus] = createSignal<StreamStatus>("closed");
+const [sessionId, setSessionId] = createSignal<string | null>(null);
+const [phases, setPhases] = createSignal<Record<string, PhaseStatus>>({});
+
+let stream: OpenedStream | null = null;
+let assistantTurnId: string | null = null;
+
+const cleanupStream = (): void => {
+  if (stream) {
+    stream.close();
+    stream = null;
+  }
+};
+
+export function resetBuild(): void {
+  cleanupStream();
+  setTurns([]);
+  setBusy(false);
+  setStatus("closed");
+  setSessionId(null);
+  setPhases({});
+  assistantTurnId = null;
+}
+
+const setPhase = (key: string, st: PhaseStatus): void => {
+  setPhases((prev) => ({ ...prev, [key]: st }));
+};
+
+const patchAssistant = (
+  content: string,
+  tag?: string,
+  streaming = false,
+): void => {
+  if (!assistantTurnId) return;
+  const id = assistantTurnId;
+  setTurns((prev) =>
+    prev.map((t) => (t.id === id ? { ...t, content, tag, streaming } : t)),
+  );
+};
+
+const currentBuffer = (): string => {
+  if (!assistantTurnId) return "";
+  const t = turns().find((x) => x.id === assistantTurnId);
+  return t?.content ?? "";
+};
+
+const appendBlock = (block: string): void => {
+  const cur = currentBuffer();
+  const next =
+    cur === "_(starting…)_" || cur === "" ? block : cur + "\n" + block;
+  patchAssistant(next, undefined, true);
+};
+
+const handleEvent = (ev: SseEvent): void => {
+  const type = String(ev.type ?? "");
+  const phase = String(ev.phase ?? "");
+  switch (type) {
+    case "phase_start":
+      if (phase) setPhase(phase, "running");
+      patchAssistant(currentBuffer(), `phase: ${phase}`, true);
+      break;
+    case "phase_complete":
+      if (phase) setPhase(phase, "done");
+      break;
+    case "phase_failed":
+      if (phase) setPhase(phase, "failed");
+      patchAssistant(
+        currentBuffer() +
+          `\n\n**Phase failed:** ${phase} — ${String(ev.error ?? "")}`,
+        "failed",
+      );
+      break;
+    case "code_ready": {
+      const code = String(ev.code ?? "");
+      const lang = String(ev.language ?? "");
+      appendBlock(`### Code (${lang})\n\n\`\`\`${lang}\n${code}\n\`\`\`\n`);
+      break;
+    }
+    case "test_ready": {
+      const code = String(ev.code ?? "");
+      appendBlock(`### Tests\n\n\`\`\`\n${code}\n\`\`\`\n`);
+      break;
+    }
+    case "execution_result": {
+      const result = (ev.result ?? {}) as Record<string, unknown>;
+      const stdout = String(result.stdout ?? "").trim();
+      const stderr = String(result.stderr ?? "").trim();
+      const exit = result.exit_code;
+      const skipped = Boolean(result.skipped);
+      const block = [
+        `### Execution${skipped ? " (skipped)" : ""}`,
+        exit !== undefined ? `exit_code: ${exit}` : "",
+        stdout
+          ? `\n**stdout:**\n\n\`\`\`\n${stdout.slice(0, 2000)}\n\`\`\``
+          : "",
+        stderr
+          ? `\n**stderr:**\n\n\`\`\`\n${stderr.slice(0, 1000)}\n\`\`\``
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      appendBlock(block + "\n");
+      break;
+    }
+    case "review_ready": {
+      const review = (ev.review ?? ev.detail ?? {}) as Record<string, unknown>;
+      const verdict = String(review.verdict ?? review.score ?? "—");
+      const summary = String(review.final_comment ?? review.summary ?? "");
+      appendBlock(`### Review\n\n**Verdict:** ${verdict}\n\n${summary}\n`);
+      break;
+    }
+    case "deliverable_ready": {
+      const md = String(ev.markdown ?? "");
+      if (md) appendBlock(`### Deliverable\n\n${md}\n`);
+      break;
+    }
+    case "model_download_progress": {
+      const pct = Number(ev.pct ?? 0);
+      const model = String(ev.model ?? "");
+      patchAssistant(currentBuffer(), `pulling ${model} ${pct}%`, true);
+      break;
+    }
+    case "done":
+      for (const p of PHASES) {
+        if (!phases()[p.key]) setPhase(p.key, "done");
+      }
+      patchAssistant(currentBuffer() || "_(done)_", "done");
+      cleanupStream();
+      setBusy(false);
+      break;
+    case "error":
+      patchAssistant(
+        currentBuffer() +
+          `\n\n**Error:** ${String(ev.message ?? "unknown")}`,
+        "failed",
+      );
+      cleanupStream();
+      setBusy(false);
+      break;
+    case "cancelled":
+      patchAssistant(currentBuffer() + "\n\n_(cancelled)_", "cancelled");
+      cleanupStream();
+      setBusy(false);
+      break;
+  }
+};
+
+const start = async (prompt: string): Promise<void> => {
+  cleanupStream();
+  setBusy(true);
+  setStatus("connecting");
+  setPhases({});
+  setTurns((prev) => [
+    ...prev,
+    { id: newId(), role: "user", content: prompt, ts: Date.now() },
+  ]);
+  assistantTurnId = newId();
+  setTurns((prev) => [
+    ...prev,
+    {
+      id: assistantTurnId!,
+      role: "assistant",
+      content: "_(starting…)_",
+      streaming: true,
+      tag: "phase: triage",
+      ts: Date.now(),
+    },
+  ]);
+
+  try {
+    const resp = await api.post<StartResp>("/api/code/start", {
+      prompt,
+      effort: "medium",
+    });
+    setSessionId(resp.session_id);
+    stream = openEventStream({
+      url: `/api/code/${resp.session_id}/events`,
+      onStatusChange: (s) => setStatus(s),
+      onEvent: handleEvent,
+    });
+  } catch (err: unknown) {
+    const detail =
+      (err as { body?: { detail?: string } })?.body?.detail ??
+      (err instanceof Error ? err.message : "Failed to start build");
+    setBusy(false);
+    setStatus("closed");
+    patchAssistant(`**Error:** ${String(detail)}`, "failed");
+  }
+};
+
+const cancel = async (): Promise<void> => {
+  const sid = sessionId();
+  if (sid) {
+    try {
+      await api.post(`/api/code/${sid}/cancel`);
+    } catch {
+      // ignore
+    }
+  }
+  cleanupStream();
+  patchAssistant("_(cancelled)_", "cancelled");
+  setBusy(false);
+};
 
 /**
- * Build mode — Code Intelligence pipeline.  9 phases visualised in
- * a left rail, conversation in the centre.  Each event from the
- * backend SSE stream updates phase state + appends to the
- * assistant turn when it carries content.
+ * Build mode component — pure render shell.  All state lives at the
+ * module level above so it survives route remounts (Build → System
+ * → Build doesn't wipe an in-flight pipeline).
  */
 export const Build: Component = () => {
-  const [turns, setTurns] = createSignal<ChatTurn[]>([]);
-  const [busy, setBusy] = createSignal(false);
-  const [status, setStatus] = createSignal<StreamStatus>("closed");
-  const [sessionId, setSessionId] = createSignal<string | null>(null);
-  const [phases, setPhases] = createSignal<Record<string, PhaseStatus>>({});
-
-  let stream: OpenedStream | null = null;
-  let assistantTurnId: string | null = null;
-
-  const cleanup = () => {
-    if (stream) {
-      stream.close();
-      stream = null;
-    }
-  };
-  onCleanup(cleanup);
-
-  const setPhase = (key: string, st: PhaseStatus) => {
-    setPhases((prev) => ({ ...prev, [key]: st }));
-  };
-
-  const start = async (prompt: string) => {
-    cleanup();
-    setBusy(true);
-    setStatus("connecting");
-    setPhases({});
-    setTurns((prev) => [
-      ...prev,
-      {
-        id: newId(),
-        role: "user",
-        content: prompt,
-        ts: Date.now(),
-      },
-    ]);
-    assistantTurnId = newId();
-    setTurns((prev) => [
-      ...prev,
-      {
-        id: assistantTurnId!,
-        role: "assistant",
-        content: "_(starting…)_",
-        streaming: true,
-        tag: "phase: triage",
-        ts: Date.now(),
-      },
-    ]);
-
-    try {
-      const resp = await api.post<StartResp>("/api/code/start", {
-        prompt,
-        effort: "medium",
-      });
-      setSessionId(resp.session_id);
-      stream = openEventStream({
-        url: `/api/code/${resp.session_id}/events`,
-        onStatusChange: (s) => setStatus(s),
-        onEvent: handleEvent,
-      });
-    } catch (err: unknown) {
-      const detail =
-        (err as { body?: { detail?: string } })?.body?.detail ??
-        (err instanceof Error ? err.message : "Failed to start build");
-      setBusy(false);
-      setStatus("closed");
-      patchAssistant(`**Error:** ${String(detail)}`, "failed");
-    }
-  };
-
-  const cancel = async () => {
-    const sid = sessionId();
-    if (sid) {
-      try {
-        await api.post(`/api/code/${sid}/cancel`);
-      } catch {
-        // ignore
-      }
-    }
-    cleanup();
-    patchAssistant("_(cancelled)_", "cancelled");
-    setBusy(false);
-  };
-
-  const patchAssistant = (
-    content: string,
-    tag?: string,
-    streaming = false,
-  ) => {
-    if (!assistantTurnId) return;
-    const id = assistantTurnId;
-    setTurns((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, content, tag, streaming } : t,
-      ),
-    );
-  };
-
-  const handleEvent = (ev: Record<string, unknown>) => {
-    const type = String(ev.type ?? "");
-    const phase = String(ev.phase ?? "");
-    switch (type) {
-      case "phase_start":
-        if (phase) setPhase(phase, "running");
-        patchAssistant(currentBuffer(), `phase: ${phase}`, true);
-        break;
-      case "phase_complete":
-        if (phase) setPhase(phase, "done");
-        break;
-      case "phase_failed":
-        if (phase) setPhase(phase, "failed");
-        patchAssistant(
-          currentBuffer() +
-            `\n\n**Phase failed:** ${phase} — ${String(ev.error ?? "")}`,
-          "failed",
-        );
-        break;
-      case "code_ready": {
-        const code = String(ev.code ?? "");
-        const lang = String(ev.language ?? "");
-        appendBlock(`### Code (${lang})\n\n\`\`\`${lang}\n${code}\n\`\`\`\n`);
-        break;
-      }
-      case "test_ready": {
-        const code = String(ev.code ?? "");
-        appendBlock(`### Tests\n\n\`\`\`\n${code}\n\`\`\`\n`);
-        break;
-      }
-      case "execution_result": {
-        const result = (ev.result ?? {}) as Record<string, unknown>;
-        const stdout = String(result.stdout ?? "").trim();
-        const stderr = String(result.stderr ?? "").trim();
-        const exit = result.exit_code;
-        const skipped = Boolean(result.skipped);
-        const block = [
-          `### Execution${skipped ? " (skipped)" : ""}`,
-          exit !== undefined ? `exit_code: ${exit}` : "",
-          stdout
-            ? `\n**stdout:**\n\n\`\`\`\n${stdout.slice(0, 2000)}\n\`\`\``
-            : "",
-          stderr
-            ? `\n**stderr:**\n\n\`\`\`\n${stderr.slice(0, 1000)}\n\`\`\``
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        appendBlock(block + "\n");
-        break;
-      }
-      case "review_ready": {
-        const review = (ev.review ?? ev.detail ?? {}) as Record<string, unknown>;
-        const verdict = String(review.verdict ?? review.score ?? "—");
-        const summary = String(
-          review.final_comment ?? review.summary ?? "",
-        );
-        appendBlock(
-          `### Review\n\n**Verdict:** ${verdict}\n\n${summary}\n`,
-        );
-        break;
-      }
-      case "deliverable_ready": {
-        const md = String(ev.markdown ?? "");
-        if (md) appendBlock(`### Deliverable\n\n${md}\n`);
-        break;
-      }
-      case "model_download_progress": {
-        const pct = Number(ev.pct ?? 0);
-        const model = String(ev.model ?? "");
-        patchAssistant(
-          currentBuffer(),
-          `pulling ${model} ${pct}%`,
-          true,
-        );
-        break;
-      }
-      case "done":
-        for (const p of PHASES) {
-          if (!phases()[p.key]) setPhase(p.key, "done");
-        }
-        patchAssistant(currentBuffer() || "_(done)_", "done");
-        cleanup();
-        setBusy(false);
-        break;
-      case "error":
-        patchAssistant(
-          currentBuffer() +
-            `\n\n**Error:** ${String(ev.message ?? "unknown")}`,
-          "failed",
-        );
-        cleanup();
-        setBusy(false);
-        break;
-      case "cancelled":
-        patchAssistant(currentBuffer() + "\n\n_(cancelled)_", "cancelled");
-        cleanup();
-        setBusy(false);
-        break;
-    }
-  };
-
-  const currentBuffer = (): string => {
-    if (!assistantTurnId) return "";
-    const t = turns().find((x) => x.id === assistantTurnId);
-    return t?.content ?? "";
-  };
-
-  const appendBlock = (block: string) => {
-    const cur = currentBuffer();
-    const next =
-      cur === "_(starting…)_" || cur === ""
-        ? block
-        : cur + "\n" + block;
-    patchAssistant(next, undefined, true);
-  };
-
   const headerStatus = createMemo<Status>(() => {
     switch (status()) {
       case "open":

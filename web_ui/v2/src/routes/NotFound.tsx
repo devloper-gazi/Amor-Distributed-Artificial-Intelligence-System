@@ -19,12 +19,6 @@ export const NotFound: Component = () => (
           >
             Home
           </A>
-          <a
-            href="/legacy"
-            class="inline-flex h-9 items-center rounded-md border border-border-default bg-bg-elevated px-4 text-sm hover:bg-bg-hover"
-          >
-            Legacy UI
-          </a>
         </div>
       </div>
     </div>

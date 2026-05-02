@@ -5,7 +5,7 @@ import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
 import {
-  createChatStream,
+  getChatStream,
   SIMPLE_TEXT_REDUCER,
   type EventReducer,
 } from "../lib/chat-stream";
@@ -36,7 +36,7 @@ export const Consortium: Component = () => {
     return patch;
   };
 
-  const stream = createChatStream<ConsortiumRequest>({
+  const stream = getChatStream<ConsortiumRequest>({
     startPath: "/api/consortium/start",
     buildStartBody: (goal) => ({
       goal,
