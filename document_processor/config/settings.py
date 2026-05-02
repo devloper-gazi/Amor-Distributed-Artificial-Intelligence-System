@@ -447,6 +447,26 @@ class Settings(BaseSettings):
     # any internal code path.
     openai_compat_enabled: bool = True
 
+    # ── Phase 16 Commit D1 — RAG hybrid + reranker ──────────────────
+    # Vector + BM25 retrieval with reciprocal-rank fusion.  Default
+    # on — the heuristic keyword-overlap path that lived inside
+    # ``LanceDBVectorStore.hybrid_search`` is replaced with the
+    # production ``BM25`` from ``document_processor/rag/rag_engine.py``.
+    rag_hybrid_search_enabled: bool = True
+    # RRF constant ``k`` from the original RRF paper (Cormack et al.)
+    # — 60 is the canonical default.
+    rag_rrf_k: int = 60
+    # BM25 hyperparameters; defaults match Okapi BM25 standard tunings.
+    rag_bm25_k1: float = 1.5
+    rag_bm25_b: float = 0.75
+    # Cross-encoder reranker (sentence-transformers/ms-marco-MiniLM-
+    # L-6-v2).  Off by default — flipping on adds ~150 ms per query
+    # on CPU but visibly improves Recall@5 on long-tail questions.
+    rag_reranker_enabled: bool = False
+    # Maximum candidates fed to the reranker after the dense+BM25
+    # fusion stage.  Larger means better quality and more latency.
+    rag_reranker_top_k: int = 20
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
