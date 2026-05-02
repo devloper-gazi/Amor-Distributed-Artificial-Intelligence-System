@@ -512,19 +512,42 @@ async def v2_spa_fallback(request: Request, rest: str):  # noqa: ARG001 — capt
     return await _serve_v2_shell(request)
 
 
-@app.get("/")
-async def root(request: Request):
-    """Serve the unified monochrome chat UI with Research, Thinking, and Coding modes.
-
-    v17 UI redesign — when ``AMOR_UI=v2`` is set the redirect points at
-    ``/v2`` so operators can flip the default without editing nginx.
-    """
-    if os.getenv("AMOR_UI", "").lower() == "v2" and _v2_available:
-        return await root_v2(request)
+@app.get("/legacy", include_in_schema=False)
+async def root_legacy(request: Request):
+    """v1 monochrome chat UI — the pre-v2 default.  Kept as a safety
+    net while v2 reaches feature parity for every mode.  Linked from
+    the v2 sidebar's "Open legacy UI" item."""
     return templates.TemplateResponse(
         "index.html",
         {"request": request, "static_version": app.state.static_version},
     )
+
+
+@app.get("/v1", include_in_schema=False)
+async def root_v1(request: Request):
+    """Alias for ``/legacy`` so links written before the v2 cutover
+    keep working."""
+    return await root_legacy(request)
+
+
+@app.get("/")
+async def root(request: Request):
+    """v17 UI cutover — ``/`` now serves the v2 SolidJS SPA when
+    the build artefacts are present.  Falls back to v1 (``/legacy``)
+    automatically if the build is missing.  Operators can opt back
+    out of v2 by setting ``AMOR_UI=v1`` in the environment.
+    """
+    forced = os.getenv("AMOR_UI", "").lower()
+    if forced == "v1":
+        return await root_legacy(request)
+    if _v2_available and forced != "v1":
+        # 302 to /v2/ so the URL bar shows the SPA's own root and the
+        # SolidJS Router's ``base="/v2"`` resolves cleanly.
+        from fastapi.responses import RedirectResponse  # noqa: PLC0415
+        return RedirectResponse(url="/v2/", status_code=302)
+    # Build artefacts missing — serve v1 directly so the user has a
+    # working surface while the build is rebuilt.
+    return await root_legacy(request)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
