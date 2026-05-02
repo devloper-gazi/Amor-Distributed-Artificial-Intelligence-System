@@ -210,7 +210,10 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         tier="lightweight",
         license="BigCode-OpenRAIL",
     ),
-    # General-purpose fallback — already in the system as the default
+    # General-purpose fallback — already in the system as the default.
+    # Phase 16.5 — strengths broadened to include reasoning/debugging/
+    # review/planning so the role scorer pushes planner/critic/
+    # debugger here instead of dumping everyone on qwen2.5-coder:7b.
     ModelSpec(
         ollama_tag="qwen2.5:7b",
         display_name="Qwen2.5 7B (general)",
@@ -219,22 +222,124 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         swebench_pct=0,
         humaneval_pct=55.0,
         context_k=128,
-        strengths=["general", "explanation", "planning"],
+        strengths=[
+            "general", "explanation", "planning", "reasoning",
+            "debugging", "review", "agentic loops",
+        ],
+        tier="balanced",
+        license="Apache-2.0",
+    ),
+    # ── Phase 16.5 — brief-recommended models for 8 GB VRAM ────────────────
+    ModelSpec(
+        ollama_tag="deepseek-r1:7b",
+        display_name="DeepSeek-R1 distill 7B",
+        params_b=7,
+        vram_gb=5,
+        swebench_pct=49.2,
+        humaneval_pct=89.6,
+        context_k=128,
+        strengths=[
+            "reasoning", "debugging", "code generation", "python",
+            "step-by-step", "review",
+        ],
+        tier="balanced",
+        license="MIT",
+    ),
+    ModelSpec(
+        ollama_tag="qwen3:8b",
+        display_name="Qwen3 8B (Instruct)",
+        params_b=8,
+        vram_gb=6,
+        swebench_pct=0,
+        humaneval_pct=83.0,
+        context_k=128,
+        strengths=[
+            "general", "reasoning", "planning", "explanation",
+            "code generation", "agentic loops",
+        ],
+        tier="balanced",
+        license="Apache-2.0",
+    ),
+    ModelSpec(
+        ollama_tag="qwen3:4b",
+        display_name="Qwen3 4B (Instruct)",
+        params_b=4,
+        vram_gb=3.5,
+        swebench_pct=0,
+        humaneval_pct=68.4,
+        context_k=128,
+        strengths=[
+            "fast generation", "triage", "explanation", "general",
+        ],
+        tier="lightweight",
+        license="Apache-2.0",
+    ),
+    ModelSpec(
+        ollama_tag="josiefied-qwen3:8b",
+        display_name="Josiefied-Qwen3 8B (uncensored)",
+        params_b=8,
+        vram_gb=6,
+        swebench_pct=0,
+        humaneval_pct=82.0,
+        context_k=128,
+        strengths=[
+            "general", "reasoning", "explanation", "agentic loops",
+        ],
+        tier="balanced",
+        license="Apache-2.0",
+    ),
+    ModelSpec(
+        ollama_tag="qwen2.5-coder:14b",
+        display_name="Qwen2.5-Coder 14B",
+        params_b=14,
+        vram_gb=9,
+        swebench_pct=44.6,
+        humaneval_pct=89.7,
+        context_k=128,
+        strengths=[
+            "code generation", "python", "typescript", "explanation",
+            "multi-file editing",
+        ],
         tier="balanced",
         license="Apache-2.0",
     ),
 ]
 
 
-# Agent role → strengths the model should ideally have. Used by the
-# scorer in select_model().
+# Agent role → strengths the model should ideally have.  Phase 16.5 —
+# strength lists are tuned so the scorer picks GENUINELY different
+# installed models per role on a 2-model rig (qwen2.5:7b +
+# qwen2.5-coder:7b):
+#
+#   planner   → reasoning/planning/explanation  → qwen2.5:7b
+#   coder     → code generation / python        → qwen2.5-coder:7b
+#   tester    → code generation / debugging     → qwen2.5-coder:7b
+#   debugger  → debugging / reasoning / review  → qwen2.5:7b
+#   critic    → review / reasoning              → qwen2.5:7b
+#
+# When DeepSeek-R1 / Qwen3 are installed they slot into reasoning-
+# heavy roles automatically.
 ROLE_STRENGTH_MAP: dict[str, list[str]] = {
-    "planner": ["planning", "agentic loops", "explanation", "multi-file editing"],
-    "coder": ["code generation", "python", "typescript", "fast inference"],
-    "tester": ["code generation", "python", "debugging"],
-    "debugger": ["debugging", "multi-file editing", "agentic loops"],
-    "critic": ["review", "explanation", "agentic loops"],
-    "triage": ["fast generation", "explanation"],
+    "planner": [
+        "planning", "reasoning", "agentic loops", "explanation",
+        "multi-file editing", "step-by-step",
+    ],
+    "coder": [
+        "code generation", "python", "typescript", "fast inference",
+        "multi-file editing",
+    ],
+    "tester": [
+        "code generation", "python", "debugging", "infilling",
+    ],
+    "debugger": [
+        "debugging", "reasoning", "review", "step-by-step",
+        "agentic loops", "multi-file editing",
+    ],
+    "critic": [
+        "review", "reasoning", "explanation", "agentic loops",
+        "step-by-step",
+    ],
+    "triage": ["fast generation", "explanation", "general"],
 }
 
 
@@ -319,15 +424,29 @@ class CodeModelRegistry:
 
     def _tag_installed(self, tag: str) -> bool:
         """
-        True if either the exact tag is installed, OR a tag with the same
-        base name is installed (Ollama sometimes appends `-instruct` or
-        `-chat` suffixes inconsistently).
+        True if the exact tag is installed, OR a same-family tag with
+        only an Ollama-style suffix variation (``-instruct``,
+        ``-chat``, ``-text``) on the *same parameter size* is
+        installed.
+
+        Phase 16.5 fix — tightened from the old prefix match so
+        ``qwen2.5-coder:14b`` is no longer considered installed
+        just because ``qwen2.5-coder:7b`` is.  Different model
+        SIZES are distinct artefacts; the role-diversity selector
+        relies on this distinction.
         """
         normalized = tag.lower()
-        base = normalized.split(":", 1)[0] + ":"
         for av in self._available:
             av_norm = av.lower()
-            if av_norm == normalized or av_norm.startswith(base):
+            if av_norm == normalized:
+                return True
+            # Suffix-tolerant match — same base + same size, just
+            # a different variant tag (e.g. ``qwen2.5-coder:7b`` vs
+            # ``qwen2.5-coder:7b-instruct``).
+            if (
+                av_norm.startswith(normalized + "-")
+                or normalized.startswith(av_norm + "-")
+            ):
                 return True
         return False
 
@@ -393,6 +512,9 @@ class CodeModelRegistry:
         role: str,
         effort: str = "medium",
         require_tier: str | None = None,
+        *,
+        installed_only: bool = False,
+        exclude_tags: tuple[str, ...] = (),
     ) -> tuple[ModelSpec, bool]:
         """
         Pick the best available model for ``role`` given an effort tier.
@@ -404,13 +526,29 @@ class CodeModelRegistry:
             basic / medium  → prefer balanced
             deep / expert   → prefer flagship (with balanced fallback)
             ultra           → flagship strongly preferred
+
+        Phase 16.5 changes
+        ------------------
+        * ``installed_only`` — when True, only score among installed
+          tags.  Used by ``select_models_for_session`` to prevent
+          uninstalled-flagship picks when a perfectly good installed
+          model exists for the role.
+        * ``exclude_tags`` — skip these tags entirely.  Used to
+          spread distinct models across roles in a single session
+          so the planner / debugger / critic don't all pick the
+          same model when there's a viable alternative.
+        * Strength match weight raised from 2.0 → 6.0 so role-
+          specific strength lists actually flip the choice on a
+          2-model rig (qwen2.5:7b vs qwen2.5-coder:7b).
         """
         preferred_strengths = ROLE_STRENGTH_MAP.get(role, [])
         tier_preference = list(
             _TIER_PREFERENCE.get(effort, ["balanced", "flagship", "lightweight"])
         )
         if require_tier:
-            tier_preference = [require_tier] + [t for t in tier_preference if t != require_tier]
+            tier_preference = [require_tier] + [
+                t for t in tier_preference if t != require_tier
+            ]
 
         def score(spec: ModelSpec) -> float:
             s = 0.0
@@ -420,9 +558,10 @@ class CodeModelRegistry:
             except ValueError:
                 tier_idx = 99
             s += (10 - tier_idx) * 3.0
-            # Strength match — count overlapping strengths.
+            # Strength match — Phase 16.5 boost so role differences
+            # actually flip the choice on a 2-model rig.
             matched = sum(1 for st in preferred_strengths if st in spec.strengths)
-            s += matched * 2.0
+            s += matched * 6.0
             # Benchmark quality — SWE-bench dominates, HumanEval is a tiebreak.
             s += spec.swebench_pct * 0.3
             s += spec.humaneval_pct * 0.05
@@ -431,9 +570,133 @@ class CodeModelRegistry:
                 s += 50.0
             return s
 
-        ranked = sorted(CODE_MODEL_CATALOGUE, key=score, reverse=True)
+        candidates = [
+            spec for spec in CODE_MODEL_CATALOGUE
+            if spec.ollama_tag not in exclude_tags
+            and (not installed_only or self._tag_installed(spec.ollama_tag))
+        ]
+        if not candidates:
+            # Caller asked for installed-only but nothing is installed
+            # — fall back to the full catalogue so we surface a
+            # downloadable recommendation.
+            candidates = [
+                spec for spec in CODE_MODEL_CATALOGUE
+                if spec.ollama_tag not in exclude_tags
+            ]
+        ranked = sorted(candidates, key=score, reverse=True)
+        if not ranked:
+            # Pathological — exclude_tags wiped the catalogue.  Fall
+            # back to the default qwen2.5:7b.
+            for spec in CODE_MODEL_CATALOGUE:
+                if spec.ollama_tag == "qwen2.5:7b":
+                    return spec, self._tag_installed(spec.ollama_tag)
+            return CODE_MODEL_CATALOGUE[0], False
         best = ranked[0]
         return best, self._tag_installed(best.ollama_tag)
+
+    # ─── Phase 16.5 — session-level role distribution ──────────────────────
+
+    def select_models_for_session(
+        self,
+        roles: list[str],
+        effort: str = "medium",
+        *,
+        spread: bool = True,
+    ) -> dict[str, ModelSpec]:
+        """Pick a model for every ``role`` in one pass.
+
+        When ``spread`` is True (default), each role's pick excludes
+        models already chosen by *higher-priority* roles UNLESS the
+        next viable candidate sits more than 12 score-points lower —
+        a degradation cap that keeps role-specialisation honest
+        without forcing a worse-quality model onto a role just to
+        hit visual diversity.
+
+        Roles are processed in this priority order so the most
+        expensive / specialist roles get first dibs:
+        ``planner → critic → debugger → coder → tester → triage``.
+        Unknown roles fall through with the plain ``select_model``.
+        """
+        priority = ["planner", "critic", "debugger", "coder", "tester", "triage"]
+        ordered = [r for r in priority if r in roles] + [
+            r for r in roles if r not in priority
+        ]
+
+        installed_pool = [
+            spec for spec in CODE_MODEL_CATALOGUE
+            if self._tag_installed(spec.ollama_tag)
+        ]
+        # If we have multiple installed models, prefer to spread
+        # across them.  When only one is installed, ``spread`` is a
+        # no-op and every role lands on it.
+        can_spread = spread and len(installed_pool) >= 2
+
+        installed_tags = {spec.ollama_tag for spec in installed_pool}
+        # Degradation cap — a role only switches to an alternative
+        # installed model if the alt's role-fit score is within
+        # this many points of the best.  Keeps role specialisation
+        # honest: e.g. critic stays on the reasoning model even
+        # when planner already took it, because the only
+        # alternative (qwen2.5-coder:7b) scores ~18 points lower
+        # for review/reasoning strengths.
+        DEGRADATION_CAP = 12.0
+
+        chosen: dict[str, ModelSpec] = {}
+        used_tags: set[str] = set()
+        for role in ordered:
+            best, _ = self.select_model(
+                role, effort, installed_only=can_spread,
+            )
+            if can_spread and best.ollama_tag in used_tags:
+                alt, _ = self.select_model(
+                    role, effort,
+                    installed_only=True,
+                    exclude_tags=tuple(used_tags),
+                )
+                if (
+                    alt.ollama_tag != best.ollama_tag
+                    and alt.ollama_tag in installed_tags
+                ):
+                    # Only swap in the alt if its score gap to the
+                    # best is small enough that the role-fit hit is
+                    # acceptable.  Otherwise reuse the best — the
+                    # "5 roles, 2 models" outcome is a feature, not
+                    # a bug, when the alt isn't a real fit.
+                    best_score = self._score_for_role(
+                        best, role, effort,
+                    )
+                    alt_score = self._score_for_role(
+                        alt, role, effort,
+                    )
+                    if best_score - alt_score <= DEGRADATION_CAP:
+                        best = alt
+            chosen[role] = best
+            used_tags.add(best.ollama_tag)
+        return chosen
+
+    def _score_for_role(
+        self, spec: ModelSpec, role: str, effort: str,
+    ) -> float:
+        """Mirror of the inline scorer in ``select_model`` — used
+        by ``select_models_for_session`` to compare alternatives
+        without re-running the full ranking."""
+        preferred_strengths = ROLE_STRENGTH_MAP.get(role, [])
+        tier_preference = list(
+            _TIER_PREFERENCE.get(effort, ["balanced", "flagship", "lightweight"])
+        )
+        s = 0.0
+        try:
+            tier_idx = tier_preference.index(spec.tier)
+        except ValueError:
+            tier_idx = 99
+        s += (10 - tier_idx) * 3.0
+        matched = sum(1 for st in preferred_strengths if st in spec.strengths)
+        s += matched * 6.0
+        s += spec.swebench_pct * 0.3
+        s += spec.humaneval_pct * 0.05
+        if self._tag_installed(spec.ollama_tag):
+            s += 50.0
+        return s
 
     # ── High-level: ensure-or-pull ─────────────────────────────────────────
 
