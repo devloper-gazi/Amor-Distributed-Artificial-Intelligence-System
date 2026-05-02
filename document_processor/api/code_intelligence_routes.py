@@ -926,6 +926,34 @@ def _merge_phase_result(
         session["review"] = detail
 
 
+# ─── /diagnostics — Phase 17 Commit R ────────────────────────────────────────
+#
+# REGISTERED BEFORE /{session_id}/* routes so FastAPI doesn't capture
+# "diagnostics" as a session id.  FastAPI matches paths in registration
+# order; literal paths must come BEFORE path-parameter routes that
+# could shadow them.
+
+
+@router.get("/diagnostics")
+async def code_diagnostics(user: User = Depends(get_current_user)):
+    """Phase 17 Commit R — single-call snapshot of Code Intelligence
+    health: backend, models + role assignment, sandbox health +
+    cold-start telemetry, RAG config, Phase 15 ledger integrity,
+    Phase 16 facade gates, recent sessions + failures.
+
+    The user's complaint that triggered Phase 17 was "Mevcut sistem
+    düzgün çalışmıyor / hatasız çalıştığından emin olabilir misin".
+    Without this endpoint they can't see *why* a session looks weak
+    or which subsystem is in a degraded state.
+    """
+    from ..code_intelligence import diagnostics as diag  # noqa: PLC0415
+    payload = await diag.build_diagnostics(
+        sessions_map=_sessions, probe_sandbox=True,
+    )
+    payload["user_id"] = str(user.id)
+    return payload
+
+
 # ─── /cancel ─────────────────────────────────────────────────────────────────
 
 
