@@ -428,6 +428,19 @@ class Settings(BaseSettings):
     sentinel_evolution_allow_distill_trigger: bool = False  # opt-in
     sentinel_evolution_allow_curriculum_trigger: bool = True
 
+    # ── Phase 16 — Adapter Foundations (pluggable LLM backend) ───────
+    # Selects which inference backend ``local_ai.llm_backend`` returns
+    # from ``get_backend()``.  Allowed values:
+    #   "ollama"        — default, today's behaviour (no migration)
+    #   "llama-swap"    — llama-swap proxy (OpenAI /v1)
+    #   "llama-cpp"     — direct llama-server (OpenAI /v1)
+    #   "openai-compat" — generic /v1 (vLLM / ExLlamaV2 / LM Studio)
+    #   "stub"          — deterministic test backend (used in CI)
+    llm_backend: str = "ollama"
+    # Override URL for the active backend.  Empty string falls back
+    # to ``OLLAMA_BASE_URL`` env var / per-backend default.
+    llm_backend_url: str = ""
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"

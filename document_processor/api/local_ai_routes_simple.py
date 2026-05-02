@@ -1314,7 +1314,48 @@ async def _call_ollama_uncached_with(
     Ollama options merge on top of the defaults *and* its
     ``system_prompt`` is used when the caller didn't pass one. This
     lets the picker's Advanced sliders + system-prompt textarea
-    actually take effect without changing every call site."""
+    actually take effect without changing every call site.
+
+    Phase 16 — when ``settings.llm_backend != "ollama"`` the request
+    is delegated to the pluggable backend (``local_ai.llm_backend``),
+    bypassing the Ollama-specific auto-pull + fallback retry chain.
+    This keeps the Ollama hot path byte-equivalent to today while
+    letting llama-swap / llama.cpp / vLLM users opt in via settings.
+    """
+    # Phase 16 routing — non-Ollama backends short-circuit here.
+    try:
+        from local_ai.llm_backend import (  # noqa: PLC0415
+            ChatOptions,
+            get_backend,
+        )
+        backend = get_backend()
+    except Exception:
+        backend = None
+    if backend is not None and getattr(backend, "name", "") != "ollama":
+        merged_opts = _merge_profile_options(max_tokens)
+        effective_system = system or _resolve_system_prompt() or ""
+        opts = ChatOptions(
+            temperature=float(merged_opts.get("temperature", _OLLAMA_TEMPERATURE)),
+            max_tokens=int(merged_opts.get("num_predict", max_tokens)),
+            extra={
+                k: v for k, v in merged_opts.items()
+                if k not in ("temperature", "num_predict")
+            },
+        )
+        try:
+            return await backend.complete(
+                prompt, model=model, system=effective_system, options=opts,
+            )
+        except Exception as exc:
+            logger.error(
+                "llm_backend_call_failed backend=%s model=%s err=%s",
+                backend.name, model, exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"LLM backend {backend.name} error: {exc!s}",
+            )
+
     try:
         # Ensure the *configured default* model is available — the
         # legacy auto-pull pipe only knows about OLLAMA_MODEL. For the
