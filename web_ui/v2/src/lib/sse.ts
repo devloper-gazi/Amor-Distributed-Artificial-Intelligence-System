@@ -22,7 +22,7 @@
  *   onCleanup(() => stream.close());
  */
 
-import { onAuthChange } from "./api";
+import { onAuthChange, getAccessToken } from "./api";
 
 export type StreamStatus =
   | "connecting"
@@ -101,8 +101,22 @@ export function openEventStream(opts: OpenStreamOptions): OpenedStream {
     if (closed) return;
     setStatus(retries === 0 ? "connecting" : "reconnecting");
     cleanupES();
+
+    // EventSource cannot send custom headers (no Authorization).
+    // The backend's ``get_current_user`` accepts an
+    // ``?access_token=`` query param fallback specifically for this
+    // case (see ``document_processor/auth/dependencies.py:42``).
+    // Re-resolve the token on every connect so a token rotation
+    // (auth.refresh) propagates into the URL on reconnect.
+    let url = opts.url;
+    const token = getAccessToken();
+    if (token) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}access_token=${encodeURIComponent(token)}`;
+    }
+
     try {
-      es = new EventSource(opts.url, { withCredentials: true });
+      es = new EventSource(url, { withCredentials: true });
     } catch (e) {
       console.error("sse: failed to open EventSource", e);
       scheduleReconnect();
