@@ -10,11 +10,24 @@ from pathlib import Path
 from datetime import datetime
 import hashlib
 
-import lancedb
-from lancedb.pydantic import LanceModel, Vector
-from lancedb.embeddings import get_registry
-from sentence_transformers import SentenceTransformer
-import pyarrow as pa
+# Optional ML dependencies — Phase 16 lets the helper API (BM25
+# scoring, RRF fusion, settings resolution) load without lancedb /
+# sentence-transformers / pyarrow installed.  ``LanceDBVectorStore``
+# constructor still requires them; ``__new__()`` does not.
+try:
+    import lancedb
+    from lancedb.pydantic import LanceModel, Vector
+    from lancedb.embeddings import get_registry  # noqa: F401
+    from sentence_transformers import SentenceTransformer
+    import pyarrow as pa
+    _HAS_VECTOR_DEPS = True
+except ImportError:  # pragma: no cover - exercised only on minimal envs
+    lancedb = None  # type: ignore[assignment]
+    LanceModel = object  # type: ignore[assignment, misc]
+    Vector = lambda _dim: None  # type: ignore[assignment, misc]
+    SentenceTransformer = None  # type: ignore[assignment]
+    pa = None  # type: ignore[assignment]
+    _HAS_VECTOR_DEPS = False
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +65,36 @@ class LanceDBVectorStore:
         embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
         table_name: str = "documents",
         device: str = "cpu",  # Use CPU to save VRAM for LLM
+        *,
+        embedding_dim: Optional[int] = None,
+        per_model_table: Optional[bool] = None,
     ):
         """
         Initialize LanceDB vector store.
 
         Args:
             db_path: Path to LanceDB storage directory
-            embedding_model: Sentence transformer model for embeddings
-            table_name: Name of the LanceDB table
+            embedding_model: Sentence transformer model for embeddings.
+                Phase 16 — pass ``"BAAI/bge-m3"`` for the 1024-dim
+                BGE-M3 embedder; ``per_model_table`` derives a fresh
+                table so existing nomic-768 corpora stay untouched.
+            table_name: Base table name.  Combined with the model slug
+                + dim suffix when ``per_model_table`` is True.
             device: Device for embeddings - 'cpu' or 'cuda'
+            embedding_dim: Override the auto-detected dimension.
+                Defaults to whatever the model reports.
+            per_model_table: When True, append a model-derived suffix
+                to ``table_name`` so per-model corpora coexist.
+                Defaults to ``settings.rag_per_model_table = True``.
         """
+        if not _HAS_VECTOR_DEPS:
+            raise ImportError(
+                "LanceDBVectorStore requires lancedb + sentence-transformers; "
+                "install via the production extras."
+            )
         self.db_path = Path(db_path)
         self.db_path.mkdir(parents=True, exist_ok=True)
 
-        self.table_name = table_name
         self.device = device
 
         # Initialize LanceDB
@@ -73,20 +102,72 @@ class LanceDBVectorStore:
 
         # Initialize embedding model (CPU-based to save VRAM)
         logger.info(f"Loading embedding model: {embedding_model} on {device}")
+        self.embedding_model_name = embedding_model
         self.embedding_model = SentenceTransformer(
             embedding_model,
             device=device,
+            trust_remote_code=True,  # nomic-embed + bge-m3 both want this
         )
 
-        # Set to 768 dimensions for nomic-embed
-        self.embedding_dim = 768
+        # Sniff the embedder's actual dimension; fall back to 768 if
+        # the API doesn't expose it.  Override allowed for
+        # off-the-shelf models with a documented dim.
+        if embedding_dim is not None:
+            self.embedding_dim = int(embedding_dim)
+        else:
+            try:
+                self.embedding_dim = int(
+                    self.embedding_model.get_sentence_embedding_dimension() or 768
+                )
+            except Exception:
+                self.embedding_dim = 768
+
+        # Resolve final table name.  Backwards-compat invariant: the
+        # historical ``documents`` table on nomic-embed-text-v1.5 +
+        # 768-dim is reached with default args.  Any *other* model
+        # gets its own table (``documents_<slug>_<dim>``) so writes
+        # never collide with the 768-dim schema.
+        is_historical = (
+            embedding_model == "nomic-ai/nomic-embed-text-v1.5"
+            and self.embedding_dim == 768
+        )
+        if per_model_table is None:
+            per_model_table = bool(self._settings_value(
+                "rag_per_model_table", True,
+            ))
+        if (
+            table_name == "documents"
+            and per_model_table
+            and not is_historical
+        ):
+            self.table_name = self._derive_table_name(
+                table_name, embedding_model, self.embedding_dim,
+            )
+        else:
+            self.table_name = table_name
 
         # Get or create table
         self.table = self._get_or_create_table()
 
+        # Phase 16 — lazy cross-encoder reranker.  Only constructed
+        # on the first ``rag_reranker_enabled`` request; ``None``
+        # means "not yet initialised" or "init failed gracefully".
+        self._reranker = None
+
         logger.info(f"LanceDB initialized at {db_path} with {embedding_model}")
 
-    def _get_or_create_table(self) -> lancedb.table.Table:
+    @staticmethod
+    def _derive_table_name(
+        base: str, embedding_model: str, embedding_dim: int,
+    ) -> str:
+        """Build a per-model table name like
+        ``documents_bge_m3_1024``.  Lowercases, replaces ``/`` and
+        ``-`` with ``_``, strips the dot in version tags."""
+        slug = embedding_model.split("/")[-1].lower()
+        slug = slug.replace("-", "_").replace(".", "")
+        return f"{base}_{slug}_{int(embedding_dim)}"
+
+    def _get_or_create_table(self) -> "Any":  # lancedb.table.Table at runtime
         """Get existing table or create new one."""
         try:
             # Try to open existing table
@@ -95,13 +176,21 @@ class LanceDBVectorStore:
             return table
         except Exception:
             # Create new table with schema
-            logger.info(f"Creating new table: {self.table_name}")
+            logger.info(
+                "Creating new table: %s (dim=%d)",
+                self.table_name, self.embedding_dim,
+            )
 
-            # Create empty table with schema
+            # Create empty table with schema — vector dim follows
+            # the embedder so BGE-M3 (1024) and nomic (768) get
+            # their own correctly-shaped tables.
             schema = pa.schema([
                 pa.field("id", pa.string()),
                 pa.field("text", pa.string()),
-                pa.field("vector", pa.list_(pa.float32(), 768)),
+                pa.field(
+                    "vector",
+                    pa.list_(pa.float32(), int(self.embedding_dim)),
+                ),
                 pa.field("document_id", pa.string()),
                 pa.field("chunk_index", pa.int64()),
                 pa.field("source_url", pa.string()),
@@ -268,6 +357,9 @@ class LanceDBVectorStore:
         limit: int = 5,
         min_score: float = 0.5,
         filter_expr: Optional[str] = None,
+        *,
+        rerank: Optional[bool] = None,
+        rerank_top_k: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Semantic search in vector store.
@@ -277,6 +369,10 @@ class LanceDBVectorStore:
             limit: Maximum number of results
             min_score: Minimum similarity score (0-1)
             filter_expr: SQL-like filter expression
+            rerank: Override the global ``rag_reranker_enabled``
+                setting per-call.  ``None`` defers to settings.
+            rerank_top_k: Maximum candidates to feed the reranker.
+                Falls back to ``rag_reranker_top_k`` (default 20).
 
         Returns:
             List of search results with scores
@@ -286,11 +382,20 @@ class LanceDBVectorStore:
             query_embedding = await self._embed_text(query)
             query_vector = query_embedding[0]
 
+            # Phase 16 — when reranker is enabled, ask LanceDB for a
+            # wider candidate window so the cross-encoder has more to
+            # work with.  Uses ``rag_reranker_top_k`` as the cap.
+            do_rerank = self._should_rerank(rerank)
+            wide_limit = max(
+                limit * 2,
+                self._reranker_top_k(rerank_top_k) if do_rerank else 0,
+            )
+
             # Search in LanceDB
             search_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.table.search(query_vector)
-                    .limit(limit * 2)  # Get more results for filtering
+                    .limit(wide_limit)
                     .to_list()
             )
 
@@ -314,8 +419,12 @@ class LanceDBVectorStore:
                         "word_count": result.get("word_count"),
                     })
 
-            # Sort by score and limit
+            # Sort by score, then optional cross-encoder rerank.
             results.sort(key=lambda x: x["score"], reverse=True)
+
+            if do_rerank and results:
+                results = await self._apply_reranker(query, results)
+
             results = results[:limit]
 
             logger.info(f"Found {len(results)} results for query")
@@ -329,48 +438,177 @@ class LanceDBVectorStore:
         self,
         query: str,
         limit: int = 5,
-        vector_weight: float = 0.7,
-        text_weight: float = 0.3,
+        *,
+        rrf_k: Optional[int] = None,
+        rerank: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid search combining vector and text-based search.
+        Hybrid search combining dense (vector) and sparse (BM25) retrieval
+        with reciprocal rank fusion.
+
+        Phase 16 — replaces the older keyword-overlap heuristic with the
+        ``BM25`` implementation from
+        ``document_processor.rag.rag_engine`` plus RRF over the dense
+        and sparse rankings.  The cross-encoder reranker (when enabled)
+        runs as a final pass before truncation.
 
         Args:
             query: Search query
             limit: Maximum number of results
-            vector_weight: Weight for vector similarity
-            text_weight: Weight for text matching
+            rrf_k: RRF constant (default 60, per the original RRF paper).
+                Override per-call; defers to ``rag_rrf_k`` setting when
+                ``None``.
+            rerank: Override ``rag_reranker_enabled`` per-call.
 
         Returns:
-            List of search results with combined scores
+            List of search results with combined ``score`` plus the
+            individual ``vector_score`` / ``bm25_score`` /
+            ``vector_rank`` / ``bm25_rank`` breakdown.
         """
-        # Get vector search results
-        vector_results = await self.search(query, limit=limit * 2)
-
-        # Simple keyword matching for text search
-        query_terms = set(query.lower().split())
-
-        # Combine and rerank
-        for result in vector_results:
-            text_lower = result["text"].lower()
-            text_terms = set(text_lower.split())
-
-            # Calculate text match score
-            matches = len(query_terms.intersection(text_terms))
-            text_score = min(1.0, matches / max(1, len(query_terms)))
-
-            # Combine scores
-            result["vector_score"] = result["score"]
-            result["text_score"] = text_score
-            result["score"] = (
-                vector_weight * result["vector_score"] +
-                text_weight * text_score
+        # Settings-driven master switch — when disabled, fall back to
+        # plain dense search.  Default is True; a user with cached
+        # benchmark snapshots can flip it off without a code change.
+        if not self._hybrid_enabled():
+            return await self.search(
+                query, limit=limit, rerank=rerank,
             )
 
-        # Sort by combined score
-        vector_results.sort(key=lambda x: x["score"], reverse=True)
+        # Wide candidate window so BM25 has signal.
+        candidate_limit = max(limit * 4, 20)
+        vector_results = await self.search(
+            query, limit=candidate_limit, min_score=0.0, rerank=False,
+        )
+        if not vector_results:
+            return []
 
-        return vector_results[:limit]
+        # BM25 over the candidate set.
+        bm25_scores = self._bm25_scores(query, [r["text"] for r in vector_results])
+
+        # Build (rank by dense, rank by sparse) → RRF.
+        dense_ranking = {r["id"]: i for i, r in enumerate(vector_results)}
+        sparse_indexed = sorted(
+            enumerate(bm25_scores), key=lambda x: x[1], reverse=True,
+        )
+        sparse_ranking = {
+            vector_results[idx]["id"]: rank
+            for rank, (idx, _) in enumerate(sparse_indexed)
+        }
+
+        k = self._rrf_k(rrf_k)
+        fused: List[Dict[str, Any]] = []
+        for r in vector_results:
+            doc_id = r["id"]
+            d_rank = dense_ranking.get(doc_id, len(vector_results))
+            s_rank = sparse_ranking.get(doc_id, len(vector_results))
+            rrf = (1.0 / (k + d_rank + 1)) + (1.0 / (k + s_rank + 1))
+            r2 = dict(r)
+            r2["vector_score"] = r["score"]
+            r2["bm25_score"] = bm25_scores[
+                next(i for i, x in enumerate(vector_results) if x["id"] == doc_id)
+            ]
+            r2["vector_rank"] = d_rank
+            r2["bm25_rank"] = s_rank
+            r2["score"] = rrf
+            fused.append(r2)
+
+        fused.sort(key=lambda x: x["score"], reverse=True)
+
+        if self._should_rerank(rerank) and fused:
+            fused = await self._apply_reranker(query, fused)
+
+        return fused[:limit]
+
+    # ─── Phase 16 helpers ────────────────────────────────────────
+
+    @staticmethod
+    def _settings_value(name: str, default):
+        try:
+            from document_processor.config.settings import (  # noqa: PLC0415
+                settings as _s,
+            )
+            return getattr(_s, name, default)
+        except Exception:
+            return default
+
+    def _hybrid_enabled(self) -> bool:
+        return bool(self._settings_value("rag_hybrid_search_enabled", True))
+
+    def _should_rerank(self, override: Optional[bool]) -> bool:
+        if override is not None:
+            return bool(override)
+        return bool(self._settings_value("rag_reranker_enabled", False))
+
+    def _reranker_top_k(self, override: Optional[int]) -> int:
+        if override is not None and override > 0:
+            return int(override)
+        v = self._settings_value("rag_reranker_top_k", 20)
+        return int(v) if v else 20
+
+    def _rrf_k(self, override: Optional[int]) -> int:
+        if override is not None and override > 0:
+            return int(override)
+        v = self._settings_value("rag_rrf_k", 60)
+        return int(v) if v else 60
+
+    def _bm25_scores(self, query: str, texts: List[str]) -> List[float]:
+        """Score every candidate against ``query`` using the BM25
+        implementation from ``document_processor.rag.rag_engine``.
+        Returns ``[0.0]*len(texts)`` if BM25 can't be imported (no
+        ``document_processor`` on the path)."""
+        if not texts:
+            return []
+        try:
+            from document_processor.rag.rag_engine import BM25  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            logger.debug("BM25 unavailable: %s", exc)
+            return [0.0] * len(texts)
+        try:
+            k1 = float(self._settings_value("rag_bm25_k1", 1.5))
+            b = float(self._settings_value("rag_bm25_b", 0.75))
+            bm25 = BM25(k1=k1, b=b)
+            bm25.fit(texts)
+            return list(bm25.score(query))
+        except Exception as exc:  # pragma: no cover
+            logger.debug("BM25 scoring failed: %s", exc)
+            return [0.0] * len(texts)
+
+    async def _apply_reranker(
+        self, query: str, results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Run a cross-encoder reranker over the candidate set.  When
+        the optional ``sentence-transformers`` dependency is missing
+        or initialisation fails, the original ordering is returned
+        untouched (logged at debug level)."""
+        if not results:
+            return results
+        try:
+            from document_processor.rag.reranker import (  # noqa: PLC0415
+                CrossEncoderReranker, RerankerConfig,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.debug("reranker unavailable: %s", exc)
+            return results
+        if self._reranker is None:
+            self._reranker = CrossEncoderReranker(RerankerConfig(device=self.device))
+        try:
+            await self._reranker.initialize()
+        except Exception as exc:
+            logger.debug("reranker initialise failed: %s", exc)
+            self._reranker = None
+            return results
+        try:
+            rer = await self._reranker.rerank(
+                query, [r["text"] for r in results], top_k=None,
+            )
+        except Exception as exc:
+            logger.debug("reranker run failed: %s", exc)
+            return results
+        # Map text→rerank score and reorder.
+        score_by_text = {doc: score for doc, score in rer}
+        for r in results:
+            r["rerank_score"] = float(score_by_text.get(r["text"], 0.0))
+        results.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+        return results
 
     async def delete_document(self, document_id: str) -> Dict[str, Any]:
         """

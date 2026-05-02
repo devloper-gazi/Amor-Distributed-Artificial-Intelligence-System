@@ -372,6 +372,119 @@ Static assets are versioned using `STATIC_VERSION` environment variable (default
 - Rate limiting via token bucket algorithm
 - Dead letter queue for failed messages (`documents-dlq` topic)
 
+## Quick Code V2 — prompt-template policy (no content filters)
+
+The Quick Code V2 adapter (`document_processor/quick_code/`) ships
+with strict prompt-template rules.  Anyone editing or adding a
+system prompt under that package follows them:
+
+- **No refusal phrases.**  Do NOT add `I cannot help`,
+  `I'm sorry, but`, `as an AI`, `It is not appropriate`, `I won't`,
+  or any equivalent.
+- **No legal disclaimers.**  Do NOT add `if illegal in your
+  jurisdiction`, `consult a lawyer`, `educational purposes only`,
+  `not legal advice`, or similar footers.
+- **No content-moderation pre-filters.**  Do NOT insert refusal
+  blocks (e.g. `rejecting requests for X`) in any system prompt.
+- **Required tone.**  Each system prompt opens with
+  `You are an expert engineer. Produce the best technical answer.`
+  Direct, specific, no hedging.
+- **Carve-out.**  Infrastructure security
+  (`document_processor/code_intelligence/adversarial_reviewer.py`)
+  stays intact and is the **only** layer allowed to block output.
+  It checks prompt injection, shell injection, and secret leakage
+  — not content moderation.
+
+Enforcement: `tests/quick_code/test_prompts_no_filters.py`
+greps every V2 prompt template for the banned phrase set on every
+build.  Adding a new V2 prompt without updating that test will
+fail CI.
+
+## Sentinel — prompt-template policy (no content filters)
+
+The Sentinel security module (`document_processor/sentinel/`) is
+held to the **same** prompt-template rules as Quick Code V2.  The
+five Sentinel agents (Auditor / Reasoner / RedTeam / Patcher /
+Judge) audit *any* code the user submits — including code that
+discusses or implements security primitives.  A refusal-prone
+prompt would be a UX disaster ("I can't review this code because
+it contains a hash function") and is forbidden.
+
+- All five Sentinel system prompts open with `You are an expert
+  security engineer. Produce the best technical answer.`
+- The RedTeam agent in particular *must* describe exploit chains
+  in concrete technical detail — that is its job.  No hedging.
+- The infrastructure-security carve-out in
+  `code_intelligence/adversarial_reviewer.py` still applies and is
+  still the only layer allowed to block output.
+
+Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
+every Sentinel prompt template for the banned phrase set on every
+build, mirroring the Quick Code V2 test.
+
+## Amor — Phase 16 adapter foundations
+
+Phase 16 introduces the AMOR architecture brief's foundation
+primitives: a pluggable LLM backend, an OpenAI-compatible `/v1`
+facade, a RAG upgrade pack (BM25+RRF hybrid + cross-encoder
+reranker + BGE-M3 + late-chunking), an MCP-style typed tool
+registry, and a Letta-style 3-tier memory hierarchy.  All under
+`local_ai/` (top-level package).  Three rules:
+
+1. **Backwards compatibility is non-negotiable.**  Default
+   `llm_backend = "ollama"` preserves byte-equivalent behaviour
+   for the existing test suite.  The keyword-overlap hybrid path
+   becomes BM25+RRF (controlled by `rag_hybrid_search_enabled`,
+   default True); the existing `documents` corpus on
+   nomic-embed-text-v1.5 is never touched.  Opt-in features
+   (BGE-M3, late-chunking, MCP server, cross-encoder reranker,
+   memory ledger audit) all default off or behind a flag.
+2. **Every external SDK integration goes through the
+   abstraction.**  Letta, OpenHands V1 SDK, Aider, the OpenAI
+   Python SDK — all plug in via `OPENAI_BASE_URL=http://
+   localhost:8000/v1`, never by importing AMOR internals.
+3. **Memory writes append a Phase 15 ledger entry.**  When
+   `memory_ledger_audit_enabled` is on, every `MemoryStore`
+   write fires a `memory_core_written` / `memory_recall_appended`
+   / `memory_archival_written` ledger entry so the immutable
+   trail covers conversation history.
+
+The test surface lives at `tests/local_ai/`,
+`tests/api/test_openai_compat_routes.py`, and
+`tests/api/test_mcp_routes.py` (132 tests total).
+
+See `docs/amor-phase-16-foundations.md` for the full architecture
+map, settings reference, and live-smoke recipes.
+
+## Sentinel — Phase 15 evolution policy
+
+Phase 15 adds nine self-improvement subsystems (governance,
+preferences, prompt evolution, rule synthesis, agent spawning,
+distillation, curriculum, LoRA, DAG mutation) under
+`document_processor/sentinel/evolution/`.  Three rules:
+
+1. **Nothing promotes without an immutable ledger entry.**  Every
+   `*_promoted` / `*_rolled_back` / `agent_spawned` mutation must
+   call `LedgerStore.append(actor, kind, payload)` with a real
+   actor (chat user id or X-Client-Id, never `"system"` for a
+   user-initiated change).  The ledger is hash-chained — entries
+   are immutable post-write.
+2. **Every mutation payload runs through `ImmutableConstraints.
+   check()` first.**  A violation appends a
+   `constraint_check_failed` entry and returns 400 from the route
+   layer; the production pointer never moves.
+3. **Promotion requires either a Pareto improvement or explicit
+   user consent (or both).**  Auto-promotion happens only when the
+   candidate strictly dominates the parent on all measured axes
+   (precision / recall / latency band).  The Console UI never
+   auto-confirms a promote — the operator clicks the button.
+
+The test surface lives at `tests/sentinel/evolution/` (151 tests)
+and gates every commit that touches Phase 15 code.
+
+See `docs/sentinel-evolution.md` for the full subsystem map,
+configuration reference, and disk layout.
+
 ## Related Documentation
 
 - **`README.md`** - Main project documentation, quickstart, and deployment
@@ -381,4 +494,9 @@ Static assets are versioned using `STATIC_VERSION` environment variable (default
 - **`WEB_UI_GUIDE.md`** - Frontend architecture and customization
 - **`QUICK_START.md`** - Fast setup instructions
 - **`DOCKER_FIX_SUMMARY.md`** - Docker troubleshooting and fixes
+- **`docs/sentinel-architecture.md`** - Sentinel V1 multi-agent pipeline
+- **`docs/sentinel-agent-prompts.md`** - All five Sentinel role prompts
+- **`docs/sentinel-ml-models.md`** - Classical ML pipeline + RAG layout
+- **`docs/sentinel-evolution.md`** - Phase 15 Evolution Engine (9 subsystems + Console)
+- **`docs/amor-phase-16-foundations.md`** - Phase 16 Adapter Foundations (LLM backend, /v1 facade, RAG upgrade, MCP, memory)
 - **`example_usage.py`** - Python client examples for pipeline APIs

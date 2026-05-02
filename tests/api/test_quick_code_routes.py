@@ -227,7 +227,9 @@ def test_status_returns_envelope_after_start(client):
         assert key in body
     # Phase scaffold present even before the bg task runs.
     # v9 added audit + arbiter (mesh post-processing); v10 added reactor.
+    # V2 added classify + striatum at the front.
     assert {p["name"] for p in body["phases"]} == {
+        "classify", "striatum",
         "triage", "reason", "implement", "verify", "refine",
         "reactor", "audit", "arbiter",
     }

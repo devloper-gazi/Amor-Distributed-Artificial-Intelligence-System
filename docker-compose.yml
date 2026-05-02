@@ -142,9 +142,17 @@ services:
       # Bind-mount source tree so host edits are immediately live in both
       # replicas — no `docker cp` + restart cycle, no drift between app-1/app-2,
       # and nothing is lost when containers are recreated. Safe for dev;
-      # remove these two lines to ship a fully self-contained image.
+      # remove these lines to ship a fully self-contained image.
       - ./document_processor:/app/document_processor
       - ./web_ui:/app/web_ui
+      # Phase 16 — top-level ``local_ai`` package (llm_backend, vector_store,
+      # ollama_client, episodic_memory, agents, …) lives at the repo root
+      # alongside ``document_processor``.  Without this mount, every
+      # ``from local_ai…`` import inside document_processor blows up with
+      # ModuleNotFoundError (the Dockerfile COPYs only document_processor +
+      # web_ui).  Mount RW so the in-container Python sees the same
+      # package the host tests do.
+      - ./local_ai:/app/local_ai
       - ./requirements.txt:/app/requirements.txt:ro
       # Code Intelligence sandbox — gives the app container access to
       # the host Docker daemon so it can spin up ephemeral runner

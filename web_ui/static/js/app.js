@@ -521,6 +521,19 @@ function setupWelcomeCards() {
             }
             return;
         }
+        // V1 — Sentinel security module.  Like Consortium, it has its
+        // own launcher (the SentinelLauncher prompts for paths +
+        // scan_profile, then streams the scan).  Skip switchMode().
+        if (cardMode === 'sentinel') {
+            if (window.sentinelLauncher?.open) {
+                window.sentinelLauncher.open();
+            } else if (typeof window.openSentinelLauncher === 'function') {
+                window.openSentinelLauncher();
+            } else {
+                console.warn('Sentinel launcher not yet loaded');
+            }
+            return;
+        }
         if (cardMode === 'coding') {
             // The card's own active pill seeds state.codingEffort even
             // when the user never clicked the pill (default is the one

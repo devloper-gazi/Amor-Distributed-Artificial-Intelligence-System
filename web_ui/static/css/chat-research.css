@@ -977,13 +977,118 @@ body.dark-mode .sources-section .source-lang-badge {
     bottom: 100%;
     left: 0;
     margin-bottom: var(--space-3);
-    width: 320px;
+    /* Wider on desktop so the AI-Model chip rows (Strategy /
+       Apply-To / Tabs) actually fit on one line each.  The previous
+       320 px was too narrow and produced a horizontal scrollbar +
+       awkwardly wrapped 2-line labels.  ``min(420px, calc(100vw-…))``
+       gracefully degrades on small viewports without ever exceeding
+       the screen. */
+    width: min(420px, calc(100vw - 24px));
+    /* Keep the panel anchored within the viewport regardless of how
+       tall its content is.  The AI Model picker section can stretch
+       to ~1000 px when the corpus is large; without this cap the
+       panel would scroll off the top of the screen. */
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     background-color: var(--mono-bg-primary);
     border: 1px solid var(--mono-border-medium);
     border-radius: var(--border-radius);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
     z-index: 100;
     animation: panelSlideUp 0.2s ease-out;
+
+    /* Subtle, themed scrollbar that blends with the dark UI rather
+       than the default OS chrome (which on Windows shows up as a
+       thick light-grey bar inside a dark surface). */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(125, 207, 255, 0.35) transparent;
+}
+
+.research-settings-panel::-webkit-scrollbar {
+    width: 8px;
+}
+.research-settings-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+.research-settings-panel::-webkit-scrollbar-thumb {
+    background: rgba(125, 207, 255, 0.25);
+    border-radius: 999px;
+}
+.research-settings-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(125, 207, 255, 0.45);
+}
+
+/* Mobile / narrow viewport: lift the panel out of its absolute
+   anchor and turn it into a bottom sheet that takes the full width
+   of the screen.  Easier to reach with a thumb, never clips, and
+   matches the visual language of native mobile apps. */
+@media (max-width: 480px) {
+    .research-settings-panel {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100vw;
+        max-width: 100vw;
+        max-height: 85vh;
+        margin: 0;
+        border-radius: 18px 18px 0 0;
+        border-left: 0;
+        border-right: 0;
+        border-bottom: 0;
+        animation: panelSlideUpMobile 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+        /* Drag-handle affordance at the top of the sheet. */
+        padding-top: 6px;
+    }
+    .research-settings-panel::before {
+        content: '';
+        position: sticky;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        display: block;
+        width: 36px;
+        height: 4px;
+        margin: 0 auto 4px;
+        border-radius: 999px;
+        background: var(--mono-border-medium, #3a3a55);
+    }
+}
+
+/* On narrow panels (mobile / split-screen), stack each label above
+   its control so the dropdown text isn't cropped to ~140 px and the
+   user can read the full option (e.g. "Medium — 25 sources
+   (~20 min)").  Also lets the AI-Model tabs wrap onto two rows
+   instead of clipping the last tab. */
+@media (max-width: 480px) {
+    .panel-setting-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .panel-setting-label {
+        flex: 0 0 auto;
+    }
+    .panel-setting-select {
+        width: 100%;
+        flex: 1 1 100%;
+    }
+    /* On a vertically-stacked row the toggle switch should still
+       sit on the right where the user expects it, not below the
+       label.  The toggle case is opt-in via this nested selector
+       so other controls keep stacking. */
+    .panel-setting-row:has(.panel-toggle) {
+        flex-direction: row;
+        align-items: center;
+    }
+    .model-tabs {
+        flex-wrap: wrap;
+    }
+    .model-tab {
+        flex: 1 1 calc(50% - 4px);
+    }
 }
 
 @keyframes panelSlideUp {
@@ -997,41 +1102,64 @@ body.dark-mode .sources-section .source-lang-badge {
     }
 }
 
+@keyframes panelSlideUpMobile {
+    from {
+        opacity: 0;
+        transform: translateY(60px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .settings-panel-header {
+    /* Sticky header so the title + close button stay reachable while
+       the user scrolls through long picker content. */
+    position: sticky;
+    top: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
+    padding: 12px 16px;
+    background-color: var(--mono-bg-primary);
     border-bottom: 1px solid var(--mono-border-light);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .settings-panel-header h4 {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: var(--font-size-sm);
+    font-size: 13.5px;
     font-weight: var(--font-weight-semibold);
     color: var(--mono-text-primary);
     margin: 0;
+    letter-spacing: 0.01em;
 }
 
 .settings-panel-header h4 i {
-    color: var(--mono-text-tertiary);
+    color: rgba(125, 207, 255, 0.85);
 }
 
 .close-panel-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    /* Larger touch target for thumb-comfortable hits. */
+    width: 32px;
+    height: 32px;
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--border-radius-sm);
+    border-radius: 8px;
     cursor: pointer;
     color: var(--mono-text-tertiary);
-    transition: all var(--transition-fast);
+    transition: background-color var(--transition-fast),
+                color var(--transition-fast),
+                transform var(--transition-fast);
 }
 
 .close-panel-btn:hover {
@@ -1039,25 +1167,45 @@ body.dark-mode .sources-section .source-lang-badge {
     color: var(--mono-text-primary);
 }
 
+.close-panel-btn:active {
+    transform: scale(0.94);
+}
+
+.close-panel-btn:focus-visible {
+    outline: 2px solid rgba(125, 207, 255, 0.6);
+    outline-offset: 2px;
+}
+
 .settings-panel-content {
-    padding: var(--space-4);
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: 14px;
 }
 
 .panel-setting-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: 12px;
+    /* Allow rows to wrap when the control needs more space than a
+       single line affords (esp. on narrow viewports). */
+    flex-wrap: wrap;
 }
 
 .panel-setting-label {
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    /* Prevent label text from clipping mid-character on narrow
+       widths.  Setting min-width: 0 lets ``flex-shrink`` actually
+       reduce the label below its intrinsic content width if a
+       designer ever drops the gap, but the natural width is still
+       respected when there is room. */
+    min-width: 0;
+    flex: 0 1 auto;
     font-size: var(--font-size-sm);
+    line-height: 1.35;
     color: var(--mono-text-primary);
 }
 
@@ -1066,18 +1214,37 @@ body.dark-mode .sources-section .source-lang-badge {
     color: var(--mono-text-tertiary);
     width: 18px;
     text-align: center;
+    flex-shrink: 0;
+}
+
+.panel-setting-label span {
+    /* Allow label text to wrap to two lines instead of clipping. */
+    word-break: break-word;
 }
 
 .panel-setting-select {
-    padding: var(--space-2) var(--space-3);
+    padding: 8px 12px;
     border: 1px solid var(--mono-border-medium);
-    border-radius: var(--border-radius-sm);
+    border-radius: 8px;
     background-color: var(--mono-bg-primary);
     color: var(--mono-text-primary);
     font-size: var(--font-size-sm);
     cursor: pointer;
-    min-width: 140px;
-    transition: border-color var(--transition-fast);
+    /* Let the select grow to the available room rather than forcing
+       a 140 px floor that pushed the label into a 2-line wrap on a
+       320 px panel.  120 px is wide enough for the longest depth /
+       language label; flex: 1 ensures the dropdown takes whatever
+       extra space is available. */
+    flex: 1 1 140px;
+    min-width: 120px;
+    max-width: 100%;
+    transition: border-color var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+
+.panel-setting-select:focus-visible {
+    outline: 2px solid rgba(125, 207, 255, 0.6);
+    outline-offset: 1px;
 }
 
 .panel-setting-select:hover {
@@ -2523,7 +2690,11 @@ body.dark-mode .depth-menu {
 .panel-section-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    /* Allow the hint to wrap to a new line under the label rather
+       than fight for horizontal space (which used to cut off the
+       last few characters of "best per-task pick"). */
+    flex-wrap: wrap;
+    gap: 4px 10px;
     font-size: 11.5px;
     font-weight: 700;
     text-transform: uppercase;
@@ -2531,17 +2702,32 @@ body.dark-mode .depth-menu {
     color: var(--mono-text-tertiary, #8a8aa0);
     margin-bottom: 10px;
 }
+.panel-section-title > span:first-of-type {
+    /* The label itself (e.g. "AI Model") sits on the first line. */
+    flex: 0 0 auto;
+}
 .panel-section-title i {
     color: rgba(125, 207, 255, 0.85);
 }
 .panel-section-hint {
-    margin-left: auto;
+    /* Prefer to sit on the same line as the title; wraps to its own
+       line when there is not enough room.  No more clipping. */
+    flex: 1 1 100%;
+    margin-left: 0;
     font-size: 10.5px;
     text-transform: none;
     letter-spacing: 0;
     font-weight: 400;
     color: var(--mono-text-tertiary, #8a8aa0);
     font-style: italic;
+    line-height: 1.35;
+}
+@media (min-width: 481px) {
+    .panel-section-hint {
+        /* Wider panels: hint fits next to the title with auto-margin. */
+        flex: 0 1 auto;
+        margin-left: auto;
+    }
 }
 
 /* Custom-tag input + Pull button row */
@@ -2745,6 +2931,7 @@ body.dark-mode .depth-menu {
     gap: 10px;
     margin: 8px 0 12px;
     flex-wrap: wrap;
+    min-width: 0;
 }
 .model-scope-label {
     font-size: 11px;
@@ -2752,24 +2939,33 @@ body.dark-mode .depth-menu {
     letter-spacing: 0.05em;
     color: var(--mono-text-tertiary, #8a8aa0);
     font-weight: 600;
+    flex-shrink: 0;
 }
 .model-scope-toggle {
-    display: inline-flex;
+    display: flex;
     background: var(--mono-bg-primary, #14141f);
     border: 1px solid var(--mono-border-medium, #3a3a55);
     border-radius: 8px;
     padding: 2px;
-    gap: 0;
+    /* Take the rest of the row so chips spread evenly; wrap to a
+       new line under the label on narrow viewports. */
+    flex: 1 1 100%;
+    min-width: 0;
+    gap: 2px;
+    flex-wrap: wrap;
 }
 .model-scope-btn {
+    flex: 1 1 0;
+    min-width: 0;
     border: 0;
     background: transparent;
     color: var(--mono-text-secondary, #b0b0c0);
-    padding: 5px 11px;
+    padding: 6px 10px;
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 6px;
     cursor: pointer;
+    white-space: nowrap;
     transition: background 0.12s ease, color 0.12s ease;
 }
 .model-scope-btn:hover {
@@ -2779,6 +2975,10 @@ body.dark-mode .depth-menu {
     background: rgba(125, 207, 255, 0.18);
     color: rgba(125, 207, 255, 1);
 }
+.model-scope-btn:focus-visible {
+    outline: 2px solid rgba(125, 207, 255, 0.6);
+    outline-offset: -2px;
+}
 
 /* ── Tab strip ─────────────────────────────────────────────────────── */
 
@@ -2787,23 +2987,38 @@ body.dark-mode .depth-menu {
     gap: 4px;
     border-bottom: 1px solid var(--mono-border-medium, #3a3a55);
     margin-bottom: 10px;
+    /* Allow tabs to shrink below their content min-width on narrow
+       containers (Installed / Pull / Discover labels are otherwise
+       too greedy). */
+    min-width: 0;
 }
 .model-tab {
-    flex: 1;
+    flex: 1 1 0;
+    /* Crucial: ``min-width: 0`` lets a flex item shrink below its
+       intrinsic content width.  Without this, the tab refuses to
+       shrink and the row overflows the panel. */
+    min-width: 0;
     background: transparent;
     border: 0;
     color: var(--mono-text-secondary, #b0b0c0);
-    padding: 9px 8px;
+    padding: 9px 6px;
     font-size: 12px;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
     border-bottom: 2px solid transparent;
-    transition: color 0.12s ease, border-color 0.12s ease;
+    transition: color 0.12s ease, border-color 0.12s ease,
+                background-color 0.12s ease;
     position: relative;
+}
+.model-tab:focus-visible {
+    outline: 2px solid rgba(125, 207, 255, 0.6);
+    outline-offset: -3px;
+    border-radius: 6px;
 }
 .model-tab i {
     font-size: 11px;
@@ -2912,9 +3127,18 @@ body.dark-mode .depth-menu {
     font-weight: 600;
     color: var(--mono-text-primary, #e8e8e8);
     flex: 1;
+    min-width: 0;
+    /* Allow up to 2 lines instead of single-line ellipsis truncation
+       — the previous treatment cut off the back of "Auto · best per
+       task" inside a 320 px panel and confused users about which
+       model was being recommended. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.3;
+    word-break: break-word;
 }
 
 .model-card-badge {
@@ -3279,22 +3503,29 @@ body.dark-mode .depth-menu {
     gap: 10px;
     margin: 0 0 10px;
     flex-wrap: wrap;
+    min-width: 0;
 }
 .model-mode-toggle {
-    display: inline-flex;
+    display: flex;
     background: var(--mono-bg-primary, #14141f);
     border: 1px solid var(--mono-border-medium, #3a3a55);
     border-radius: 8px;
     padding: 2px;
-    flex: 1;
+    /* Take the entire remaining row width so the four strategy
+       chips can stretch evenly.  ``flex-wrap`` lets the chips wrap
+       to a 2x2 grid on really narrow viewports. */
+    flex: 1 1 100%;
     min-width: 0;
+    flex-wrap: wrap;
+    gap: 2px;
 }
 .model-mode-btn {
-    flex: 1;
+    flex: 1 1 calc(50% - 2px);
+    min-width: 0;
     border: 0;
     background: transparent;
     color: var(--mono-text-secondary, #b0b0c0);
-    padding: 5px 8px;
+    padding: 6px 8px;
     font-size: 11px;
     font-weight: 600;
     border-radius: 6px;
@@ -3303,7 +3534,18 @@ body.dark-mode .depth-menu {
     align-items: center;
     justify-content: center;
     gap: 5px;
+    white-space: nowrap;
     transition: background 0.12s ease, color 0.12s ease;
+}
+@media (min-width: 421px) {
+    .model-mode-btn {
+        /* Plenty of room: keep all four buttons on one line. */
+        flex: 1 1 0;
+    }
+}
+.model-mode-btn:focus-visible {
+    outline: 2px solid rgba(180, 130, 255, 0.6);
+    outline-offset: -2px;
 }
 .model-mode-btn i { font-size: 10.5px; opacity: 0.85; }
 .model-mode-btn:hover { color: var(--mono-text-primary, #e8e8e8); }
@@ -3929,6 +4171,24 @@ body.dark-mode .depth-menu {
     border-color: rgba(180, 130, 255, 0.7);
     box-shadow: 0 4px 16px rgba(180, 130, 255, 0.15);
 }
+
+/* Sentinel — security module, subtle red hue */
+.capability-card-sentinel {
+    position: relative;
+    background: linear-gradient(135deg,
+        rgba(255, 138, 138, 0.10),
+        rgba(255, 200, 96, 0.04) 80%);
+    border-color: rgba(255, 138, 138, 0.35);
+}
+.capability-card-sentinel:hover {
+    border-color: rgba(255, 138, 138, 0.6);
+    box-shadow: 0 4px 16px rgba(255, 138, 138, 0.18);
+}
+.capability-card-sentinel .capability-card-badge {
+    background: rgba(255, 138, 138, 0.22);
+    color: #ff8a8a;
+}
+
 .capability-card-badge {
     position: absolute;
     top: 10px; right: 10px;

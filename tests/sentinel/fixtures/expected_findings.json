@@ -1,0 +1,32 @@
+{
+  "vulnerable_python.py": {
+    "expected_cwes": [
+      "CWE-89",
+      "CWE-94",
+      "CWE-78",
+      "CWE-502",
+      "CWE-327",
+      "CWE-22",
+      "CWE-798"
+    ],
+    "min_findings": 5,
+    "min_severity": "medium"
+  },
+  "vulnerable_node.js": {
+    "expected_cwes": [
+      "CWE-79",
+      "CWE-22",
+      "CWE-78",
+      "CWE-94",
+      "CWE-798",
+      "CWE-1321"
+    ],
+    "min_findings": 4,
+    "min_severity": "medium"
+  },
+  "clean_baseline.py": {
+    "expected_cwes": [],
+    "max_findings": 0,
+    "comment": "FP rate floor — must produce zero findings on a clean scan."
+  }
+}

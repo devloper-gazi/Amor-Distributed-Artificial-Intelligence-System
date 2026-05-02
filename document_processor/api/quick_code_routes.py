@@ -174,6 +174,15 @@ class QuickCodeStartRequest(BaseModel):
     role_overrides: Dict[str, str] = Field(default_factory=dict)
     preferred_model: Optional[str] = Field(None, max_length=120)
     chat_session_id: Optional[str] = Field(None, max_length=80)
+    # V2 — Quick / Pro tier toggle.  ``"quick"`` runs with 256 MB / 15 s
+    # sandbox limits; ``"pro"`` opens up MCTS + 512 MB / 45 s.  The
+    # router auto-redirects ``"quick"`` requests classified as COMPLEX
+    # back to the Pro Code Intelligence engine.
+    mode: str = Field("quick", pattern="^(quick|pro)$")
+    # V2 — optional override for the router's classifier.  Accepts
+    # one of ``"trivial"``, ``"simple"``, ``"complex"``, ``"math"``;
+    # any other value silently falls back to ``None``.
+    complexity_hint: Optional[str] = Field(None, max_length=20)
 
 
 class QuickCodeStartResponse(BaseModel):
@@ -181,6 +190,12 @@ class QuickCodeStartResponse(BaseModel):
     session_id: str
     model_used: str = ""
     message: str = ""
+    # V2 — when the router classifies a quick-mode prompt as COMPLEX
+    # we tell the frontend to retry the request against the Pro
+    # endpoint instead of running the lightweight pipeline to a
+    # half-baked answer.  Both fields are empty on a normal start.
+    redirect_to: str = ""
+    redirect_reason: str = ""
 
 
 def _normalize_tier(value: Optional[str], fallback: str) -> str:
@@ -244,7 +259,50 @@ async def start_quick_code(
         allow_refine=body.allow_refine,
         max_refine=body.max_refine,
         role_overrides=dict(body.role_overrides or {}),
+        mode=body.mode,  # type: ignore[arg-type]
+        complexity_hint=body.complexity_hint,
     ).normalize()
+
+    # V2 — Quick → Pro auto-redirect (synchronous heuristic pre-check).
+    # The router's heuristic catches obvious COMPLEX prompts without
+    # an LLM call, so we can short-circuit *before* spawning the
+    # background task and tell the frontend to retry against
+    # ``/api/code/start``.  Falls open: any unexpected exception just
+    # lets the regular pipeline run.
+    redirect_to = ""
+    redirect_reason = ""
+    try:
+        from ..config.settings import settings as _qc_settings  # noqa: PLC0415
+
+        if (
+            getattr(_qc_settings, "quick_v2_enabled", True)
+            and getattr(_qc_settings, "quick_v2_router_enabled", True)
+            and getattr(_qc_settings, "quick_v2_router_redirect_to_pro", True)
+            and request.mode == "quick"
+        ):
+            from ..quick_code.router import _heuristic  # noqa: PLC0415
+            from ..quick_code.contracts import TaskComplexity  # noqa: PLC0415
+
+            verdict, reason = _heuristic(request.prompt)
+            if verdict is TaskComplexity.COMPLEX:
+                redirect_to = "/api/code/start"
+                redirect_reason = reason
+    except Exception as exc:  # pragma: no cover - cosmetic
+        logger.debug("quick_code_router_pre_check_failed: %s", exc)
+
+    if redirect_to:
+        # Don't spawn the background task — the frontend will retry
+        # against the Pro engine.  Surface a non-error response so
+        # the UI can redirect transparently.
+        return QuickCodeStartResponse(
+            success=True,
+            session_id=session_id,
+            model_used=resolved_model
+                or os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
+            message="Routed to Pro Code Intelligence",
+            redirect_to=redirect_to,
+            redirect_reason=redirect_reason,
+        )
 
     session: Dict[str, Any] = {
         "session_id": session_id,
@@ -257,6 +315,9 @@ async def start_quick_code(
         "completed_at": None,
         "request": request.to_dict(),
         "phases": [
+            # V2 — pre-pipeline router + cosine fast-path.
+            {"name": "classify",  "label": "Classifying task",      "status": "pending"},
+            {"name": "striatum",  "label": "Cache lookup",          "status": "pending"},
             {"name": "triage",    "label": "Triage",                "status": "pending"},
             {"name": "reason",    "label": "Reasoning",             "status": "pending"},
             {"name": "implement", "label": "Implementing",          "status": "pending"},

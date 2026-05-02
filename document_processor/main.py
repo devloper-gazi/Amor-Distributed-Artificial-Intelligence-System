@@ -89,6 +89,42 @@ except ImportError as _qc_exc:  # pragma: no cover
     QUICK_CODE_AVAILABLE = False
     logger.warning("QuickCode routes not available: %s", _qc_exc)
 
+# Sentinel — multi-agent local security intelligence (V1)
+try:
+    from .api.sentinel_routes import router as sentinel_router
+    SENTINEL_AVAILABLE = True
+except ImportError as _sentinel_exc:  # pragma: no cover
+    SENTINEL_AVAILABLE = False
+    logger.warning("Sentinel routes not available: %s", _sentinel_exc)
+
+# Sentinel Evolution Console — Phase 15 operator surface
+try:
+    from .api.sentinel_evolution_routes import router as sentinel_evolution_router
+    SENTINEL_EVOLUTION_AVAILABLE = True
+except ImportError as _sentinel_evo_exc:  # pragma: no cover
+    SENTINEL_EVOLUTION_AVAILABLE = False
+    logger.warning(
+        "Sentinel Evolution routes not available: %s", _sentinel_evo_exc,
+    )
+
+# OpenAI-compatible /v1 facade — Phase 16 Commit C
+try:
+    from .api.openai_compat_routes import router as openai_compat_router
+    OPENAI_COMPAT_AVAILABLE = True
+except ImportError as _openai_compat_exc:  # pragma: no cover
+    OPENAI_COMPAT_AVAILABLE = False
+    logger.warning(
+        "OpenAI-compatible facade routes not available: %s", _openai_compat_exc,
+    )
+
+# MCP server — Phase 16 Commit E
+try:
+    from .api.mcp_routes import router as mcp_router
+    MCP_ROUTES_AVAILABLE = True
+except ImportError as _mcp_exc:  # pragma: no cover
+    MCP_ROUTES_AVAILABLE = False
+    logger.warning("MCP routes not available: %s", _mcp_exc)
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -453,6 +489,31 @@ if CONSORTIUM_AVAILABLE:
 if QUICK_CODE_AVAILABLE:
     app.include_router(quick_code_router)
     logger.info("QuickCode routes included")
+
+# Sentinel — /api/sentinel/* (multi-agent security intelligence)
+if SENTINEL_AVAILABLE:
+    app.include_router(sentinel_router)
+    logger.info("Sentinel routes included")
+
+# Sentinel Evolution Console — /api/sentinel/evolution/*
+if SENTINEL_EVOLUTION_AVAILABLE:
+    app.include_router(sentinel_evolution_router)
+    logger.info("Sentinel Evolution routes included")
+
+# OpenAI-compatible /v1 facade — Phase 16 Commit C.
+# External SDKs (Letta, OpenHands, Aider, OpenAI SDK) plug in via
+# OPENAI_BASE_URL=http://localhost:8000/v1.
+if OPENAI_COMPAT_AVAILABLE:
+    app.include_router(openai_compat_router)
+    logger.info("OpenAI-compatible /v1 facade routes included")
+
+# MCP server — /mcp/v1/* (Phase 16 Commit E).  Endpoints are gated
+# by settings.enable_mcp_server (default False); the router is
+# included unconditionally so flipping the flag at runtime
+# activates discovery + tool calls without a restart.
+if MCP_ROUTES_AVAILABLE:
+    app.include_router(mcp_router)
+    logger.info("MCP /mcp/v1 routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

@@ -1,0 +1,60 @@
+# Sentinel Evolution — immutable constraints (Phase 15 §15.9).
+#
+# Mounted READ-ONLY by every evolution subsystem.  Any edit
+# requires hand-editing the source on disk + a manual reboot —
+# evolution code cannot mutate this file.
+
+network:
+  allowed_hosts:
+    - "127.0.0.1"
+    - "localhost"
+    - "::1"
+  forbidden_keywords:
+    - "https://"
+    - "http://api."
+    - "openai.com"
+    - "anthropic.com"
+    - "huggingface.co"
+    - "amazonaws.com"
+    - "googleapis.com"
+
+telemetry:
+  forbidden: true
+  forbidden_keywords:
+    - "telemetry"
+    - "analytics"
+    - "phone-home"
+    - "auto-update"
+    - "crash-reporter"
+    - "opentelemetry-export"
+
+output_sanitization:
+  forbidden_phrases:
+    - "rm -rf /"
+    - "/dev/tcp/"
+    - "nc -lvp"
+    - "netcat -lvp"
+    - "/bin/bash -i"
+    - "exec(\"powershell"
+    - "import socket; s=socket.socket()"
+    - "wget http://"
+    - "curl http://"
+    - "reverse-shell"
+    - "backdoor"
+  forbidden_regex:
+    - "0x[0-9a-fA-F]{40}"
+
+evolution_safety:
+  protected_files:
+    - "document_processor/sentinel/evolution/governance.py"
+    - "document_processor/code_intelligence/adversarial_reviewer.py"
+    - "document_processor/sentinel/evolution/immutable_constraints.yaml"
+  protected_settings:
+    - "sentinel_enabled"
+    - "quick_v2_specialist_32b_enabled"
+    - "quick_v2_speculative_decoding_enabled"
+
+acceptance:
+  precision_floor: 0.6
+  recall_floor: 0.3
+  latency_ceiling_seconds: 1800

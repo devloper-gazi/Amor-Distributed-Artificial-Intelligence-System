@@ -1,0 +1,182 @@
+{
+  "version": "2024",
+  "source": "MITRE CWE Top-25 (https://cwe.mitre.org/top25/) — bundled snapshot",
+  "license": "CC0 (the CWE catalogue itself; this excerpt is a fact-based subset)",
+  "entries": [
+    {
+      "id": "CWE-79",
+      "name": "Cross-site Scripting (XSS)",
+      "description": "Improper neutralization of input during web page generation lets an attacker inject script that runs in the victim's browser.",
+      "mitigation": "Output-encode untrusted data per context (HTML body, attribute, JS, CSS, URL). Use template engines that auto-escape. Apply a strict CSP.",
+      "example_languages": ["javascript", "typescript", "python", "php", "ruby", "java"]
+    },
+    {
+      "id": "CWE-787",
+      "name": "Out-of-bounds Write",
+      "description": "Writing past the end (or before the start) of an allocated buffer corrupts adjacent memory.",
+      "mitigation": "Use length-checked APIs (strncpy_s, snprintf). Prefer modern languages with bounds checks. Run ASan/UBSan in CI.",
+      "example_languages": ["c", "cpp"]
+    },
+    {
+      "id": "CWE-89",
+      "name": "SQL Injection",
+      "description": "Concatenating untrusted input into SQL queries lets an attacker change the query's logic.",
+      "mitigation": "Use parameterised queries / prepared statements exclusively. ORM frameworks help. Never string-concatenate user input.",
+      "example_languages": ["python", "javascript", "php", "java", "go"]
+    },
+    {
+      "id": "CWE-352",
+      "name": "Cross-Site Request Forgery (CSRF)",
+      "description": "An attacker tricks an authenticated browser into submitting a request the user did not intend.",
+      "mitigation": "Synchroniser tokens, SameSite=Lax/Strict cookies, double-submit cookies, custom request headers verified server-side.",
+      "example_languages": ["javascript", "typescript", "python", "ruby"]
+    },
+    {
+      "id": "CWE-22",
+      "name": "Path Traversal",
+      "description": "Accepting a path from untrusted input and resolving it without canonicalisation lets the attacker escape the intended directory.",
+      "mitigation": "Canonicalise (realpath / Path.resolve) and verify the result is inside an allow-listed root. Strip `..` segments after canonicalisation.",
+      "example_languages": ["python", "javascript", "go", "java"]
+    },
+    {
+      "id": "CWE-125",
+      "name": "Out-of-bounds Read",
+      "description": "Reading past the end (or before the start) of a buffer leaks memory contents to the attacker.",
+      "mitigation": "Length-check before each access. Use safer string functions. Run with sanitisers in tests.",
+      "example_languages": ["c", "cpp"]
+    },
+    {
+      "id": "CWE-78",
+      "name": "OS Command Injection",
+      "description": "Concatenating untrusted input into a shell command lets the attacker run arbitrary commands.",
+      "mitigation": "Use exec*-style APIs that take an argv list (not a shell string). Never invoke system()/popen(shell=True). If the shell is unavoidable, use vetted libraries that quote arguments.",
+      "example_languages": ["python", "javascript", "ruby", "php", "go", "rust"]
+    },
+    {
+      "id": "CWE-416",
+      "name": "Use After Free",
+      "description": "Accessing memory after it has been freed produces undefined behaviour and is exploitable.",
+      "mitigation": "Use smart pointers (unique_ptr / shared_ptr / Rc / Arc). Modern Rust eliminates this entire class statically.",
+      "example_languages": ["c", "cpp"]
+    },
+    {
+      "id": "CWE-862",
+      "name": "Missing Authorisation",
+      "description": "An action is performed without checking the actor has the right to perform it.",
+      "mitigation": "Centralise authorisation. Decorate every endpoint with an explicit role/permission check. Default-deny.",
+      "example_languages": ["python", "javascript", "go", "java", "ruby", "php"]
+    },
+    {
+      "id": "CWE-434",
+      "name": "Unrestricted Upload of File with Dangerous Type",
+      "description": "Allowing users to upload files without restricting file type/content lets the attacker plant executable payloads on the server.",
+      "mitigation": "Restrict by content sniffing (not just MIME). Store outside the web root. Scan with AV. Re-encode media.",
+      "example_languages": ["python", "javascript", "ruby", "php", "java"]
+    },
+    {
+      "id": "CWE-94",
+      "name": "Code Injection",
+      "description": "Untrusted input flows into eval / exec / Function() / template compile, letting the attacker run code in the host process.",
+      "mitigation": "Eliminate dynamic code evaluation entirely. Use safer alternatives (json.loads, ast.literal_eval, expression DSLs).",
+      "example_languages": ["python", "javascript", "ruby", "php"]
+    },
+    {
+      "id": "CWE-20",
+      "name": "Improper Input Validation",
+      "description": "The application receives input but does not validate it has the expected type, length, format, or range.",
+      "mitigation": "Allow-list validation per-field. Type coercion at the boundary. Reject early.",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-77",
+      "name": "Command Injection",
+      "description": "User input flows into a string passed to a command interpreter.",
+      "mitigation": "Argv-style APIs. Avoid shells. If unavoidable, use shlex.quote / pipes.quote — but prefer not to.",
+      "example_languages": ["python", "javascript", "ruby", "perl"]
+    },
+    {
+      "id": "CWE-287",
+      "name": "Improper Authentication",
+      "description": "Weak or missing authentication lets the attacker impersonate other users.",
+      "mitigation": "Use vetted libraries (Passport, oauthlib, Devise). Hash passwords with Argon2/bcrypt. Rate-limit. MFA.",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-269",
+      "name": "Improper Privilege Management",
+      "description": "A process gains more privilege than required, or fails to drop privileges before handling untrusted data.",
+      "mitigation": "Drop privileges with seteuid / capabilities. Run untrusted handlers in a sandbox.",
+      "example_languages": ["c", "cpp", "go", "rust"]
+    },
+    {
+      "id": "CWE-502",
+      "name": "Deserialisation of Untrusted Data",
+      "description": "Deserialising attacker-controlled input lets the attacker construct objects that execute code on instantiation (pickle.loads, yaml.load(unsafe), Java ObjectInputStream).",
+      "mitigation": "Use safe formats (JSON, MessagePack). When deserialising user input, validate type explicitly. yaml.safe_load instead of yaml.load.",
+      "example_languages": ["python", "java", "ruby", "php"]
+    },
+    {
+      "id": "CWE-200",
+      "name": "Information Exposure",
+      "description": "Sensitive information (stack trace, internal IP, version) is disclosed to an attacker.",
+      "mitigation": "Strip stack traces from production responses. Use generic error pages. Don't log secrets.",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-863",
+      "name": "Incorrect Authorisation",
+      "description": "The right authorisation check exists but is implemented incorrectly (off-by-one, wrong scope, wrong actor).",
+      "mitigation": "Test the negative path: unauthorised users must be rejected. Penetration test multi-tenant boundaries.",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-918",
+      "name": "Server-Side Request Forgery (SSRF)",
+      "description": "The server fetches a URL the attacker controls; can reach internal endpoints (cloud metadata, internal admin services).",
+      "mitigation": "Allow-list outbound destinations. Block link-local + RFC1918 + cloud metadata IPs. Resolve hostnames yourself and recheck.",
+      "example_languages": ["python", "javascript", "go", "ruby", "java"]
+    },
+    {
+      "id": "CWE-119",
+      "name": "Improper Restriction of Operations within the Bounds of a Memory Buffer",
+      "description": "Generic memory-safety issue in C/C++.",
+      "mitigation": "Bounds checking, smart pointers, std::vector::at, AddressSanitizer in CI.",
+      "example_languages": ["c", "cpp"]
+    },
+    {
+      "id": "CWE-476",
+      "name": "NULL Pointer Dereference",
+      "description": "Dereferencing a null pointer crashes the process and can be a DoS vector.",
+      "mitigation": "Initialize pointers. Check return values. Use Optional<T>/std::optional.",
+      "example_languages": ["c", "cpp", "java"]
+    },
+    {
+      "id": "CWE-798",
+      "name": "Use of Hard-coded Credentials",
+      "description": "Credentials (passwords, API keys, tokens) embedded in source code.",
+      "mitigation": "Use a secrets manager (Vault, AWS Secrets Manager) or environment variables. Pre-commit hooks (gitleaks).",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-190",
+      "name": "Integer Overflow / Wraparound",
+      "description": "An arithmetic operation produces a value outside the type's range and wraps around.",
+      "mitigation": "Use checked arithmetic (i32::checked_add). UBSan in CI. Validate inputs before maths.",
+      "example_languages": ["c", "cpp", "rust"]
+    },
+    {
+      "id": "CWE-400",
+      "name": "Uncontrolled Resource Consumption",
+      "description": "A request can cause unbounded CPU / memory / disk / network use.",
+      "mitigation": "Rate-limit. Set timeouts. Cap input size. Stream rather than buffer.",
+      "example_languages": ["*"]
+    },
+    {
+      "id": "CWE-306",
+      "name": "Missing Authentication for Critical Function",
+      "description": "A privileged action can be invoked without authentication.",
+      "mitigation": "Require authentication on every endpoint by default. Don't trust local-only paths in cloud deployments.",
+      "example_languages": ["*"]
+    }
+  ]
+}

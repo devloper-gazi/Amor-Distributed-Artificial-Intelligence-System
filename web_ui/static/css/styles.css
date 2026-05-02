@@ -1092,6 +1092,13 @@ body {
 /* ==================== Input Area (Fixed Bottom) ==================== */
 
 .input-area {
+    /* ``position: relative`` is the containing block for the
+       absolutely-positioned ``.research-settings-panel`` (the "More
+       settings" popover above the depth selector).  Without it the
+       panel falls back to the document and its ``bottom: 100%`` rule
+       anchors it to the top of the page — invisible to the user.
+       Keeping it relative is the canonical fix. */
+    position: relative;
     border-top: 1px solid var(--mono-border-light);
     background-color: var(--mono-bg-primary);
     padding: var(--space-4);
@@ -1690,6 +1697,8 @@ body {
 .top-bar-mode-dot.mode-research  { background: #7dcfff; box-shadow: 0 0 6px rgba(125,207,255,0.5); }
 .top-bar-mode-dot.mode-thinking  { background: #bb9af7; box-shadow: 0 0 6px rgba(187,154,247,0.5); }
 .top-bar-mode-dot.mode-coding    { background: #9ece6a; box-shadow: 0 0 6px rgba(158,206,106,0.45); }
+.top-bar-mode-dot.mode-consortium{ background: #c8a4ff; box-shadow: 0 0 6px rgba(200,164,255,0.45); }
+.top-bar-mode-dot.mode-sentinel  { background: #ff8a8a; box-shadow: 0 0 6px rgba(255,138,138,0.45); }
 @media (max-width: 720px) { .top-bar-current { display: none; } }
 
 /* --- Sidebar history-item polish ------------------------------------- */
@@ -1711,10 +1720,14 @@ body {
 .history-item.mode-research  .history-item-rail { background: rgba(125, 207, 255, 0.5); }
 .history-item.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 0.5); }
 .history-item.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 0.45); }
+.history-item.mode-consortium .history-item-rail { background: rgba(200, 164, 255, 0.45); }
+.history-item.mode-sentinel   .history-item-rail { background: rgba(255, 138, 138, 0.45); }
 .history-item.active .history-item-rail { top: 12%; bottom: 12%; }
 .history-item.active.mode-research  .history-item-rail { background: rgba(125, 207, 255, 1); }
 .history-item.active.mode-thinking  .history-item-rail { background: rgba(187, 154, 247, 1); }
 .history-item.active.mode-coding    .history-item-rail { background: rgba(158, 206, 106, 1); }
+.history-item.active.mode-consortium .history-item-rail { background: rgba(200, 164, 255, 1); }
+.history-item.active.mode-sentinel   .history-item-rail { background: rgba(255, 138, 138, 1); }
 
 /* Color-coded mode pill */
 .mode-pill {

@@ -358,6 +358,65 @@ surfaces by mode:
 | `POST /api/consortium/{sid}/cancel`               | Halt                          |
 | `GET  /api/consortium/{sid}/artifact`             | Runnable zip download         |
 
+### Sentinel — Multi-Agent Local Security Intelligence (V1)
+
+The 6th capability card on the homepage.  A multi-agent security
+audit pipeline that runs **100 % local** on the existing 8 GB GPU
+host with zero external API, zero telemetry.
+
+Pipeline stages:
+
+```
+input → static_swarm → ml_pipeline → aggregate
+      → rag_enrich → auditor (3×) → reasoner → redteam
+      → patcher → critic_loop → judge
+      → score → SARIF / MD / HTML
+```
+
+Five-agent swarm multiplexed onto the two installed Ollama models:
+
+| Role     | Model              | Temperature | Why |
+|----------|--------------------|-------------|-----|
+| Auditor  | qwen2.5-coder:7b   | 0.2         | 3× voting, code-tuned, strict JSON |
+| Reasoner | qwen2.5:7b         | 0.5         | CoT exploit-chain narrative |
+| RedTeam  | qwen2.5-coder:7b   | 0.7         | Concrete payloads, no hedging |
+| Patcher  | qwen2.5-coder:7b   | 0.2         | Deterministic full-function rewrites |
+| Judge    | qwen2.5:7b         | 0.0         | Calibrated final synthesis |
+
+Static-analysis swarm with graceful skip on missing tools:
+**bandit**, **pylint**, **mypy** (in `requirements.txt`) +
+**semgrep**, **gitleaks**, **trivy fs**, **gosec**, **cppcheck**
+(pulled if you want them; if not, the wrapper just emits a
+`tool_skipped` event and continues).
+
+Classical ML pipeline with pure-Python heuristics by default;
+optional `scikit-learn` / `xgboost` upgrades light up automatically
+when you install them.
+
+| Path                                              | Purpose                       |
+|---------------------------------------------------|-------------------------------|
+| `POST /api/sentinel/start`                        | Start a scan (quick / standard / deep / paranoid) |
+| `GET  /api/sentinel/{sid}/events`                 | SSE stream of phase events |
+| `GET  /api/sentinel/{sid}/status`                 | Phases + bundle snapshot |
+| `POST /api/sentinel/{sid}/cancel`                 | Halt mid-scan |
+| `GET  /api/sentinel/{sid}/artifact?format=…`      | Download SARIF / Markdown / HTML / zip |
+
+**Scan profiles**
+
+| Profile  | Stages                                           | Time  |
+|----------|--------------------------------------------------|-------|
+| quick    | static + ML only                                 | ~30 s |
+| standard | + auditor (3×) + patcher + critic + judge        | ~3 min |
+| deep     | + reasoner + redteam                             | ~10-15 min |
+| paranoid | deep + synthetic injection self-test            | ~25-30 min |
+
+The output is **SARIF 2.1.0** (open the `.sarif` file in VS Code
+with the SARIF Viewer extension), **GitHub-friendly Markdown**, or
+a single-file CSP-strict **HTML** report.
+
+See `docs/sentinel-architecture.md` and
+`docs/sentinel-agent-prompts.md` for the full design.
+
 Every start endpoint emits an `X-Model-Used: <tag>` response header
 so the picker UI can confirm which model the run uses.
 

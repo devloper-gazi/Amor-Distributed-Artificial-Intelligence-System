@@ -821,7 +821,28 @@ Question: {question}
 
 Answer:"""
             
-            # Call Ollama
+            # Phase 16 — route through the pluggable backend so users
+            # who flipped settings.llm_backend (llama-swap / llama.cpp
+            # / vLLM / ExLlamaV2) get the same RAG synthesis.  Ollama
+            # remains the default and the on-the-wire body for that
+            # backend is unchanged.
+            try:
+                from local_ai.llm_backend import get_backend  # noqa: PLC0415
+                backend = get_backend()
+            except Exception:
+                backend = None
+
+            if backend is not None and getattr(backend, "name", "") != "ollama":
+                try:
+                    answer = (await backend.complete(
+                        prompt, model=self.config.synthesis_model,
+                    )).strip()
+                    avg_score = sum(s.score for s in sources) / len(sources)
+                    return answer, avg_score
+                except Exception as exc:
+                    logger.error("llm_backend synthesis failed: %s", exc)
+                    return f"Error generating answer: {exc}", 0.0
+
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self.config.ollama_base_url}/api/generate",
@@ -831,14 +852,14 @@ Answer:"""
                         "stream": False,
                     },
                 )
-                
+
                 if response.status_code == 200:
                     result = response.json()
                     answer = result.get("response", "").strip()
-                    
+
                     # Calculate confidence based on source scores
                     avg_score = sum(s.score for s in sources) / len(sources)
-                    
+
                     return answer, avg_score
                 else:
                     logger.error(f"Ollama API error: {response.status_code}")

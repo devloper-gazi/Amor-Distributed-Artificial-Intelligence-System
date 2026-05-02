@@ -105,6 +105,41 @@ def test_normalize_idempotent():
     assert r.max_refine == 2
 
 
+# ── V2: mode + complexity_hint normalisation ────────────────────────
+
+
+def test_default_mode_is_quick():
+    r = QuickCodeRequest(prompt="x")
+    r.normalize()
+    assert r.mode == "quick"
+
+
+def test_mode_lowercased_and_clamped():
+    r = QuickCodeRequest(prompt="x", mode="PRO")  # type: ignore[arg-type]
+    r.normalize()
+    assert r.mode == "pro"
+    r2 = QuickCodeRequest(prompt="x", mode="weird")  # type: ignore[arg-type]
+    r2.normalize()
+    assert r2.mode == "quick"
+
+
+def test_complexity_hint_validated():
+    r = QuickCodeRequest(prompt="x", complexity_hint="MATH")
+    r.normalize()
+    assert r.complexity_hint == "math"
+    r2 = QuickCodeRequest(prompt="x", complexity_hint="bogus")
+    r2.normalize()
+    assert r2.complexity_hint is None
+
+
+def test_to_dict_carries_v2_fields():
+    r = QuickCodeRequest(prompt="x", mode="pro", complexity_hint="complex")
+    r.normalize()
+    payload = r.to_dict()
+    assert payload["mode"] == "pro"
+    assert payload["complexity_hint"] == "complex"
+
+
 # ── Reasoning.chosen property ───────────────────────────────────────
 
 
