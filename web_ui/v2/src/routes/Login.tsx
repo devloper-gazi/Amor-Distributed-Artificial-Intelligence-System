@@ -3,6 +3,36 @@ import { useNavigate } from "@solidjs/router";
 import { auth } from "../lib/auth";
 import { Button, Input } from "../components/ui";
 
+interface PydanticValidationError {
+  type: string;
+  loc: string[];
+  msg: string;
+  ctx?: Record<string, unknown>;
+}
+
+/** Map an ApiError / unknown thrown value to a single human-readable
+ *  string.  FastAPI returns ``{detail: "string"}`` for HTTPException
+ *  failures + ``{detail: [{loc, msg, ...}]}`` for Pydantic validation
+ *  errors.  Both must render legibly in the form's error banner. */
+function humanReadableError(err: unknown): string {
+  const body = (err as { body?: unknown } | null)?.body;
+  if (body && typeof body === "object" && "detail" in body) {
+    const d = (body as { detail: unknown }).detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d) && d.length > 0) {
+      // Array → take the first validation error and format as
+      // "field: message".
+      const first = d[0] as Partial<PydanticValidationError>;
+      const field = Array.isArray(first.loc)
+        ? first.loc.filter((s) => s !== "body").join(".")
+        : "field";
+      return `${field}: ${first.msg ?? "invalid"}`;
+    }
+  }
+  if (err instanceof Error) return err.message;
+  return "Sign-in failed";
+}
+
 /**
  * Login + register form.  Switches between modes via a toggle.
  * On success the auth store updates + we redirect to "/".
@@ -28,10 +58,7 @@ export const Login: Component = () => {
       }
       nav("/", { replace: true });
     } catch (err: unknown) {
-      const detail =
-        (err as { body?: { detail?: string } })?.body?.detail ??
-        (err instanceof Error ? err.message : "Sign-in failed");
-      setError(typeof detail === "string" ? detail : "Sign-in failed");
+      setError(humanReadableError(err));
     } finally {
       setBusy(false);
     }
@@ -91,8 +118,13 @@ export const Login: Component = () => {
             onInput={(e) => setPassword(e.currentTarget.value)}
             autocomplete={mode() === "login" ? "current-password" : "new-password"}
             required
-            minlength={mode() === "register" ? 8 : 1}
+            minlength={mode() === "register" ? 10 : 1}
           />
+          <Show when={mode() === "register"}>
+            <p class="-mt-1 text-[0.65rem] text-text-tertiary">
+              At least 10 chars · upper + lower + 1 digit.
+            </p>
+          </Show>
         </label>
 
         <Show when={error()}>

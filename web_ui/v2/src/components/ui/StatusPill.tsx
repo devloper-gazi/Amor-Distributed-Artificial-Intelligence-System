@@ -28,6 +28,11 @@ const STATUS_COLOR: Record<Status, string> = {
  * Status pill — the 4 states adopted across the diagnostics surface
  * (cf. design doc §5.2).  ``warming`` animates a pulse to signal
  * "loading"; the animation is disabled by ``prefers-reduced-motion``.
+ *
+ * Pass ``label=""`` to render the dot in icon-only mode (a tighter
+ * card layout).  ``aria-label`` always falls back to the status
+ * name so screen readers announce something meaningful even when
+ * the visible text is suppressed.
  */
 export const StatusPill: Component<StatusPillProps> = (props) => {
   const [local, rest] = splitProps(props, [
@@ -37,16 +42,30 @@ export const StatusPill: Component<StatusPillProps> = (props) => {
     "class",
   ]);
   const size = () => local.size ?? "sm";
+  /** Visible text — empty string OR undefined → icon only. */
+  const visibleText = (): string =>
+    local.label && local.label.length > 0 ? local.label : "";
+  /** ARIA label — always non-empty so SR users hear the status. */
+  const a11yLabel = (): string => visibleText() || STATUS_LABEL[local.status];
+  const iconOnly = () => visibleText() === "";
+
   return (
     <span
       class={[
-        "inline-flex items-center gap-1.5 rounded-full font-medium",
+        "inline-flex items-center rounded-full font-medium",
         "border border-border-subtle bg-bg-elevated text-text-primary",
-        size() === "sm" ? "h-6 px-2 text-xs" : "h-7 px-3 text-sm",
+        iconOnly()
+          ? size() === "sm"
+            ? "h-4 w-4"
+            : "h-5 w-5"
+          : size() === "sm"
+            ? "h-6 gap-1.5 px-2 text-xs"
+            : "h-7 gap-1.5 px-3 text-sm",
+        iconOnly() ? "justify-center" : "",
         local.class ?? "",
       ].join(" ")}
       role="status"
-      aria-label={local.label ?? STATUS_LABEL[local.status]}
+      aria-label={a11yLabel()}
       {...rest}
     >
       <span
@@ -57,7 +76,7 @@ export const StatusPill: Component<StatusPillProps> = (props) => {
         ].join(" ")}
         style={{ background: STATUS_COLOR[local.status] }}
       />
-      {local.label ?? STATUS_LABEL[local.status]}
+      {visibleText()}
     </span>
   );
 };
