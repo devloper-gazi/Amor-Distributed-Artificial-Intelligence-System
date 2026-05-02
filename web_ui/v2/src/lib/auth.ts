@@ -14,6 +14,7 @@
 
 import { createSignal } from "solid-js";
 import { api, setAccessToken, type ApiError } from "./api";
+import { resetAllChatStreams } from "./chat-stream";
 
 export interface User {
   id: string;
@@ -91,6 +92,17 @@ export const auth = {
     setAccessToken(null);
     setTokenSignal(null);
     setUserSignal(null);
+    // Clear every cached mode stream so the next user doesn't see
+    // the previous one's turns / phase state.
+    resetAllChatStreams();
+    // Build has its own module-scoped state (richer phase model);
+    // import lazily to dodge the circular dep that would otherwise
+    // form (Build → chat-stream → auth → Build).
+    import("../routes/Build")
+      .then((m) => m.resetBuild?.())
+      .catch(() => {
+        /* ignore — Build hasn't been chunked-in yet */
+      });
   },
 };
 

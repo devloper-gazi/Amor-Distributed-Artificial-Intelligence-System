@@ -15,7 +15,7 @@
  * routes/Sentinel for examples.
  */
 
-import { createSignal, onCleanup } from "solid-js";
+import { createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 import { api, type ApiError } from "./api";
 import {
@@ -77,6 +77,32 @@ interface StartResp {
   session_id: string;
 }
 
+/**
+ * Cache of stream singletons keyed by ``startPath`` — every mode has
+ * exactly one persistent stream that survives route remounts.  When
+ * the user navigates from /build → /system → /build the second mount
+ * gets the SAME signals back (turns + busy + status), so an
+ * in-flight pipeline keeps streaming and the prior turns stay
+ * visible.  Logout clears the cache via ``resetAllChatStreams``.
+ */
+const _streamCache = new Map<string, ChatStreamApi>();
+
+export function getChatStream<StartReq>(
+  cfg: ChatStreamConfig<StartReq>,
+): ChatStreamApi {
+  const cached = _streamCache.get(cfg.startPath);
+  if (cached) return cached;
+  const fresh = createChatStream(cfg);
+  _streamCache.set(cfg.startPath, fresh);
+  return fresh;
+}
+
+/** Clear every cached stream — call on logout so the next user
+ *  doesn't see the previous one's turns. */
+export function resetAllChatStreams(): void {
+  _streamCache.clear();
+}
+
 export function createChatStream<StartReq>(
   cfg: ChatStreamConfig<StartReq>,
 ): ChatStreamApi {
@@ -95,7 +121,9 @@ export function createChatStream<StartReq>(
       stream = null;
     }
   };
-  onCleanup(cleanup);
+  // No ``onCleanup`` here — module-scoped streams must outlive the
+  // route component that mounted them.  Cleanup happens explicitly
+  // via ``cancel()`` or ``resetAllChatStreams()`` on logout.
 
   const patchAssistant = (
     content: string,

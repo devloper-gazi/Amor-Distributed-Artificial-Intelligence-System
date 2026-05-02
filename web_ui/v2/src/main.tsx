@@ -101,21 +101,13 @@ const ErrorFallback: Component<{
           Something went wrong
         </h1>
         <p class="text-sm text-text-secondary">{detail()}</p>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            class="inline-flex h-9 items-center rounded-md bg-text-primary px-4 text-sm font-medium text-text-inverse hover:opacity-90"
-            onClick={props.reset}
-          >
-            Reload
-          </button>
-          <a
-            href="/legacy"
-            class="inline-flex h-9 items-center rounded-md border border-border-default bg-bg-elevated px-4 text-sm hover:bg-bg-hover"
-          >
-            Open legacy UI
-          </a>
-        </div>
+        <button
+          type="button"
+          class="inline-flex h-9 items-center rounded-md bg-text-primary px-4 text-sm font-medium text-text-inverse hover:opacity-90"
+          onClick={props.reset}
+        >
+          Reload
+        </button>
       </div>
     </div>
   );
@@ -136,7 +128,11 @@ render(
   () => (
     <ErrorBoundary fallback={(err, reset) => <ErrorFallback err={err} reset={reset} />}>
       <QueryClientProvider client={queryClient}>
-        <Router base="/v2" root={App}>
+        {/* No base — FastAPI's catch-all SPA fallback at
+            ``/{spa_path:path}`` serves the same shell for every
+            non-API URL, so SolidJS Router routes match on the full
+            pathname (e.g. ``/research`` → Research). */}
+        <Router root={App}>
           {/* Public */}
           <Route path="/login" component={Login} />
           <Route path="/showcase" component={Showcase} />

@@ -91,15 +91,6 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
         run: () => nav("/showcase"),
       },
       {
-        id: "sys-legacy",
-        label: "Open legacy UI",
-        hint: "previous v1 monochrome chat",
-        category: "System",
-        run: () => {
-          window.location.href = "/legacy";
-        },
-      },
-      {
         id: "theme-light",
         label: "Theme: Light",
         category: "Theme",
@@ -136,11 +127,17 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const filtered = createMemo<PaletteItem[]>(() => {
     const q = query().trim().toLowerCase();
     if (!q) return items();
-    return items().filter((it) =>
-      `${it.label} ${it.hint ?? ""} ${it.category}`
-        .toLowerCase()
-        .includes(q),
-    );
+    // Tokenize on whitespace + each token must hit somewhere in the
+    // searchable string.  This makes "theme dark" find "Theme: Dark"
+    // and "open legacy" find "Open legacy UI".  Substring-only would
+    // miss because the source string contains "theme: dark" with a
+    // colon between them.
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return items().filter((it) => {
+      const haystack = `${it.label} ${it.hint ?? ""} ${it.category}`
+        .toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
   });
 
   /** Reset state when the palette opens; focus the input. */

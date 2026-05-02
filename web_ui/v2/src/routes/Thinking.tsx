@@ -5,7 +5,7 @@ import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
 import {
-  createChatStream,
+  getChatStream,
   SIMPLE_TEXT_REDUCER,
 } from "../lib/chat-stream";
 
@@ -26,7 +26,7 @@ interface ThinkRequest {
  * If the user wants Q&A they can switch to the legacy UI.
  */
 export const Thinking: Component = () => {
-  const stream = createChatStream<ThinkRequest>({
+  const stream = getChatStream<ThinkRequest>({
     startPath: "/api/thinking/think",
     buildStartBody: (prompt) => ({ prompt, effort: "medium", answers: [] }),
     eventsPath: (sid) => `/api/thinking/${sid}/events`,

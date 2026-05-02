@@ -5,7 +5,7 @@ import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
 import {
-  createChatStream,
+  getChatStream,
   SIMPLE_TEXT_REDUCER,
   type EventReducer,
 } from "../lib/chat-stream";
@@ -31,7 +31,7 @@ export const Sentinel: Component = () => {
     return patch;
   };
 
-  const stream = createChatStream<SentinelRequest>({
+  const stream = getChatStream<SentinelRequest>({
     startPath: "/api/sentinel/start",
     buildStartBody: (prompt) => ({
       prompt,

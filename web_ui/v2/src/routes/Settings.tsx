@@ -90,12 +90,6 @@ export const Settings: Component = () => {
                 <Button variant="secondary" size="sm" onClick={onLogout}>
                   Sign out
                 </Button>
-                <a
-                  href="/legacy"
-                  class="inline-flex h-8 items-center rounded-md border border-border-default bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
-                >
-                  Open legacy UI
-                </a>
               </div>
             </div>
           </section>

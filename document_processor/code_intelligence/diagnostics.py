@@ -192,7 +192,10 @@ async def collect_models(*, base_url: str | None = None) -> dict:
         )
         reg = CodeModelRegistry(url)
         installed = await reg.probe()
-        roles = ["planner", "coder", "tester", "debugger", "critic"]
+        # v17 PR #1 — use architect/editor (the engine fires those at
+        # phase boundaries).  Keeps the diagnostics role table in
+        # sync with what the live pipeline actually routes.
+        roles = ["architect", "editor", "tester", "debugger", "critic"]
         chosen = reg.select_models_for_session(
             roles, effort=getattr(settings, "code_default_effort", "medium"),
             spread=True,

@@ -12,7 +12,6 @@ const SYSTEM_LINKS: ReadonlyArray<{
   external?: boolean;
 }> = [
   { href: "/settings", label: "Settings", glyph: "⚙" },
-  { href: "/legacy", label: "Open legacy UI", glyph: "↗", external: true },
 ];
 
 interface SidebarProps {

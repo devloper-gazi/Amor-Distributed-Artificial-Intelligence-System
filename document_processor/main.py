@@ -405,31 +405,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files and templates
+# Mount static files + templates
+#
+# The v1 monolithic UI was retired in favour of the SolidJS + Vite
+# v2 build under ``web_ui/v2/``.  Only the build output + favicons +
+# Jinja shell live on disk; everything else is the SPA.
+#
+# Mount order matters — ``/static/v2`` MUST register before
+# ``/static`` because Starlette greedy-matches mount prefixes.  In
+# the reverse order ``/static/v2/...`` would route into the public
+# ``/static`` mount which doesn't have that subtree, returning 404.
 import os
 web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
 
-# ── v17 UI redesign — parallel v2 mount (PR-1) ─────────────────────────────
-#
-# MUST be mounted BEFORE the legacy ``/static`` mount because
-# Starlette matches mounts in registration order and ``/static`` is a
-# prefix of ``/static/v2``.  Wrong order → /static/v2/... gets routed
-# to the v1 StaticFiles which doesn't have that subtree, returning
-# 404.
-#
-# The v2 build (Vite + SolidJS + Tailwind v4) lives at ``web_ui/v2``.
-# Source: ``web_ui/v2/src/``.  Production output: ``web_ui/v2/dist/``.
-# Vite emits hashed asset filenames + a ``manifest.json`` that tells
-# us which entry chunk + CSS files to inject into the HTML shell.
-#
-# Behaviour:
-#  * GET /v2  → serves the v2 SPA shell.  Reads ``manifest.json`` to
-#    pull the latest hashed entry script + CSS, then injects them
-#    into a Jinja template.
-#  * GET /static/v2/*  → serves any file under ``web_ui/v2/dist/``.
-#
-# The legacy v1 UI at ``/`` is untouched.  Operators can flip the
-# default by setting ``AMOR_UI=v2`` env var (see /, below).
 _v2_dist_path = os.path.join(web_ui_path, "v2", "dist")
 _v2_available = os.path.isdir(_v2_dist_path) and os.path.isfile(
     os.path.join(_v2_dist_path, ".vite", "manifest.json")
@@ -442,14 +430,18 @@ if _v2_available:
     )
     logger.info("v2_ui_mounted dist=%s", _v2_dist_path)
 else:
-    logger.info(
+    logger.warning(
         "v2_ui_not_built path=%s — run `cd web_ui/v2 && npm run build`",
         _v2_dist_path,
     )
 
-app.mount("/static", StaticFiles(directory=os.path.join(web_ui_path, "static")), name="static")
+# ``/static`` only serves favicons + img assets now (web_ui/static/img/).
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(web_ui_path, "static")),
+    name="static",
+)
 templates = Jinja2Templates(directory=os.path.join(web_ui_path, "templates"))
-app.state.static_version = os.getenv("STATIC_VERSION") or str(int(time.time()))
 
 
 def _read_v2_manifest() -> Optional[Dict[str, Any]]:
@@ -498,56 +490,32 @@ async def _serve_v2_shell(request: Request) -> Response:
     )
 
 
-@app.get("/v2", include_in_schema=False)
-async def root_v2(request: Request):
-    """Serve the v2 SPA shell at the ``/v2`` entry point."""
-    return await _serve_v2_shell(request)
-
-
-@app.get("/v2/{rest:path}", include_in_schema=False)
-async def v2_spa_fallback(request: Request, rest: str):  # noqa: ARG001 — captures path
-    """SPA fallback — every ``/v2/*`` URL renders the same shell so
-    SolidJS Router (with ``base="/v2"``) can take over client-side.
-    Static assets bypass this via the earlier ``/static/v2`` mount."""
-    return await _serve_v2_shell(request)
-
-
-@app.get("/legacy", include_in_schema=False)
-async def root_legacy(request: Request):
-    """v1 monochrome chat UI — the pre-v2 default.  Kept as a safety
-    net while v2 reaches feature parity for every mode.  Linked from
-    the v2 sidebar's "Open legacy UI" item."""
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "static_version": app.state.static_version},
-    )
-
-
-@app.get("/v1", include_in_schema=False)
-async def root_v1(request: Request):
-    """Alias for ``/legacy`` so links written before the v2 cutover
-    keep working."""
-    return await root_legacy(request)
+# ── SPA paths that must NOT be intercepted by the catch-all below.
+# Anything starting with one of these prefixes is either a router
+# mount (``/api``, ``/static``, ``/grafana``, ``/prometheus``,
+# ``/v1`` for OpenAI-compat, ``/mcp`` for Model Context Protocol)
+# or an explicit endpoint registered above (``/health``, ``/metrics``,
+# ``/stats``, ``/process``, ``/api`` info).  The catch-all SPA
+# fallback only fires for paths NOT matched by any of those.
+_RESERVED_PREFIXES: tuple[str, ...] = (
+    "api/", "static/", "v1/", "mcp/",
+    "grafana/", "prometheus/",
+    "health", "metrics", "stats", "process",
+    "favicon.ico",
+)
 
 
 @app.get("/")
 async def root(request: Request):
-    """v17 UI cutover — ``/`` now serves the v2 SolidJS SPA when
-    the build artefacts are present.  Falls back to v1 (``/legacy``)
-    automatically if the build is missing.  Operators can opt back
-    out of v2 by setting ``AMOR_UI=v1`` in the environment.
-    """
-    forced = os.getenv("AMOR_UI", "").lower()
-    if forced == "v1":
-        return await root_legacy(request)
-    if _v2_available and forced != "v1":
-        # 302 to /v2/ so the URL bar shows the SPA's own root and the
-        # SolidJS Router's ``base="/v2"`` resolves cleanly.
-        from fastapi.responses import RedirectResponse  # noqa: PLC0415
-        return RedirectResponse(url="/v2/", status_code=302)
-    # Build artefacts missing — serve v1 directly so the user has a
-    # working surface while the build is rebuilt.
-    return await root_legacy(request)
+    """v17 UI cutover — ``/`` now serves the v2 SolidJS SPA directly.
+    No more ``/v2`` prefix in the URL bar; the legacy v1 monolith was
+    retired in this turn and removed from the codebase entirely.
+
+    The catch-all SPA fallback for client-side routes (e.g.
+    ``/research``, ``/build``) is registered at the BOTTOM of this
+    file, AFTER every ``app.include_router(...)`` call, so the API
+    routers + mounts always win match-priority over the SPA shell."""
+    return await _serve_v2_shell(request)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -665,6 +633,25 @@ if CRAWLING_AVAILABLE:
 if TRANSLATION_AVAILABLE:
     app.include_router(translation_router)
     logger.info("Translation routes included")
+
+
+# ── SPA catch-all (must register AFTER every include_router) ───────────────
+# FastAPI matches routes in registration order.  If we define
+# ``/{spa_path:path}`` before the API routers, it shadows them and
+# every ``/api/...`` GET would render the SPA shell instead of
+# reaching the actual endpoint.  Register it last so the explicit
+# routers win match-priority.
+@app.get("/{spa_path:path}", include_in_schema=False)
+async def spa_fallback(request: Request, spa_path: str):
+    """Catch-all SPA fallback — every unmatched GET URL renders the
+    same shell so SolidJS Router takes over client-side.  Reserved
+    prefixes like ``api/``, ``static/``, ``grafana/`` are blocked
+    here as a safety net even though their mounts win
+    match-priority above us."""
+    if any(spa_path.startswith(p) for p in _RESERVED_PREFIXES):
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await _serve_v2_shell(request)
 
 
 @app.get("/health")

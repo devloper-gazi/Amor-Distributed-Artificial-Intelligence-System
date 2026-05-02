@@ -67,12 +67,14 @@ export const Home: Component = () => {
         </div>
 
         <div class="mx-auto mt-10 max-w-4xl rounded-lg border border-border-subtle bg-bg-secondary p-5 text-sm">
-          <p class="font-medium">Migrating to v2</p>
+          <p class="font-medium">Tip</p>
           <p class="mt-1 text-text-secondary">
-            Research and Build are wired to the live backend already.
-            Other modes are still hosted in the legacy UI — open them
-            via the sidebar's "Open legacy UI" link or directly at{" "}
-            <a class="underline" href="/legacy">/legacy</a>.
+            Press{" "}
+            <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">⌘K</kbd>
+            {" "}/{" "}
+            <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">Ctrl K</kbd>
+            {" "}anywhere to switch modes, change theme, jump to
+            diagnostics, or sign out — without leaving the keyboard.
           </p>
         </div>
       </div>
