@@ -13,7 +13,12 @@
  */
 
 import { createSignal } from "solid-js";
-import { api, setAccessToken, type ApiError } from "./api";
+import {
+  api,
+  onAuthChange,
+  setAccessToken,
+  type ApiError,
+} from "./api";
 import { resetAllChatStreams } from "./chat-stream";
 
 export interface User {
@@ -33,6 +38,25 @@ interface AuthTokens {
 const [user, setUserSignal] = createSignal<User | null>(null);
 const [token, setTokenSignal] = createSignal<string | null>(null);
 const [bootstrapped, setBootstrapped] = createSignal<boolean>(false);
+
+/** When the api module clears the in-memory access token (refresh
+ *  failure, explicit logout), cascade-clear the auth store + every
+ *  cached chat stream + Build's module-scoped state.  The route
+ *  guard's ``<Show when={auth.user()}>`` then bounces the user back
+ *  to /login automatically.  Lazy import to dodge the cycle:
+ *  Build → chat-stream → auth → Build. */
+onAuthChange((newToken) => {
+  setTokenSignal(newToken);
+  if (newToken === null) {
+    setUserSignal(null);
+    resetAllChatStreams();
+    import("../routes/Build")
+      .then((m) => m.resetBuild?.())
+      .catch(() => {
+        /* ignore — Build chunk not loaded yet */
+      });
+  }
+});
 
 export const auth = {
   user,
@@ -89,20 +113,12 @@ export const auth = {
     } catch {
       // Best-effort — client clears local state regardless.
     }
+    // ``setAccessToken(null)`` triggers the ``onAuthChange``
+    // subscriber above which clears user + chat caches + Build
+    // state in one place.  Keeping the cleanup centralised means
+    // an api-driven logout (refresh-after-401 fails) follows the
+    // same code path as a button-driven logout.
     setAccessToken(null);
-    setTokenSignal(null);
-    setUserSignal(null);
-    // Clear every cached mode stream so the next user doesn't see
-    // the previous one's turns / phase state.
-    resetAllChatStreams();
-    // Build has its own module-scoped state (richer phase model);
-    // import lazily to dodge the circular dep that would otherwise
-    // form (Build → chat-stream → auth → Build).
-    import("../routes/Build")
-      .then((m) => m.resetBuild?.())
-      .catch(() => {
-        /* ignore — Build hasn't been chunked-in yet */
-      });
   },
 };
 

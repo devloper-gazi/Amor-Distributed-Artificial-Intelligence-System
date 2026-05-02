@@ -635,24 +635,10 @@ if TRANSLATION_AVAILABLE:
     logger.info("Translation routes included")
 
 
-# ── SPA catch-all (must register AFTER every include_router) ───────────────
-# FastAPI matches routes in registration order.  If we define
-# ``/{spa_path:path}`` before the API routers, it shadows them and
-# every ``/api/...`` GET would render the SPA shell instead of
-# reaching the actual endpoint.  Register it last so the explicit
-# routers win match-priority.
-@app.get("/{spa_path:path}", include_in_schema=False)
-async def spa_fallback(request: Request, spa_path: str):
-    """Catch-all SPA fallback — every unmatched GET URL renders the
-    same shell so SolidJS Router takes over client-side.  Reserved
-    prefixes like ``api/``, ``static/``, ``grafana/`` are blocked
-    here as a safety net even though their mounts win
-    match-priority above us."""
-    if any(spa_path.startswith(p) for p in _RESERVED_PREFIXES):
-        from fastapi import HTTPException  # noqa: PLC0415
-        raise HTTPException(status_code=404, detail="Not Found")
-    return await _serve_v2_shell(request)
-
+# SPA catch-all is registered at the absolute end of this file so
+# explicit routes like ``/health``, ``/metrics``, ``/stats`` (defined
+# below) win match-priority.  Earlier placement shadowed those routes
+# and they returned 404 via the catch-all's reserved-prefix block.
 
 @app.get("/health")
 async def health_check():
@@ -816,6 +802,26 @@ async def reset_metrics():
     """Reset processing metrics."""
     pipeline.reset_metrics()
     return {"message": "Metrics reset successfully"}
+
+
+# ── SPA catch-all — must be the LAST registered route ──────────────────────
+# FastAPI matches routes in registration order.  An earlier
+# ``/{spa_path:path}`` shadowed every explicit route registered after
+# it (``/health``, ``/metrics``, ``/stats``, ``/process``, …) — those
+# were silently 404'd by the catch-all's reserved-prefix block.
+# Putting the catch-all at the bottom of the file guarantees every
+# explicit endpoint above wins match-priority.
+@app.get("/{spa_path:path}", include_in_schema=False)
+async def spa_fallback(request: Request, spa_path: str):
+    """Catch-all SPA fallback — every unmatched GET URL renders the
+    same shell so SolidJS Router takes over client-side.  Reserved
+    prefixes like ``api/``, ``static/``, ``grafana/`` are blocked
+    here as a safety net even though their mounts win
+    match-priority above us."""
+    if any(spa_path.startswith(p) for p in _RESERVED_PREFIXES):
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await _serve_v2_shell(request)
 
 
 if __name__ == "__main__":

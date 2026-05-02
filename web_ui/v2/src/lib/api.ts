@@ -103,7 +103,11 @@ interface RefreshBody {
   user?: unknown;
 }
 
-/** Hit /api/auth/refresh.  Returns the new access_token or throws. */
+/** Hit /api/auth/refresh.  Returns the new access_token or throws.
+ *  On a hard 401 (no valid refresh cookie), broadcast the logout
+ *  via ``setAccessToken(null)`` so subscribers (auth store, SSE
+ *  wrapper, route guard) can cascade-clear their state instead of
+ *  leaving the UI in a half-authenticated zombie. */
 async function refreshAccessToken(): Promise<string> {
   const resp = await fetch("/api/auth/refresh", {
     method: "POST",
@@ -117,10 +121,12 @@ async function refreshAccessToken(): Promise<string> {
     } catch {
       // ignore
     }
+    setAccessToken(null);
     throw new AuthError(body);
   }
   const json = (await resp.json()) as RefreshBody;
   if (!json.access_token) {
+    setAccessToken(null);
     throw new AuthError(json);
   }
   setAccessToken(json.access_token);
