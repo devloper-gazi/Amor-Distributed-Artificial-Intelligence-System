@@ -47,7 +47,7 @@ export const MODES: ReadonlyArray<ModeMeta> = [
     subtitle: "multi-step reasoning",
     glyph: "brain",
     href: "/thinking",
-    wired: false,
+    wired: true,
   },
   {
     key: "consortium",
@@ -55,7 +55,7 @@ export const MODES: ReadonlyArray<ModeMeta> = [
     subtitle: "research + think + build",
     glyph: "users-round",
     href: "/consortium",
-    wired: false,
+    wired: true,
   },
   {
     key: "sentinel",
@@ -63,7 +63,7 @@ export const MODES: ReadonlyArray<ModeMeta> = [
     subtitle: "governance, ledger",
     glyph: "shield-half",
     href: "/sentinel",
-    wired: false,
+    wired: true,
   },
   {
     key: "system",
@@ -71,7 +71,7 @@ export const MODES: ReadonlyArray<ModeMeta> = [
     subtitle: "diagnostics, memory",
     glyph: "activity",
     href: "/system",
-    wired: false,
+    wired: true,
   },
 ];
 

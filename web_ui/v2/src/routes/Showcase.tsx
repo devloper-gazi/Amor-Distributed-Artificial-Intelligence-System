@@ -1,4 +1,4 @@
-import { type Component, For, createSignal } from "solid-js";
+import { type Component, For, Show, createSignal, lazy } from "solid-js";
 import {
   Avatar,
   Badge,
@@ -14,6 +14,30 @@ import {
   Tooltip,
   type Status,
 } from "../components/ui";
+
+// Lazy-loaded so diff2html ships in its own chunk (≈ 90 KB gz)
+// only when the showcase or Build mode renders a diff.
+const DiffBlock = lazy(() =>
+  import("../components/chat/DiffBlock").then((m) => ({
+    default: m.DiffBlock,
+  })),
+);
+
+const DEMO_DIFF = `\
+<<<<<<< SEARCH
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n-1) + fib(n-2)
+=======
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    a, b = 0, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return b
+>>>>>>> REPLACE`;
 
 /**
  * Component showcase — Storybook-lite preview surface.  Used to
@@ -302,8 +326,38 @@ export const Showcase: Component = () => {
             </div>
           </div>
         </Section>
+
+        {/* DiffBlock — lazy-loaded diff2html viewer */}
+        <Section
+          title="DiffBlock"
+          subtitle="lazy-loaded diff2html — accepts unified diffs OR SEARCH/REPLACE blocks"
+        >
+          <DiffDemo />
+        </Section>
       </div>
     </main>
+  );
+};
+
+const DiffDemo: Component = () => {
+  const [show, setShow] = createSignal(false);
+  return (
+    <div>
+      <Show
+        when={show()}
+        fallback={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShow(true)}
+          >
+            Render demo diff
+          </Button>
+        }
+      >
+        <DiffBlock diff={DEMO_DIFF} filename="fib.py" format="line-by-line" />
+      </Show>
+    </div>
   );
 };
 

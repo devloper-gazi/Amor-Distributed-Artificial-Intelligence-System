@@ -21,14 +21,16 @@ import "./styles/global.css";
 import { AppShell } from "./components/shell/AppShell";
 import { Spinner } from "./components/ui";
 import { auth } from "./lib/auth";
-import { MODES } from "./lib/types";
 
 import { Home } from "./routes/Home";
 import { Research } from "./routes/Research";
 import { Build } from "./routes/Build";
+import { Thinking } from "./routes/Thinking";
+import { Consortium } from "./routes/Consortium";
+import { Sentinel } from "./routes/Sentinel";
+import { Diagnostics } from "./routes/Diagnostics";
 import { Settings } from "./routes/Settings";
 import { Login } from "./routes/Login";
-import { ComingSoon } from "./routes/ComingSoon";
 import { NotFound } from "./routes/NotFound";
 import { Showcase } from "./routes/Showcase";
 
@@ -79,11 +81,6 @@ const Protected: Component<RouteSectionProps> = (props) => {
       </Show>
     </Show>
   );
-};
-
-const ComingSoonRoute = (key: string): Component => {
-  const meta = MODES.find((m) => m.key === key);
-  return () => <ComingSoon mode={meta!} />;
 };
 
 /** Top-level error fallback so a thrown render error doesn't leave
@@ -149,10 +146,10 @@ render(
             <Route path="/" component={Home} />
             <Route path="/research" component={Research} />
             <Route path="/build" component={Build} />
-            <Route path="/thinking" component={ComingSoonRoute("thinking")} />
-            <Route path="/consortium" component={ComingSoonRoute("consortium")} />
-            <Route path="/sentinel" component={ComingSoonRoute("sentinel")} />
-            <Route path="/system" component={ComingSoonRoute("system")} />
+            <Route path="/thinking" component={Thinking} />
+            <Route path="/consortium" component={Consortium} />
+            <Route path="/sentinel" component={Sentinel} />
+            <Route path="/system" component={Diagnostics} />
             <Route path="/settings" component={Settings} />
           </Route>
 
