@@ -12,7 +12,11 @@ Public surface:
 * Tools (Tool ABC subclasses): ``CoreReadTool``, ``CoreWriteTool``,
   ``CorePatchTool``, ``RecallAppendTool``, ``RecallSearchTool``,
   ``ArchiveTool``, ``ArchivalSearchTool``, ``all_memory_tools``.
-* ``make_no_op_store`` — lazy default for agent DI.
+* ``make_persistent_default_store`` — production lazy-default for
+  agent DI (v17 PR #2 — fixes temp-dir GC bug).
+* ``make_in_memory_store`` — explicit ephemeral store for tests.
+* ``make_no_op_store`` — deprecated back-compat alias for
+  ``make_persistent_default_store``.
 
 Settings (from ``document_processor.config.settings``):
 * ``memory_archival_table: str = "amor_archival"`` (reserved for
@@ -29,7 +33,14 @@ from .archival_backend import (
 )
 from .core_backend import CoreMemoryBackend
 from .recall_backend import RecallEntry, RecallMemoryBackend
-from .store import LedgerHookFn, MemoryStats, MemoryStore, make_no_op_store
+from .store import (
+    LedgerHookFn,
+    MemoryStats,
+    MemoryStore,
+    make_in_memory_store,
+    make_no_op_store,
+    make_persistent_default_store,
+)
 from .tools import (
     ArchivalSearchTool,
     ArchiveTool,
@@ -56,6 +67,8 @@ __all__ = [
     "MemoryStore",
     "LedgerHookFn",
     "make_no_op_store",
+    "make_persistent_default_store",
+    "make_in_memory_store",
     # tools
     "CoreReadTool",
     "CoreWriteTool",
