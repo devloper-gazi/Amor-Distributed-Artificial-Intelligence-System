@@ -12,23 +12,29 @@ import {
 interface ThinkRequest {
   prompt: string;
   effort: string;
-  /** ``answers`` is required by the backend even when there are no
-   *  clarifying questions — empty array satisfies the contract. */
-  answers: string[];
+  /** Map of ClarifyingQuestion id → user's answer.  v2 skips the
+   *  ``/api/thinking/analyze`` Q&A step for now, so the dict is
+   *  always empty — the engine treats every clarification as
+   *  "no answer given" and proceeds. */
+  clarifications: Record<string, string>;
 }
 
 /**
  * Thinking mode — multi-step reasoning with streaming output.
  *
  * The backend has an ``/api/thinking/analyze`` endpoint that asks
- * clarifying questions before the run; v2 keeps the UI simple for
- * now and skips the Q&A step (effort=medium, no clarifications).
- * If the user wants Q&A they can switch to the legacy UI.
+ * clarifying questions before the run; v2 sends an empty
+ * ``clarifications`` map for now (the engine treats missing answers
+ * as "no answer given" and proceeds).
  */
 export const Thinking: Component = () => {
   const stream = getChatStream<ThinkRequest>({
     startPath: "/api/thinking/think",
-    buildStartBody: (prompt) => ({ prompt, effort: "medium", answers: [] }),
+    buildStartBody: (prompt) => ({
+      prompt,
+      effort: "medium",
+      clarifications: {},
+    }),
     eventsPath: (sid) => `/api/thinking/${sid}/events`,
     cancelPath: (sid) => `/api/thinking/${sid}/cancel`,
     reduce: SIMPLE_TEXT_REDUCER,
