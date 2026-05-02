@@ -87,6 +87,50 @@ interface StartResp {
  */
 const _streamCache = new Map<string, ChatStreamApi>();
 
+/** localStorage key per mode — survives F5 / browser restart so the
+ *  user's conversation isn't wiped by an accidental reload.  We only
+ *  persist the conversation transcript (``turns``); the live
+ *  EventSource is NOT resumed across reloads (the server-side
+ *  pipeline session may be terminal or gone). */
+const STORAGE_PREFIX = "amor.chat.v1.";
+const turnsKey = (startPath: string): string =>
+  `${STORAGE_PREFIX}${startPath}.turns`;
+
+function loadPersistedTurns(startPath: string): ChatTurn[] {
+  try {
+    const raw = localStorage.getItem(turnsKey(startPath));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatTurn[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTurns(startPath: string, turns: ChatTurn[]): void {
+  try {
+    // Cap history at last 100 turns / 256 KB to avoid blowing up
+    // localStorage on a long-running chat.
+    const sliced = turns.slice(-100);
+    const json = JSON.stringify(sliced);
+    if (json.length > 256_000) {
+      // Drop oldest until we fit.
+      let i = 0;
+      while (i < sliced.length - 4) {
+        const tail = sliced.slice(i + 1);
+        if (JSON.stringify(tail).length <= 256_000) {
+          localStorage.setItem(turnsKey(startPath), JSON.stringify(tail));
+          return;
+        }
+        i += 1;
+      }
+    }
+    localStorage.setItem(turnsKey(startPath), json);
+  } catch {
+    // Quota exceeded / disabled — best-effort.
+  }
+}
+
 export function getChatStream<StartReq>(
   cfg: ChatStreamConfig<StartReq>,
 ): ChatStreamApi {
@@ -100,16 +144,36 @@ export function getChatStream<StartReq>(
 /** Clear every cached stream — call on logout so the next user
  *  doesn't see the previous one's turns. */
 export function resetAllChatStreams(): void {
+  for (const key of _streamCache.keys()) {
+    try {
+      localStorage.removeItem(`${STORAGE_PREFIX}${key}.turns`);
+    } catch {
+      // ignore
+    }
+  }
   _streamCache.clear();
 }
 
 export function createChatStream<StartReq>(
   cfg: ChatStreamConfig<StartReq>,
 ): ChatStreamApi {
-  const [turns, setTurns] = createSignal<ChatTurn[]>([]);
+  // Hydrate persisted turns so an F5 / browser-restart doesn't lose
+  // the user's previous conversation.  Live stream isn't resumed —
+  // turns are read-only transcript replay until the next prompt.
+  const [turns, setTurns] = createSignal<ChatTurn[]>(
+    loadPersistedTurns(cfg.startPath),
+  );
   const [busy, setBusy] = createSignal(false);
   const [status, setStatus] = createSignal<StreamStatus>("closed");
   const [sessionId, setSessionId] = createSignal<string | null>(null);
+
+  // Persist on every turns mutation.  ``setTurns`` is wrapped so all
+  // mutations flow through one place.
+  const persistingSetTurns: typeof setTurns = (next) => {
+    const result = setTurns(next as Parameters<typeof setTurns>[0]);
+    queueMicrotask(() => persistTurns(cfg.startPath, turns()));
+    return result;
+  };
 
   let stream: OpenedStream | null = null;
   let assistantTurnId: string | null = null;
@@ -132,7 +196,7 @@ export function createChatStream<StartReq>(
   ): void => {
     if (!assistantTurnId) return;
     const id = assistantTurnId;
-    setTurns((prev) =>
+    persistingSetTurns((prev) =>
       prev.map((t) =>
         t.id === id ? { ...t, content, tag, streaming } : t,
       ),
@@ -170,12 +234,12 @@ export function createChatStream<StartReq>(
     buffer = "";
     setBusy(true);
     setStatus("connecting");
-    setTurns((prev) => [
+    persistingSetTurns((prev) => [
       ...prev,
       { id: newId(), role: "user", content: prompt, ts: Date.now() },
     ]);
     assistantTurnId = newId();
-    setTurns((prev) => [
+    persistingSetTurns((prev) => [
       ...prev,
       {
         id: assistantTurnId!,
@@ -225,7 +289,7 @@ export function createChatStream<StartReq>(
   };
 
   const pushTurn = (turn: Omit<ChatTurn, "id">): void => {
-    setTurns((prev) => [...prev, { ...turn, id: newId() }]);
+    persistingSetTurns((prev) => [...prev, { ...turn, id: newId() }]);
   };
 
   return {

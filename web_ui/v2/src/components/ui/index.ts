@@ -12,6 +12,7 @@ export { Divider, type DividerProps } from "./Divider";
 export { IconButton, type IconButtonProps } from "./IconButton";
 export { Input, type InputProps } from "./Input";
 export { Kbd, type KbdProps } from "./Kbd";
+export { Modal, type ModalProps } from "./Modal";
 export { ProgressBar, type ProgressBarProps } from "./ProgressBar";
 export { Spinner, type SpinnerProps } from "./Spinner";
 export {
