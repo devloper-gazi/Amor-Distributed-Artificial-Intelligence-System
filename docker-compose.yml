@@ -160,6 +160,16 @@ services:
       # ExecutionSandbox. Read-only is enough; we only need to
       # `docker run --rm` the runners.
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Phase 16.5 Commit K — shared sandbox workdir on a NAMED volume.
+      # When the app sits inside a container with the host docker
+      # socket bind-mounted, plain bind-mounts don't survive the
+      # path translation: the app sees ``/sandbox-shared/...`` but
+      # the host daemon (especially Docker Desktop on Windows / WSL2)
+      # can't resolve that path.  A named docker volume IS uniformly
+      # addressable: the app writes to ``/sandbox-shared/<run_id>/``
+      # and the sandbox runner mounts the SAME volume so the file is
+      # visible at the same path.
+      - amor-sandbox-shared:/sandbox-shared
 
     # P2.3: Healthcheck so a frozen worker (e.g. Ollama hang, deadlocked
     # event loop) is detected and restarted by Docker rather than
@@ -328,6 +338,15 @@ volumes:
   # Upload). Shared between app + ollama containers so the daemon can
   # read FROM-paths the app writes. Survives compose down/up.
   custom-models-data:
+  # Phase 16.5 Commit K — shared sandbox workdir.  Named volume
+  # so the app and per-run sandbox containers see the SAME files
+  # at the SAME path regardless of the host OS / WSL2 path
+  # translation.  Each sandbox run writes to a per-run subdir and
+  # cleans it up afterwards.  ``name:`` pins the on-disk volume
+  # name so docker-compose doesn't prefix it with the project name
+  # — ExecutionSandbox refers to the volume by this exact tag.
+  amor-sandbox-shared:
+    name: amor-sandbox-shared
 
 networks:
   docprocessor-network:

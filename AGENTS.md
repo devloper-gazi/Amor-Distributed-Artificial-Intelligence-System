@@ -422,6 +422,58 @@ Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
 every Sentinel prompt template for the banned phrase set on every
 build, mirroring the Quick Code V2 test.
 
+## Amor — Phase 16.5 Code Intelligence repair (sandbox + role diversity)
+
+Phase 16.5 fixes three separate bugs the user reported all
+collapsing into "Code Intelligence can't even produce a snake
+game":
+
+1. **Sandbox dead** — ``ExecutionSandbox`` short-circuited to
+   ``docker_unavailable`` because the bind-mounted
+   ``/var/run/docker.sock`` had no client binary to talk to.  The
+   Dockerfile now pulls the static Docker 27.3.1 client into
+   ``/usr/local/bin/docker`` so ``docker --version`` works inside
+   the app container.  Live-verified by
+   ``tests/code_intelligence/test_sandbox_live.py`` (gated by
+   ``AMOR_LIVE_TESTS=1``).
+2. **All five roles → same model** — ``_tag_installed`` did
+   prefix-match by base name, so ``qwen2.5-coder:14b`` and
+   ``qwen2.5-coder:32b`` were treated as installed whenever
+   ``qwen2.5-coder:7b`` was.  The +50 install bonus then dragged
+   every role onto the highest-scoring (uninstalled) flagship.
+   Fixed: tightened to exact-tag + suffix-tolerant variation on
+   the *same parameter size*.  Strength-match weight raised
+   2.0 → 6.0 so role-specific strength lists actually flip the
+   choice on a 2-model rig.
+3. **No session-level model diversity** — even with the scorer
+   fixed, ``ensure_model`` was looped per role and could still
+   land everyone on the same tag.  New
+   ``select_models_for_session(roles, effort)`` distributes roles
+   across distinct installed models with a 12-point degradation
+   cap so a role never drops to a meaningfully worse model just
+   for visual diversity.  ``CodeIntelligenceEngine._phase_model_prep``
+   promotes the resolved ``{role: tag}`` map into the active
+   routing ContextVar.
+
+Verified split on the production 2-model rig (qwen2.5:7b +
+qwen2.5-coder:7b)::
+
+    planner  → qwen2.5:7b           (reasoning)
+    critic   → qwen2.5:7b           (reasoning, kept by degradation cap)
+    debugger → qwen2.5:7b           (reasoning)
+    coder    → qwen2.5-coder:7b     (code generation)
+    tester   → qwen2.5-coder:7b     (code generation)
+
+Catalogue gained the brief-recommended fits for 8 GB VRAM:
+``deepseek-r1:7b`` (reasoning specialist), ``qwen3:8b`` /
+``qwen3:4b`` (Qwen3 instruct), ``josiefied-qwen3:8b`` (uncensored),
+``qwen2.5-coder:14b`` (borderline 8 GB w/ offload).  When any of
+these are pulled, the session selector slots them into reasoning-
+heavy roles automatically.
+
+See ``docs/amor-phase-16-foundations.md`` (Subsystem 1 + Pluggable
+LLM backend) for the underlying primitives.
+
 ## Amor — Phase 16 adapter foundations
 
 Phase 16 introduces the AMOR architecture brief's foundation

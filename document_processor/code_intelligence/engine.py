@@ -304,6 +304,34 @@ class CodeIntelligenceEngine:
             return {"models_used": {}, "skipped": True}
         models_used = await self._prepare_models()
         self.models_used = dict(models_used or {})
+
+        # Phase 16.5 — promote the per-role tag map into the active
+        # routing ContextVar so every downstream LLM call (planner,
+        # coder, tester, debugger, critic) routes to its bound tag.
+        # User-set routing wins: when the request layer already
+        # installed a routing doc with strategy="per_role", we leave
+        # it alone.  When nothing was set, we install our auto-
+        # derived per-role doc.
+        if self.models_used and len(set(self.models_used.values())) > 1:
+            try:
+                from ..api.local_ai_routes_simple import (  # noqa: PLC0415
+                    _ACTIVE_ROUTING, set_active_routing,
+                )
+                existing = _ACTIVE_ROUTING.get()
+                if (
+                    not existing
+                    or (existing or {}).get("strategy") != "per_role"
+                    or not (existing or {}).get("role_routes")
+                ):
+                    set_active_routing({
+                        "strategy": "per_role",
+                        "role_routes": dict(self.models_used),
+                    })
+            except Exception as exc:  # pragma: no cover
+                logger.debug(
+                    "auto-routing setup failed (non-fatal): %s", exc,
+                )
+
         return {"models_used": self.models_used}
 
     async def _phase_plan(self) -> dict[str, Any]:

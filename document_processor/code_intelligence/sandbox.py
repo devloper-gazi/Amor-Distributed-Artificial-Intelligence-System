@@ -34,14 +34,21 @@ logger = logging.getLogger(__name__)
 
 
 LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
+    # Phase 16.5 Commit K — every cmd is RELATIVE to the runner's
+    # ``--workdir``.  The runner workdir is either ``/sandbox/work``
+    # (bare-metal hosts where the app process and the docker daemon
+    # share a filesystem) or ``/sandbox-shared/<run_id>`` (the
+    # named-volume path used when the app sits inside a container
+    # with the host docker socket bind-mounted).  Either way the
+    # cmd doesn't need to know — relative paths just work.
     "python": {
         "image": "python:3.11-slim",
-        "cmd": ["python", "/sandbox/work/main.py"],
+        "cmd": ["python", "main.py"],
         "filename": "main.py",
     },
     "javascript": {
         "image": "node:20-slim",
-        "cmd": ["node", "/sandbox/work/main.js"],
+        "cmd": ["node", "main.js"],
         "filename": "main.js",
     },
     "typescript": {
@@ -49,19 +56,18 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "cmd": [
             "sh",
             "-c",
-            "cd /sandbox/work && "
             "npx -y -p typescript -p ts-node ts-node --skipProject main.ts 2>&1",
         ],
         "filename": "main.ts",
     },
     "bash": {
         "image": "bash:5",
-        "cmd": ["bash", "/sandbox/work/main.sh"],
+        "cmd": ["bash", "main.sh"],
         "filename": "main.sh",
     },
     "go": {
         "image": "golang:1.22-alpine",
-        "cmd": ["sh", "-c", "cd /sandbox/work && go run main.go 2>&1"],
+        "cmd": ["sh", "-c", "go run main.go 2>&1"],
         "filename": "main.go",
     },
     "rust": {
@@ -69,7 +75,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "cmd": [
             "sh",
             "-c",
-            "cd /sandbox/work && rustc main.rs -o /tmp/out && /tmp/out 2>&1",
+            "rustc main.rs -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.rs",
     },
@@ -78,7 +84,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "cmd": [
             "sh",
             "-c",
-            "cd /sandbox/work && g++ -O2 main.cpp -o /tmp/out && /tmp/out 2>&1",
+            "g++ -O2 main.cpp -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.cpp",
     },
@@ -87,7 +93,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "cmd": [
             "sh",
             "-c",
-            "cd /sandbox/work && cp Main.java /tmp/ && cd /tmp && "
+            "cp Main.java /tmp/ && cd /tmp && "
             "javac Main.java && java Main 2>&1",
         ],
         "filename": "Main.java",
@@ -184,6 +190,30 @@ class ExecutionSandbox:
         self._docker_available_cached_at: float = 0.0
         self._docker_probe_ttl: float = 300.0  # 5 minutes
         self._docker_probe_lock = asyncio.Lock()
+        # Phase 16.5 Commit K — workdir root.  When the app runs inside
+        # a container with the host docker socket bind-mounted, we
+        # need workdirs at a path the HOST docker daemon can see.
+        # Resolution order:
+        #  1. ``$AMOR_SANDBOX_WORKDIR`` env var (explicit override)
+        #  2. ``/sandbox-shared`` if it exists (the docker-compose
+        #     bind-mount adds this)
+        #  3. system tempdir (works on bare-metal hosts where the
+        #     app process runs alongside docker without any
+        #     in-container indirection)
+        self._workdir_root = self._resolve_workdir_root()
+
+    @staticmethod
+    def _resolve_workdir_root() -> str | None:
+        env = os.environ.get("AMOR_SANDBOX_WORKDIR", "").strip()
+        if env:
+            try:
+                os.makedirs(env, exist_ok=True)
+                return env
+            except OSError:
+                pass
+        if os.path.isdir("/sandbox-shared"):
+            return "/sandbox-shared"
+        return None  # tempfile.mkdtemp default
 
     # ── Image management ──────────────────────────────────────────────────
 
@@ -345,7 +375,9 @@ class ExecutionSandbox:
 
         timeout = int(timeout or self._default_timeout)
         container_name = f"amor-sandbox-{uuid.uuid4().hex[:12]}"
-        workdir = tempfile.mkdtemp(prefix="amor_sandbox_")
+        workdir = tempfile.mkdtemp(
+            prefix="amor_sandbox_", dir=self._workdir_root,
+        )
         proc: asyncio.subprocess.Process | None = None
 
         try:
@@ -378,13 +410,37 @@ class ExecutionSandbox:
                     install_prefix = f"pip install --quiet {pkgs} && "
                 elif lang in ("javascript", "typescript"):
                     pkgs = " ".join(f'"{p}"' for p in install_packages)
-                    install_prefix = f"cd /sandbox/work && npm install --silent {pkgs} && "
+                    # Phase 16.5 Commit K — runner already cd-ed via
+                    # --workdir; no need for explicit cd here.
+                    install_prefix = f"npm install --silent {pkgs} && "
             if install_prefix:
                 # Wrap whatever cmd we had in a single shell invocation.
                 original_cmd = " ".join(cmd_parts)
                 cmd_parts = ["sh", "-c", f"{install_prefix}{original_cmd}"]
 
             await self._ensure_image(cfg["image"])
+
+            # Phase 16.5 Commit K — when the workdir lives on the
+            # shared docker named volume (``/sandbox-shared/...``),
+            # mount the volume into the runner so the host docker
+            # daemon never has to resolve a host filesystem path.
+            # Otherwise fall back to the bind-mount path used by
+            # bare-metal hosts where the app process and the docker
+            # daemon share a filesystem.
+            if (
+                self._workdir_root == "/sandbox-shared"
+                and workdir.startswith("/sandbox-shared/")
+            ):
+                run_id = os.path.basename(workdir.rstrip("/"))
+                runner_workdir = f"/sandbox-shared/{run_id}"
+                volume_args = [
+                    "--mount",
+                    "type=volume,src=amor-sandbox-shared,"
+                    "dst=/sandbox-shared,readonly",
+                ]
+            else:
+                runner_workdir = "/sandbox/work"
+                volume_args = ["-v", f"{workdir}:/sandbox/work:ro"]
 
             docker_args = [
                 "docker",
@@ -405,10 +461,9 @@ class ExecutionSandbox:
                 "--read-only",
                 "--tmpfs",
                 "/tmp:size=64m,exec",
-                "-v",
-                f"{workdir}:/sandbox/work:ro",
+                *volume_args,
                 "--workdir",
-                "/sandbox/work",
+                runner_workdir,
                 cfg["image"],
                 *cmd_parts,
             ]
