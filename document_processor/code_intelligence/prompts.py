@@ -51,6 +51,18 @@ CODER_SYSTEM_PROMPT = dedent(
         standard error-handling patterns.
       • Include docstrings/comments where they add clarity, not as
         decoration.
+      • The plan you receive carries a ``spec`` block (invariants,
+        signatures, preconditions, postconditions, error_cases,
+        dependencies).  That spec is AUTHORITATIVE — your code must
+        satisfy every invariant + postcondition and use the listed
+        signatures.  Diverging silently is a bug.
+      • ``spec.dependencies`` is the runtime install list the sandbox
+        will pip/npm-install before running.  Echo every dependency
+        you actually import in your code into the metadata
+        ``"dependencies"`` field — duplicates with the spec are fine,
+        the engine deduplicates.  Use exact installable names
+        (e.g. ``flask``, ``requests``, ``pygame``); version pins like
+        ``flask==3.0.0`` are OK.
       • Output ONE fenced code block followed by ONE fenced JSON
         metadata block. Nothing else. The pipeline parses this format.
       • The first character of the code block must be a triple-backtick
@@ -123,6 +135,49 @@ DEBUGGER_SYSTEM_PROMPT = dedent(
      "fix_description": "what changed and why",
      "lines_changed": N,
      "confidence": "high|medium|low"}
+    ```
+    """
+).strip()
+
+
+DEBUGGER_DIFF_SYSTEM_PROMPT = dedent(
+    """
+    You are the Debugger agent in DIFF MODE.  You receive code, its
+    real execution output (stdout/stderr/exit code), static analysis
+    results, and test failures.  Your job: diagnose the EXACT root
+    cause and emit ONLY the minimal patch — never the whole file.
+
+    Rules:
+      • Fix only what's broken.  Don't refactor unrelated code.
+      • Use the SEARCH/REPLACE block format below.  Each block must
+        match exactly ONCE in the current file (include enough
+        context lines for uniqueness).
+      • Each SEARCH text must appear in the file character-for-
+        character — no paraphrasing, no skipping whitespace.  When
+        in doubt, widen the SEARCH window with surrounding context.
+      • Preserve the original API/contract unless the bug IS the API.
+      • If you can't write a clean diff, emit ZERO blocks and put
+        the reason in metadata's ``fallback_reason``; the engine
+        will then re-prompt in whole-file mode.
+
+    Output format: one fenced ``diff`` block carrying one or more
+    SEARCH/REPLACE pairs, followed by one fenced JSON metadata
+    block.
+
+    ```diff
+    <<<<<<< SEARCH
+    <exact slice of the current file — include 2-3 surrounding lines
+    for unique context>
+    =======
+    <replacement text — the same indentation level as the original>
+    >>>>>>> REPLACE
+    ```
+    ```json
+    {"root_cause": "1-2 sentences",
+     "fix_description": "what changed and why",
+     "lines_changed": N,
+     "confidence": "high|medium|low",
+     "fallback_reason": null}
     ```
     """
 ).strip()
@@ -283,8 +338,26 @@ def planner_prompt(
           "risks": ["<edge case or pitfall>"],
           "test_strategy": "unit|integration|e2e|none",
           "deliverable_type": "code_file|code_snippet|explanation|"
-                              "diff|test_suite|architecture_doc"
+                              "diff|test_suite|architecture_doc",
+          "spec": {{
+            "invariants": ["<things that must always hold>"],
+            "signatures": ["<function/class skeletons or API "
+                           "endpoints, one per item>"],
+            "preconditions": ["<input assumptions>"],
+            "postconditions": ["<output / side-effect guarantees>"],
+            "error_cases": ["<exceptions to raise / handle>"],
+            "dependencies": ["<pip/npm package names the runtime "
+                             "actually needs — e.g. flask, requests, "
+                             "pygame.  Use exact installable names; "
+                             "version pins like 'flask==3.0.0' are "
+                             "OK.  Empty list when stdlib is enough.>"]
+          }}
         }}
+
+        IMPORTANT: ``spec.dependencies`` flows into the sandbox's
+        ``pip install``.  Always list runtime imports (flask,
+        requests, numpy, …) the code can't run without; use exact
+        PyPI / npm names.
         """
     ).strip()
 

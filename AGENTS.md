@@ -422,6 +422,65 @@ Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
 every Sentinel prompt template for the banned phrase set on every
 build, mirroring the Quick Code V2 test.
 
+## Amor — Phase 17 Strong Code Intelligence
+
+Phase 17 closes the user-reported "Code Intelligence çok zayıf …
+hatasız çalıştığından emin olabilir misin? Mevcut sistem düzgün
+çalışmıyor" complaint with six commits:
+
+1. **`GET /api/code/diagnostics`** — single-call snapshot of
+   backend, models + role assignment, sandbox health + cold-start
+   telemetry, RAG config, Phase 15 ledger integrity, Phase 16
+   facade gates, recent sessions + failures.  Operator visibility
+   the user explicitly asked for.
+2. **`_publish` cross-replica Redis fallback + invert engine→
+   routes layer violation** — surgical hardening when
+   `_sessions[sid]` is empty on a polling replica + decouple
+   engine from the routes module via injected `routing_setter`.
+3. **Strict planner `spec` block + engine forwards
+   `dependencies` to sandbox** — fixes the user's
+   `ModuleNotFoundError: No module named 'flask'`.  Planner
+   prompts now require an authoritative `spec` (invariants,
+   signatures, preconditions, postconditions, error_cases,
+   dependencies); engine sanitises against an allow-list regex
+   and pipes to `install_packages=`.
+4. **Per-language sandbox timeout map + pip/npm bridge network
+   install path** — HTML/CSS drop to 5s; compile-heavy widen to
+   60-90s; `--network=bridge` only when packages requested;
+   pip/npm install into `/tmp/pip-prefix` so tmpfs writes don't
+   poison the base image's site-packages tree.
+5. **Diff-mode DebuggerAgent** — SEARCH/REPLACE block format
+   (Aider / Cline / OpenHands convention), 3-5x token savings on
+   500-LOC outputs, fewer regressions in untouched lines.  Falls
+   back to whole-file rewrite when the diff doesn't apply
+   cleanly.
+6. **Phase 17 docs** — `docs/amor-phase-17-strong-code-intelligence.md`.
+
+Three immutable rules for every Phase 17 commit:
+
+1. **Backwards compatibility is non-negotiable.**  Every flag
+   defaults to "current behaviour".  `_publish` Redis fallback
+   only fires when the in-memory miss already happened (silent
+   failure before).  Diff-mode debugger falls back to whole-file
+   when the patch doesn't apply.  Engine works without
+   `routing_setter`.
+2. **Visibility before optimisation.**  Diagnostics endpoint
+   (Commit R) shipped first because the user can't tell if
+   anything else worked without it.  Future perf work
+   (pre-warmed sandbox pool, 3-vote planner) gates on diagnostics
+   numbers, not speculation.
+3. **Layer cleanliness.**  Engine doesn't import from routes.
+   Sandbox doesn't import from engine.  Each subsystem has a
+   stable contract that the next phase can build on.
+
+The test surface lives at `tests/code_intelligence/test_diagnostics.py`,
+`test_routing_setter.py`, `test_dependency_forwarding.py`,
+`test_per_language_timeout.py`, and `test_diff_mode_debugger.py`
+(63 tests total).
+
+See `docs/amor-phase-17-strong-code-intelligence.md` for the full
+subsystem map, settings reference, and live-verified commands.
+
 ## Amor — Phase 16.5 Code Intelligence repair (sandbox + role diversity)
 
 Phase 16.5 fixes three separate bugs the user reported all
@@ -551,4 +610,5 @@ configuration reference, and disk layout.
 - **`docs/sentinel-ml-models.md`** - Classical ML pipeline + RAG layout
 - **`docs/sentinel-evolution.md`** - Phase 15 Evolution Engine (9 subsystems + Console)
 - **`docs/amor-phase-16-foundations.md`** - Phase 16 Adapter Foundations (LLM backend, /v1 facade, RAG upgrade, MCP, memory)
+- **`docs/amor-phase-17-strong-code-intelligence.md`** - Phase 17 Strong Code Intelligence (diagnostics endpoint, planner spec block, dependency forwarding, diff-mode debugger)
 - **`example_usage.py`** - Python client examples for pipeline APIs

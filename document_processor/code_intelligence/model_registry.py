@@ -246,6 +246,25 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         license="MIT",
     ),
     ModelSpec(
+        # 14B distill — partial CPU offload on 8 GB VRAM but
+        # meaningfully stronger reasoning than the 7B for stuck
+        # debug iterations.  Phase 16.5 — slots into ``debugger``
+        # role when installed.
+        ollama_tag="deepseek-r1:14b",
+        display_name="DeepSeek-R1 distill 14B",
+        params_b=14,
+        vram_gb=9,
+        swebench_pct=53.1,
+        humaneval_pct=92.4,
+        context_k=128,
+        strengths=[
+            "reasoning", "debugging", "review", "step-by-step",
+            "code generation", "agentic loops", "multi-file editing",
+        ],
+        tier="balanced",
+        license="MIT",
+    ),
+    ModelSpec(
         ollama_tag="qwen3:8b",
         display_name="Qwen3 8B (Instruct)",
         params_b=8,

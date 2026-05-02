@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -179,6 +180,14 @@ class CodeIntelligenceEngine:
         # Called once at the START of every agent phase with the role
         # name (e.g. "planner", "coder", "tester", "debugger", "critic").
         role_setter: Callable[[str | None], Any] | None = None,
+        # Phase 17 Commit S — routing_setter inverts the previous
+        # engine→routes layer violation.  Routes inject a callable
+        # that takes the auto-derived ``{role: tag}`` dict from
+        # ``_phase_model_prep`` and pushes it into the active
+        # routing ContextVar (so ``call_ollama_with`` can resolve
+        # per-role tags).  Default ``None`` is a no-op so the engine
+        # stays unit-testable in isolation.
+        routing_setter: Callable[[dict], None] | None = None,
     ) -> None:
         self.prompt = prompt
         self.code_context = code_context or None
@@ -205,6 +214,10 @@ class CodeIntelligenceEngine:
         # v4 — role_setter is a no-op fallback so engine code stays
         # branch-free at every phase boundary.
         self._role_setter = role_setter or (lambda _r: None)
+        # Phase 17 Commit S — routing_setter same shape as role_setter.
+        self._routing_setter: Callable[[dict], None] = (
+            routing_setter or (lambda _doc: None)
+        )
 
         self.phases: list[CodePhase] = [
             CodePhase(name=name, label=label) for name, label in CODE_PHASES
@@ -215,6 +228,11 @@ class CodeIntelligenceEngine:
         self.triage: dict[str, Any] = {}
         self.models_used: dict[str, str] = {}
         self.plan: dict[str, Any] = {}
+        # Phase 17 Commit M — coder metadata stored separately so
+        # ``_phase_execute`` can forward ``dependencies`` to the
+        # sandbox.  Without this, snake-game-website kept crashing
+        # with ``ModuleNotFoundError: No module named 'flask'``.
+        self.coder_metadata: dict[str, Any] = {}
         self.code: str | None = None
         self.tests: str | None = None
         self.execution_results: list[dict[str, Any]] = []
@@ -305,28 +323,18 @@ class CodeIntelligenceEngine:
         models_used = await self._prepare_models()
         self.models_used = dict(models_used or {})
 
-        # Phase 16.5 — promote the per-role tag map into the active
-        # routing ContextVar so every downstream LLM call (planner,
-        # coder, tester, debugger, critic) routes to its bound tag.
-        # User-set routing wins: when the request layer already
-        # installed a routing doc with strategy="per_role", we leave
-        # it alone.  When nothing was set, we install our auto-
-        # derived per-role doc.
+        # Phase 17 Commit S — promote the per-role tag map into the
+        # active routing via the injected ``routing_setter`` callback
+        # so the engine doesn't have to import from the routes layer
+        # (the previous engine→routes layer violation).  Routes wire
+        # the callback to ``set_active_routing`` when constructing
+        # the engine.
         if self.models_used and len(set(self.models_used.values())) > 1:
             try:
-                from ..api.local_ai_routes_simple import (  # noqa: PLC0415
-                    _ACTIVE_ROUTING, set_active_routing,
-                )
-                existing = _ACTIVE_ROUTING.get()
-                if (
-                    not existing
-                    or (existing or {}).get("strategy") != "per_role"
-                    or not (existing or {}).get("role_routes")
-                ):
-                    set_active_routing({
-                        "strategy": "per_role",
-                        "role_routes": dict(self.models_used),
-                    })
+                self._routing_setter({
+                    "strategy": "per_role",
+                    "role_routes": dict(self.models_used),
+                })
             except Exception as exc:  # pragma: no cover
                 logger.debug(
                     "auto-routing setup failed (non-fatal): %s", exc,
@@ -371,6 +379,10 @@ class CodeIntelligenceEngine:
         self.code = out.code
         if out.data.get("language"):
             self.detected_language = out.data["language"]
+        # Phase 17 Commit M — capture coder metadata (incl. the
+        # ``dependencies`` list) so ``_phase_execute`` can forward
+        # them as ``install_packages`` to the sandbox.
+        self.coder_metadata = dict(out.data or {})
         await self._emit(
             {
                 "type": "code_ready",
@@ -385,6 +397,39 @@ class CodeIntelligenceEngine:
             "metadata": out.data,
         }
 
+    # Phase 17 Commit M — dependency sanitiser.  Allow-list-only
+    # to keep arbitrary shell metacharacters out of the
+    # ``pip install ...`` command-line the sandbox builds.
+    _DEP_RE = re.compile(
+        r"^[a-zA-Z][\w\-\.]*(?:\[[\w\-\.,]+\])?(?:[<>=!~]=?[\w\-\.\+]+)?$"
+    )
+
+    @classmethod
+    def _sanitise_dependencies(
+        cls, raw: list, *, max_packages: int = 12,
+    ) -> list[str]:
+        """Filter a candidate dependency list against an allow-list
+        regex + cap at ``max_packages``.  Empty / non-string entries
+        are dropped; entries failing the regex are dropped.  Returns
+        the sanitised list.  Never raises."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for entry in raw or []:
+            if not isinstance(entry, str):
+                continue
+            cleaned = entry.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            if len(cleaned) > 80:
+                continue
+            if not cls._DEP_RE.match(cleaned):
+                continue
+            out.append(cleaned)
+            seen.add(cleaned)
+            if len(out) >= max_packages:
+                break
+        return out
+
     async def _phase_execute(self) -> dict[str, Any]:
         if not self.enable_execution or not self.sandbox or not self.code:
             self._skip("execute", "execution disabled or no code")
@@ -395,9 +440,35 @@ class CodeIntelligenceEngine:
                 "language": self.detected_language,
             }
         )
+        # Phase 17 Commit M — forward `dependencies` from the plan
+        # spec block + coder metadata to the sandbox so the user's
+        # earlier ``ModuleNotFoundError: No module named 'flask'``
+        # scenario actually pip-installs flask before running.
+        deps_raw = []
+        spec = (self.plan or {}).get("spec") or {}
+        if isinstance(spec, dict):
+            deps_raw.extend(spec.get("dependencies") or [])
+        deps_raw.extend(self.coder_metadata.get("dependencies") or [])
+        install_packages = self._sanitise_dependencies(deps_raw)
+
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "code_sandbox_pip_install_enabled", True):
+                install_packages = []
+        except Exception:
+            pass
+
+        if install_packages:
+            await self._emit({
+                "type": "execution_install_packages",
+                "packages": list(install_packages),
+                "language": self.detected_language,
+            })
+
         result = await self.sandbox.execute(
             code=self.code,
             language=self.detected_language,
+            install_packages=install_packages or None,
         )
         self.execution_results.append(result.to_dict())
         await self._emit(

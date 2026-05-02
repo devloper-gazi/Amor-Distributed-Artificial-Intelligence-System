@@ -208,11 +208,20 @@ async def _publish(session_id: str, event: Dict[str, Any]) -> None:
             alert = {**alert, "event_id": uuid4().hex}
         # Critical hit → mark session for cancellation so the engine
         # halts at the next phase boundary.
+        # Phase 17 Commit S — fall through to ``_load`` (Redis cache)
+        # when the in-memory dict on this replica is empty.  Without
+        # this, on a multi-replica deployment the alert silently
+        # fails to set cancel_requested when the start landed on a
+        # different replica.  Cross-replica correctness via the
+        # existing ``_persist`` write-back.
         if alert.get("severity") == "critical":
             session = _sessions.get(session_id)
+            if session is None:
+                session = await _load(session_id)
             if session is not None:
                 session["cancel_requested"] = True
                 session["adversarial_alert"] = alert
+                _sessions[session_id] = session
                 await _persist(session_id, session)
 
     events_to_emit: List[Dict[str, Any]] = []
@@ -683,6 +692,27 @@ async def _run_session(session_id: str) -> None:
         except Exception:  # pragma: no cover
             pass
 
+    # Phase 17 Commit S — invert the previous engine→routes layer
+    # violation.  Engine no longer imports from the routes module;
+    # we inject a callback that pushes the auto-derived per-role
+    # routing doc into the same ContextVar the engine used to write
+    # directly.  User-set routing wins; when nothing was previously
+    # set, the engine's per-role doc takes effect.
+    def _phase_routing(doc: dict) -> None:
+        try:
+            from .local_ai_routes_simple import (  # noqa: PLC0415
+                _ACTIVE_ROUTING, set_active_routing,
+            )
+            existing = _ACTIVE_ROUTING.get()
+            if (
+                not existing
+                or (existing or {}).get("strategy") != "per_role"
+                or not (existing or {}).get("role_routes")
+            ):
+                set_active_routing(doc)
+        except Exception:  # pragma: no cover
+            pass
+
     engine = CodeIntelligenceEngine(
         prompt=session["prompt"],
         code_context=session.get("code_context"),
@@ -699,6 +729,7 @@ async def _run_session(session_id: str) -> None:
         on_event=on_event,
         prepare_models=prepare_models,
         role_setter=_phase_role,
+        routing_setter=_phase_routing,
     )
 
     session["status"] = "in_progress"
@@ -924,6 +955,34 @@ def _merge_phase_result(
         session["debug_iterations"] = int(detail.get("iterations") or 0)
     elif phase == "review":
         session["review"] = detail
+
+
+# ─── /diagnostics — Phase 17 Commit R ────────────────────────────────────────
+#
+# REGISTERED BEFORE /{session_id}/* routes so FastAPI doesn't capture
+# "diagnostics" as a session id.  FastAPI matches paths in registration
+# order; literal paths must come BEFORE path-parameter routes that
+# could shadow them.
+
+
+@router.get("/diagnostics")
+async def code_diagnostics(user: User = Depends(get_current_user)):
+    """Phase 17 Commit R — single-call snapshot of Code Intelligence
+    health: backend, models + role assignment, sandbox health +
+    cold-start telemetry, RAG config, Phase 15 ledger integrity,
+    Phase 16 facade gates, recent sessions + failures.
+
+    The user's complaint that triggered Phase 17 was "Mevcut sistem
+    düzgün çalışmıyor / hatasız çalıştığından emin olabilir misin".
+    Without this endpoint they can't see *why* a session looks weak
+    or which subsystem is in a degraded state.
+    """
+    from ..code_intelligence import diagnostics as diag  # noqa: PLC0415
+    payload = await diag.build_diagnostics(
+        sessions_map=_sessions, probe_sandbox=True,
+    )
+    payload["user_id"] = str(user.id)
+    return payload
 
 
 # ─── /cancel ─────────────────────────────────────────────────────────────────
