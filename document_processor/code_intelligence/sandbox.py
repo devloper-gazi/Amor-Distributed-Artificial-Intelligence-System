@@ -45,11 +45,13 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "image": "python:3.11-slim",
         "cmd": ["python", "main.py"],
         "filename": "main.py",
+        "default_timeout_s": 30,
     },
     "javascript": {
         "image": "node:20-slim",
         "cmd": ["node", "main.js"],
         "filename": "main.js",
+        "default_timeout_s": 30,
     },
     "typescript": {
         "image": "node:20-slim",
@@ -59,16 +61,20 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             "npx -y -p typescript -p ts-node ts-node --skipProject main.ts 2>&1",
         ],
         "filename": "main.ts",
+        # ts-node fetch + first compile is ~10-20s on cold caches.
+        "default_timeout_s": 60,
     },
     "bash": {
         "image": "bash:5",
         "cmd": ["bash", "main.sh"],
         "filename": "main.sh",
+        "default_timeout_s": 30,
     },
     "go": {
         "image": "golang:1.22-alpine",
         "cmd": ["sh", "-c", "go run main.go 2>&1"],
         "filename": "main.go",
+        "default_timeout_s": 60,
     },
     "rust": {
         "image": "rust:1.78-slim",
@@ -78,6 +84,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             "rustc main.rs -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.rs",
+        "default_timeout_s": 90,
     },
     "cpp": {
         "image": "gcc:13",
@@ -87,6 +94,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             "g++ -O2 main.cpp -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.cpp",
+        "default_timeout_s": 60,
     },
     "java": {
         "image": "openjdk:21-slim",
@@ -97,6 +105,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             "javac Main.java && java Main 2>&1",
         ],
         "filename": "Main.java",
+        "default_timeout_s": 60,
     },
     # Phase 16.5 Commit L — HTML / static-website runner.  Uses
     # Python's stdlib html.parser to validate the markup parses
@@ -131,6 +140,10 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             ),
         ],
         "filename": "main.html",
+        # html.parser is sub-second; tight cap catches infinite-
+        # generator HTML (extremely rare but possible with very
+        # large generated documents).
+        "default_timeout_s": 5,
     },
     "css": {
         "image": "python:3.11-slim",
@@ -147,6 +160,7 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
             ),
         ],
         "filename": "main.css",
+        "default_timeout_s": 5,
     },
 }
 
@@ -423,7 +437,18 @@ class ExecutionSandbox:
                 language=language,
             )
 
-        timeout = int(timeout or self._default_timeout)
+        # Phase 17 Commit O — per-language timeout map.  Caller's
+        # explicit ``timeout=`` always wins; otherwise fall back to
+        # ``LANGUAGE_RUNNERS[lang]["default_timeout_s"]`` which is
+        # tighter than the 30s instance default for cheap parsers
+        # (HTML / CSS) and laxer for compile-heavy languages
+        # (Rust / TS).
+        if timeout is None:
+            timeout = int(
+                cfg.get("default_timeout_s") or self._default_timeout,
+            )
+        else:
+            timeout = int(timeout)
         container_name = f"amor-sandbox-{uuid.uuid4().hex[:12]}"
         workdir = tempfile.mkdtemp(
             prefix="amor_sandbox_", dir=self._workdir_root,
