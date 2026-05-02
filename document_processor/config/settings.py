@@ -486,6 +486,15 @@ class Settings(BaseSettings):
     # late-chunking.  Aligns with BGE-M3's 8192-token sequence cap.
     rag_late_chunking_window: int = 8192
 
+    # ── Phase 16 Commit E — MCP-style typed tool registry ──────────
+    # Master gate for the ``/mcp/v1/*`` server.  Off by default —
+    # operators flip on per-host once they've vetted what the
+    # registry exposes (read_file / search_codebase / compile_check
+    # / taint_trace / cve_lookup / exploit_sandbox).  ``/v1/*`` and
+    # the in-process tool registry are always available; only the
+    # external MCP client surface is gated.
+    enable_mcp_server: bool = False
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
