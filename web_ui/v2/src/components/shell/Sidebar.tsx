@@ -2,20 +2,23 @@ import { type Component, For, Show } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import { MODES, type ModeMeta } from "../../lib/types";
 import { auth } from "../../lib/auth";
-import { Avatar, Tooltip, IconButton } from "../ui";
+import { Avatar, Tooltip, IconButton, Kbd } from "../ui";
+import { SessionList } from "./SessionList";
 
 const SYSTEM_LINKS: ReadonlyArray<{
   href: string;
   label: string;
   glyph: string;
+  external?: boolean;
 }> = [
   { href: "/settings", label: "Settings", glyph: "⚙" },
-  { href: "/legacy", label: "Open legacy UI", glyph: "↗" },
+  { href: "/legacy", label: "Open legacy UI", glyph: "↗", external: true },
 ];
 
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  onOpenPalette: () => void;
 }
 
 /** Lucide-style glyph fallback — we render an emoji-class character
@@ -61,6 +64,32 @@ export const Sidebar: Component<SidebarProps> = (props) => {
         </IconButton>
       </div>
 
+      {/* Command palette trigger */}
+      <Show when={!props.collapsed}>
+        <button
+          type="button"
+          onClick={props.onOpenPalette}
+          class="mx-3 mt-3 flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
+          aria-label="Open command palette"
+        >
+          <span>Search…</span>
+          <Kbd>Mod+K</Kbd>
+        </button>
+      </Show>
+      <Show when={props.collapsed}>
+        <div class="mx-2 mt-3 flex justify-center">
+          <Tooltip label="Command palette (⌘K)" placement="right">
+            <IconButton
+              aria-label="Open command palette"
+              size="sm"
+              onClick={props.onOpenPalette}
+            >
+              <span aria-hidden="true">⌘</span>
+            </IconButton>
+          </Tooltip>
+        </div>
+      </Show>
+
       {/* Modes */}
       <nav class="flex-1 overflow-y-auto px-2 py-3">
         <Show when={!props.collapsed}>
@@ -85,26 +114,57 @@ export const Sidebar: Component<SidebarProps> = (props) => {
           <For each={SYSTEM_LINKS}>
             {(link) => (
               <li>
-                <A
-                  href={link.href}
-                  class={[
-                    "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
-                    "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
-                    isActive(link.href) ? "bg-bg-hover text-text-primary" : "",
-                  ].join(" ")}
-                  end={link.href === "/"}
+                <Show
+                  when={link.external}
+                  fallback={
+                    <A
+                      href={link.href}
+                      class={[
+                        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
+                        "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                        isActive(link.href)
+                          ? "bg-bg-hover text-text-primary"
+                          : "",
+                      ].join(" ")}
+                      end={link.href === "/"}
+                    >
+                      <span
+                        class="w-4 text-center text-text-tertiary"
+                        aria-hidden="true"
+                      >
+                        {link.glyph}
+                      </span>
+                      <Show when={!props.collapsed}>
+                        <span class="truncate">{link.label}</span>
+                      </Show>
+                    </A>
+                  }
                 >
-                  <span class="w-4 text-center text-text-tertiary" aria-hidden="true">
-                    {link.glyph}
-                  </span>
-                  <Show when={!props.collapsed}>
-                    <span class="truncate">{link.label}</span>
-                  </Show>
-                </A>
+                  <a
+                    href={link.href}
+                    class={[
+                      "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
+                      "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                    ].join(" ")}
+                  >
+                    <span
+                      class="w-4 text-center text-text-tertiary"
+                      aria-hidden="true"
+                    >
+                      {link.glyph}
+                    </span>
+                    <Show when={!props.collapsed}>
+                      <span class="truncate">{link.label}</span>
+                    </Show>
+                  </a>
+                </Show>
               </li>
             )}
           </For>
         </ul>
+
+        {/* Sessions */}
+        <SessionList collapsed={props.collapsed} />
       </nav>
 
       {/* User card */}
