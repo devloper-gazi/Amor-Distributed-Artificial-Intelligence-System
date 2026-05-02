@@ -107,6 +107,16 @@ except ImportError as _sentinel_evo_exc:  # pragma: no cover
         "Sentinel Evolution routes not available: %s", _sentinel_evo_exc,
     )
 
+# OpenAI-compatible /v1 facade — Phase 16 Commit C
+try:
+    from .api.openai_compat_routes import router as openai_compat_router
+    OPENAI_COMPAT_AVAILABLE = True
+except ImportError as _openai_compat_exc:  # pragma: no cover
+    OPENAI_COMPAT_AVAILABLE = False
+    logger.warning(
+        "OpenAI-compatible facade routes not available: %s", _openai_compat_exc,
+    )
+
 # Crawling and Translation API routes
 try:
     from .api.crawling_routes import router as crawling_router
@@ -481,6 +491,13 @@ if SENTINEL_AVAILABLE:
 if SENTINEL_EVOLUTION_AVAILABLE:
     app.include_router(sentinel_evolution_router)
     logger.info("Sentinel Evolution routes included")
+
+# OpenAI-compatible /v1 facade — Phase 16 Commit C.
+# External SDKs (Letta, OpenHands, Aider, OpenAI SDK) plug in via
+# OPENAI_BASE_URL=http://localhost:8000/v1.
+if OPENAI_COMPAT_AVAILABLE:
+    app.include_router(openai_compat_router)
+    logger.info("OpenAI-compatible /v1 facade routes included")
 
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)

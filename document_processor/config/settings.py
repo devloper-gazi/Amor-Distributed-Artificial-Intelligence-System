@@ -441,6 +441,12 @@ class Settings(BaseSettings):
     # to ``OLLAMA_BASE_URL`` env var / per-backend default.
     llm_backend_url: str = ""
 
+    # OpenAI-compatible /v1 facade master gate (Commit C).  Off here
+    # makes external SDKs (Letta, OpenHands, Aider) unable to plug in
+    # via OPENAI_BASE_URL=http://localhost:8000/v1, but does not break
+    # any internal code path.
+    openai_compat_enabled: bool = True
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
