@@ -127,17 +127,40 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const filtered = createMemo<PaletteItem[]>(() => {
     const q = query().trim().toLowerCase();
     if (!q) return items();
-    // Tokenize on whitespace + each token must hit somewhere in the
-    // searchable string.  This makes "theme dark" find "Theme: Dark"
-    // and "open legacy" find "Open legacy UI".  Substring-only would
-    // miss because the source string contains "theme: dark" with a
-    // colon between them.
+    // Tokenize on whitespace + each token must hit somewhere.  Then
+    // SCORE so label-matches outrank hint-only matches — the user
+    // typing "theme system" wants the "Theme: System" command, not
+    // the Settings page (whose hint happens to contain "theme,
+    // account").
     const tokens = q.split(/\s+/).filter(Boolean);
-    return items().filter((it) => {
-      const haystack = `${it.label} ${it.hint ?? ""} ${it.category}`
-        .toLowerCase();
-      return tokens.every((t) => haystack.includes(t));
-    });
+    const scored: Array<{ item: PaletteItem; score: number }> = [];
+    for (const it of items()) {
+      const label = it.label.toLowerCase();
+      const hint = (it.hint ?? "").toLowerCase();
+      const cat = it.category.toLowerCase();
+      const haystack = `${label} ${hint} ${cat}`;
+      if (!tokens.every((t) => haystack.includes(t))) continue;
+
+      let score = 0;
+      // +50 per token that hits the LABEL.
+      for (const t of tokens) {
+        if (label.includes(t)) score += 50;
+        else if (hint.includes(t)) score += 10;
+        else if (cat.includes(t)) score += 5;
+      }
+      // Bonus when the FULL query is a contiguous substring of the
+      // label (e.g. "theme system" finds "theme: system" as one
+      // chunk after stripping the colon).
+      const labelStripped = label.replace(/[:,]/g, " ");
+      if (labelStripped.includes(q)) score += 100;
+      // Tiny stable-sort tiebreak: prefer shorter labels (more
+      // specific commands).
+      score -= label.length * 0.01;
+
+      scored.push({ item: it, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map((s) => s.item);
   });
 
   /** Reset state when the palette opens; focus the input. */
