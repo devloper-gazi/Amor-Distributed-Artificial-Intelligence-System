@@ -338,10 +338,32 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
 #
 # When DeepSeek-R1 / Qwen3 are installed they slot into reasoning-
 # heavy roles automatically.
+#
+# v17 PR #1 — architect + editor roles added.  These are the
+# preferred names the engine fires for the plan + implement phases.
+# ``planner`` and ``coder`` remain as aliases for back-compat with
+# pre-v17 callers (e.g. quick_code, sentinel agents) and existing
+# tests.  The strength lists are tuned so:
+#
+#   architect → reasoning + step-by-step + code-gen + review
+#               + debugging  → DeepSeek-R1-Distill-Qwen-7B wins
+#               when installed; falls back to qwen2.5:7b.
+#   editor    → code generation / python / typescript /
+#               multi-file editing / infilling / fast inference
+#               → qwen2.5-coder:7b wins; qwen2.5-coder:14b wins
+#               when installed (heavier multi-file editing weight).
 ROLE_STRENGTH_MAP: dict[str, list[str]] = {
+    "architect": [
+        "reasoning", "step-by-step", "code generation", "review",
+        "debugging",
+    ],
     "planner": [
         "planning", "reasoning", "agentic loops", "explanation",
         "multi-file editing", "step-by-step",
+    ],
+    "editor": [
+        "code generation", "python", "typescript", "multi-file editing",
+        "infilling", "fast inference",
     ],
     "coder": [
         "code generation", "python", "typescript", "fast inference",
@@ -633,10 +655,19 @@ class CodeModelRegistry:
 
         Roles are processed in this priority order so the most
         expensive / specialist roles get first dibs:
-        ``planner → critic → debugger → coder → tester → triage``.
+        ``architect → planner → critic → debugger → editor →
+        coder → tester → triage``.
         Unknown roles fall through with the plain ``select_model``.
+
+        v17 PR #1 — architect + editor inserted at the heads of
+        their respective groups so a session that fires both
+        (engine plan + implement phases) gets distinct picks
+        first, and old planner/coder paths keep working.
         """
-        priority = ["planner", "critic", "debugger", "coder", "tester", "triage"]
+        priority = [
+            "architect", "planner", "critic", "debugger",
+            "editor", "coder", "tester", "triage",
+        ]
         ordered = [r for r in priority if r in roles] + [
             r for r in roles if r not in priority
         ]

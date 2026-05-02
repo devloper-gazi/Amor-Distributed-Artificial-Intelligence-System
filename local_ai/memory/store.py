@@ -198,18 +198,74 @@ class MemoryStore:
             logger.debug("memory ledger hook failed: %s", exc)
 
 
-def make_no_op_store() -> "MemoryStore":
-    """Return a stand-in store that uses a temporary directory.
+def make_persistent_default_store(
+    root: str | Path | None = None,
+) -> "MemoryStore":
+    """Return a process-stable ``MemoryStore`` rooted at
+    ``data/amor_memory/default-<pid>/`` (or ``<root>/default-<pid>/``
+    when ``root`` is given).
 
-    Useful for the ``_BaseAgent._default_memory()`` lazy fallback
-    so agents constructed without an explicit ``memory=`` argument
-    still get a functional (process-local) memory hierarchy."""
+    v17 PR #2 — replaces the ``tempfile.mkdtemp`` path used by
+    the previous ``make_no_op_store``.  The temp-dir path was
+    silently GC'd by Windows ``%TEMP%`` cleanup / Docker overlay
+    GC mid-session, causing agents that lazily constructed a
+    default store to lose their writes between turns.  A
+    persistent path under ``data/amor_memory/`` survives across
+    container restarts AND survives temp-dir cleanup, while
+    keeping the per-process scoping of the old behaviour.
+
+    The ``-<pid>`` suffix isolates concurrent processes (e.g.
+    multiple uvicorn workers) so they don't trample each other's
+    SQLite WAL files.  Within one process every call returns the
+    same path, so an agent that calls ``_default_memory()`` twice
+    sees the same store.
+    """
+    import os  # noqa: PLC0415
+    if root is None:
+        try:
+            from document_processor.config.settings import settings  # noqa: PLC0415
+            root_path = Path(getattr(settings, "memory_root", "data/amor_memory"))
+        except Exception:
+            root_path = Path("data/amor_memory")
+    else:
+        root_path = Path(root)
+    target = root_path / f"default-{os.getpid()}"
+    return MemoryStore(
+        root=target,
+        audit_enabled=False,
+    )
+
+
+def make_in_memory_store() -> "MemoryStore":
+    """Return a ``MemoryStore`` rooted in a unique tempfile dir
+    suitable for unit tests.  Caller is responsible for cleanup —
+    pytest's ``tmp_path`` fixture is the recommended alternative.
+
+    v17 PR #2 — kept separate from the persistent default so test
+    code that wants ephemeral state can opt in explicitly.  Use
+    this only when the test would otherwise collide with another
+    test's persistent path; prefer ``MemoryStore(root=tmp_path)``
+    for normal pytest usage.
+    """
     import tempfile  # noqa: PLC0415
-    tmp = Path(tempfile.mkdtemp(prefix="amor_memory_default_"))
+    tmp = Path(tempfile.mkdtemp(prefix="amor_memory_test_"))
     return MemoryStore(
         root=tmp,
         audit_enabled=False,
     )
+
+
+def make_no_op_store() -> "MemoryStore":
+    """Deprecated — back-compat alias for
+    ``make_persistent_default_store()``.
+
+    Pre-v17 callers (``_BaseAgent._default_memory``, existing
+    tests) passing through this function transparently move to
+    the persistent path.  New code should call
+    ``make_persistent_default_store(root)`` (production) or
+    ``make_in_memory_store()`` (tests) directly.
+    """
+    return make_persistent_default_store()
 
 
 __all__ = [
@@ -217,4 +273,6 @@ __all__ = [
     "MemoryStats",
     "LedgerHookFn",
     "make_no_op_store",
+    "make_persistent_default_store",
+    "make_in_memory_store",
 ]

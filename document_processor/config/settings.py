@@ -251,6 +251,24 @@ class Settings(BaseSettings):
     # Comma-separated language images to pre-pull at startup so the
     # first execution isn't slowed by a 100 MB image fetch.
     code_sandbox_prewarm_images: str = "python:3.11-slim,node:20-slim"
+    # v17 PR #5 — sandbox warm-pool scaffolding.  ``size=0`` disables
+    # the pool entirely (current behaviour: a fresh container per
+    # ``execute()``).  Set ``size>=1`` to opt in to a future
+    # ``SandboxPool`` that pre-creates ``size`` ``docker create`` 'd
+    # containers per language and reuses them via ``docker exec``.
+    # Pool implementation is staged for the follow-up commit; the
+    # settings + telemetry foundations land first so operators can
+    # measure cold-start before deciding whether to flip it on.
+    code_sandbox_pool_size: int = 0
+    # Comma-separated list of languages to pre-create pool slots for.
+    code_sandbox_pool_languages: str = "python,javascript"
+    # Seconds to wait for a free pool slot before falling back to the
+    # ephemeral ``docker run`` path.  Prevents pool exhaustion from
+    # blocking the engine indefinitely.
+    code_sandbox_lease_timeout_s: float = 5.0
+    # Recycle a pooled container after this many leases — bounds the
+    # accumulation of /tmp residue + pip caches across runs.
+    code_sandbox_max_lease_count: int = 50
 
     # ── v2: Capability Discovery (autonomous self-extension) ──────────
     code_capability_discovery_enabled: bool = True

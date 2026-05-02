@@ -610,7 +610,24 @@ class ExecutionSandbox:
                 stdout_b = b""
                 stderr_b = b"Execution timed out"
 
-            duration_ms = int((time.monotonic() - t_start) * 1000)
+            duration_ms_float = (time.monotonic() - t_start) * 1000.0
+            duration_ms = int(duration_ms_float)
+
+            # v17 PR #5 — wire the diagnostics telemetry that's been
+            # available since Phase 17 Commit R but never called.
+            # Records into the 200-entry sliding-window so the
+            # ``/api/code/diagnostics`` endpoint can surface
+            # ``sandbox.cold_start_p50_ms`` / ``cold_start_p95_ms``.
+            # Pass the FLOAT duration so sub-millisecond test runs
+            # (which would round to 0 and get filtered) are still
+            # recorded — production cold-starts are 50ms+ so
+            # rounding noise isn't a concern there.
+            try:
+                from .diagnostics import record_sandbox_run_ms  # noqa: PLC0415
+                if duration_ms_float > 0:
+                    record_sandbox_run_ms(duration_ms_float)
+            except Exception:  # pragma: no cover
+                pass
 
             return ExecutionResult(
                 exit_code=124 if timed_out else (proc.returncode or 0),
@@ -647,6 +664,18 @@ class ExecutionSandbox:
             # `logger.exception` wrote a full traceback per call which
             # spammed the error stream.
             logger.warning("sandbox_execution_failed: %s", exc)
+            # v17 PR #5 — surface failures in the diagnostics ring
+            # buffer so operators can see WHY the sandbox is
+            # struggling without parsing app logs.
+            try:
+                from .diagnostics import record_failure  # noqa: PLC0415
+                record_failure(
+                    "sandbox.execute",
+                    str(exc),
+                    language=language,
+                )
+            except Exception:  # pragma: no cover
+                pass
             return ExecutionResult(
                 exit_code=1,
                 stdout="",

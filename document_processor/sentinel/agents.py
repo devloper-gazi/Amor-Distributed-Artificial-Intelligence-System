@@ -134,14 +134,24 @@ class _BaseAgent:
     async def _default_memory(self):
         """Lazy memory fallback — only constructed when an agent
         method actually reads or writes memory.  Returns a
-        process-local ``MemoryStore`` rooted in a temp directory so
-        an out-of-the-box agent has somewhere to write without a
-        configured root.  Cached on the instance after first use."""
+        process-local ``MemoryStore`` rooted under
+        ``settings.memory_root / default-<pid>`` so an out-of-the-box
+        agent has somewhere persistent to write.  Cached on the
+        instance after first use.
+
+        v17 PR #2 — switched from ``make_no_op_store`` (which used
+        ``tempfile.mkdtemp`` and got silently GC'd by Windows
+        ``%TEMP%`` cleanup mid-session) to
+        ``make_persistent_default_store`` so an agent's writes
+        survive across calls + container restarts.
+        """
         if self.memory is not None:
             return self.memory
         try:
-            from local_ai.memory import make_no_op_store  # noqa: PLC0415
-            self.memory = make_no_op_store()
+            from local_ai.memory import (  # noqa: PLC0415
+                make_persistent_default_store,
+            )
+            self.memory = make_persistent_default_store()
         except Exception as exc:  # pragma: no cover
             logger.debug(
                 "sentinel agent %s memory fallback failed: %s",
