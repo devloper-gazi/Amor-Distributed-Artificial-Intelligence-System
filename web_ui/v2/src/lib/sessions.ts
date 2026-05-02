@@ -1,12 +1,22 @@
 /**
  * Chat session API client.  Backend lives at ``/api/sessions/*``
- * (see ``document_processor/api/chat_sessions_routes.py``).  This
- * module is a thin wrapper that returns Promises — the consuming
- * components invoke it via TanStack Solid Query so the cache + retry
- * + refetch logic comes for free.
+ * (see ``document_processor/api/chat_sessions_routes.py``).
+ *
+ * Notes
+ * -----
+ * * The cross-mode listing endpoint is ``GET /api/sessions/all`` —
+ *   ``GET /api/sessions`` requires a ``mode`` query param (422
+ *   otherwise).
+ * * Every endpoint requires the ``X-Client-Id`` header.  We keep one
+ *   per browser in ``localStorage["amor.client_id"]``; first call
+ *   generates a UUID v4 and stashes it.
  */
 
 import { api } from "./api";
+
+// X-Client-Id is now attached automatically by ``api`` for every
+// request (see ``api.ts:call``), so this module no longer needs
+// its own header helpers.
 
 export interface ChatSession {
   id: string;
@@ -28,13 +38,13 @@ interface ListResp {
 }
 
 export const sessions = {
-  async list(opts: { skip?: number; limit?: number; archived?: boolean } = {}) {
+  async list(opts: { offset?: number; limit?: number; archived?: boolean } = {}) {
     const qs = new URLSearchParams();
-    if (opts.skip !== undefined) qs.set("skip", String(opts.skip));
+    if (opts.offset !== undefined) qs.set("offset", String(opts.offset));
     if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
     if (opts.archived !== undefined)
-      qs.set("archived", opts.archived ? "true" : "false");
-    const path = `/api/sessions${qs.toString() ? "?" + qs.toString() : ""}`;
+      qs.set("include_archived", opts.archived ? "true" : "false");
+    const path = `/api/sessions/all${qs.toString() ? "?" + qs.toString() : ""}`;
     return api.get<ListResp>(path);
   },
 

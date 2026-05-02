@@ -13,6 +13,10 @@ import {
 interface SentinelRequest {
   prompt: string;
   paths: string[];
+  /** Backend rejects the start when both ``paths`` is empty AND
+   *  ``code_context`` is empty/missing.  We mirror the user's
+   *  prompt into ``code_context`` as the surface to audit so the
+   *  contract is always satisfied. */
   code_context: string;
 }
 
@@ -36,7 +40,11 @@ export const Sentinel: Component = () => {
     buildStartBody: (prompt) => ({
       prompt,
       paths: [],
-      code_context: "",
+      // Mirror the prompt into ``code_context`` so the start
+      // request always carries the "at least one" surface the
+      // backend requires.  When the user later provides explicit
+      // paths via a UI control, this becomes optional.
+      code_context: prompt,
     }),
     eventsPath: (sid) => `/api/sentinel/${sid}/events`,
     cancelPath: (sid) => `/api/sentinel/${sid}/cancel`,

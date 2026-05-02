@@ -43,6 +43,26 @@ export function getAccessToken(): string | null {
   return _accessToken;
 }
 
+/** Stable per-browser client id used as the ``X-Client-Id`` header
+ *  every consortium / sentinel / chat-session API call requires.
+ *  Persisted in localStorage so the same id flows across reloads.
+ */
+export function getClientId(): string {
+  try {
+    let v = localStorage.getItem("amor.client_id");
+    if (!v) {
+      v =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `cli-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("amor.client_id", v);
+    }
+    return v;
+  } catch {
+    return `cli-${Date.now().toString(36)}`;
+  }
+}
+
 /** Subscribe to access-token changes.  Returns the unsubscribe
  *  function.  Used by the auth store + by the SSE wrapper to
  *  re-establish the EventSource when the token rotates. */
@@ -145,6 +165,12 @@ async function call<T>(
   }
   if (_accessToken) {
     headers["Authorization"] = `Bearer ${_accessToken}`;
+  }
+  // X-Client-Id is required by consortium + sentinel + chat-session
+  // endpoints and accepted (ignored) by every other route.  Always
+  // include it unless the caller explicitly set it.
+  if (headers["X-Client-Id"] === undefined) {
+    headers["X-Client-Id"] = getClientId();
   }
 
   let resp: Response;
