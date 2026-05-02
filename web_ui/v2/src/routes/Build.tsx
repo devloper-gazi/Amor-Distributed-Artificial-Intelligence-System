@@ -63,13 +63,53 @@ const newId = (): string => `b-${Date.now()}-${++_idCounter}`;
  * Signals created at module level so the user can navigate away
  * from /build (e.g. to /system) and come back without wiping the
  * conversation or killing an in-flight pipeline.  ``resetBuild``
- * clears state on logout. */
+ * clears state on logout.  Turns + phases also persist to
+ * localStorage so an F5 / browser-restart preserves the
+ * conversation transcript. */
 
-const [turns, setTurns] = createSignal<ChatTurn[]>([]);
+const STORAGE_KEY_TURNS = "amor.chat.v1.build.turns";
+const STORAGE_KEY_PHASES = "amor.chat.v1.build.phases";
+
+function loadJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+function saveJSON(key: string, value: unknown): void {
+  try {
+    const json = JSON.stringify(value);
+    if (json.length > 256_000) return; // bail on absurdly large blobs
+    localStorage.setItem(key, json);
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
+const [turnsRaw, setTurnsRaw] = createSignal<ChatTurn[]>(
+  loadJSON<ChatTurn[]>(STORAGE_KEY_TURNS, []),
+);
+const turns = turnsRaw;
+const setTurns = ((next: Parameters<typeof setTurnsRaw>[0]) => {
+  const result = setTurnsRaw(next);
+  queueMicrotask(() => saveJSON(STORAGE_KEY_TURNS, turns().slice(-100)));
+  return result;
+}) as typeof setTurnsRaw;
 const [busy, setBusy] = createSignal(false);
 const [status, setStatus] = createSignal<StreamStatus>("closed");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
-const [phases, setPhases] = createSignal<Record<string, PhaseStatus>>({});
+const [phasesRaw, setPhasesRaw] = createSignal<Record<string, PhaseStatus>>(
+  loadJSON<Record<string, PhaseStatus>>(STORAGE_KEY_PHASES, {}),
+);
+const phases = phasesRaw;
+const setPhases = ((next: Parameters<typeof setPhasesRaw>[0]) => {
+  const result = setPhasesRaw(next);
+  queueMicrotask(() => saveJSON(STORAGE_KEY_PHASES, phases()));
+  return result;
+}) as typeof setPhasesRaw;
 /** Active phase key + when it started.  Drives the live status block
  *  rendered above the composer so the user doesn't stare at a blank
  *  "starting…" for 60+ seconds during a slow phase. */
@@ -111,6 +151,14 @@ export function resetBuild(): void {
   setActivePhase(null);
   setPhaseStartedAt(null);
   assistantTurnId = null;
+  // Wipe the persisted transcript so the next user doesn't see
+  // the previous one's prompts on F5.
+  try {
+    localStorage.removeItem(STORAGE_KEY_TURNS);
+    localStorage.removeItem(STORAGE_KEY_PHASES);
+  } catch {
+    // ignore
+  }
 }
 
 const setPhase = (key: string, st: PhaseStatus): void => {

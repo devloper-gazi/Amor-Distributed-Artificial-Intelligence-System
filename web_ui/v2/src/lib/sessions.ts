@@ -64,7 +64,9 @@ export const sessions = {
       mode?: string;
     },
   ) {
-    return api.put(`/api/sessions/${id}`, patch);
+    // Backend uses PATCH, not PUT (see ``chat_sessions_routes.py:365``);
+    // a PUT request returns 405 Method Not Allowed.
+    return api.patch(`/api/sessions/${id}`, patch);
   },
 
   async remove(id: string) {
