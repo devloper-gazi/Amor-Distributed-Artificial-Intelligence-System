@@ -13,6 +13,12 @@ eggs/
 lib/
 lib64/
 parts/
+
+# Allow the v2 web UI's TypeScript ``lib`` source folder — the
+# generic ``lib/`` rule above is meant for Python distutils
+# artefacts.
+!web_ui/v2/src/lib/
+!web_ui/v2/src/lib/**
 sdist/
 var/
 wheels/
