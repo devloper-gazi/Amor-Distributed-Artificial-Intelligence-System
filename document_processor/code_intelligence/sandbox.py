@@ -98,6 +98,56 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         ],
         "filename": "Main.java",
     },
+    # Phase 16.5 Commit L — HTML / static-website runner.  Uses
+    # Python's stdlib html.parser to validate the markup parses
+    # cleanly + reports key structural counts so the engine's
+    # debug loop can see whether a snake-game-website actually
+    # contains <canvas>, <script> blocks etc.  No browser, no
+    # extra deps — works in the same python:3.11-slim image we
+    # already pull.
+    "html": {
+        "image": "python:3.11-slim",
+        "cmd": [
+            "python",
+            "-c",
+            (
+                "from html.parser import HTMLParser\n"
+                "import sys, re\n"
+                "html = open('main.html', encoding='utf-8').read()\n"
+                "parser = HTMLParser()\n"
+                "try:\n"
+                "    parser.feed(html)\n"
+                "except Exception as exc:\n"
+                "    print(f'HTML parse error: {exc}', file=sys.stderr)\n"
+                "    sys.exit(1)\n"
+                "lines = html.count(chr(10)) + 1\n"
+                "scripts = len(re.findall(r'<script[^>]*>', html, re.I))\n"
+                "canvas = len(re.findall(r'<canvas[^>]*>', html, re.I))\n"
+                "styles = len(re.findall(r'<style[^>]*>', html, re.I))\n"
+                "has_doctype = '<!doctype html' in html.lower()\n"
+                "print(f'HTML parsed: {len(html)} bytes, {lines} lines')\n"
+                "print(f'  doctype={has_doctype} '\n"
+                "      f'<script>={scripts} <canvas>={canvas} <style>={styles}')\n"
+            ),
+        ],
+        "filename": "main.html",
+    },
+    "css": {
+        "image": "python:3.11-slim",
+        "cmd": [
+            "python",
+            "-c",
+            (
+                "import re,sys\n"
+                "css = open('main.css', encoding='utf-8').read()\n"
+                "rules = len(re.findall(r'\\\\{[^}]*\\\\}', css))\n"
+                "selectors = len(re.findall(r'^[^{]+\\\\{', css, re.M))\n"
+                "print(f'CSS parsed: {len(css)} bytes, '\n"
+                "      f'~{rules} rules, ~{selectors} selectors')\n"
+            ),
+        ],
+        "filename": "main.css",
+    },
 }
 
 

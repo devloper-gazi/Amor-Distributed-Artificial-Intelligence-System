@@ -110,6 +110,35 @@ def _extract_json(raw: str) -> dict[str, Any]:
     raise ValueError("no JSON object found in model output")
 
 
+def _sniff_language_from_content(code: str, fallback: str = "") -> str:
+    """Phase 16.5 Commit L — override the fence label when the code
+    body is unmistakably a different language.  Common case: an LLM
+    asked to "build a snake game website" returns ``<!DOCTYPE html>``
+    inside a ``js`` fence (or no fence at all) and the sandbox runs
+    it through ``node main.js`` → ``Unexpected token '<'`` crash.
+    Sniff the first few non-blank lines and force the right runner.
+    """
+    if not code:
+        return fallback
+    head = "\n".join(code.lstrip().splitlines()[:5]).lower()
+    if "<!doctype html" in head or head.lstrip().startswith("<html"):
+        return "html"
+    if head.lstrip().startswith("<?xml"):
+        return "html"  # closest runner; html.parser tolerates xml-ish
+    # Solid CSS markers
+    if (
+        head.lstrip().startswith(("@import", "@media", "@keyframes"))
+        or re.match(r"^[a-z\.\#\*][\w\.\-\#\:\,\s>+~]*\s*\{", head)
+    ):
+        return "css"
+    # Python shebang / common idioms
+    if head.startswith("#!") and "python" in head:
+        return "python"
+    if head.startswith("#!/usr/bin/env node"):
+        return "javascript"
+    return fallback
+
+
 def _extract_code_and_meta(raw: str) -> dict[str, Any]:
     """
     Pull a code fence and a JSON metadata fence out of an LLM reply.
@@ -119,6 +148,9 @@ def _extract_code_and_meta(raw: str) -> dict[str, Any]:
       • Models that swap fence order — code first, metadata second is
         the spec, but we accept either.
       • Models that emit only one fence (just code) — metadata empty.
+      • Models that mis-label the fence — the language sniffer
+        overrides the fence label when the body content is
+        unmistakably a different language.
     """
     code = ""
     language = ""
@@ -150,6 +182,13 @@ def _extract_code_and_meta(raw: str) -> dict[str, Any]:
         language = primary["lang"]
     if json_blocks:
         metadata = json_blocks[0]
+
+    # Phase 16.5 Commit L — content-based override.  The fence label
+    # is wrong frequently enough (especially for HTML with embedded
+    # <script>) that we let the body win when the signal is strong.
+    sniffed = _sniff_language_from_content(code, fallback=language)
+    if sniffed and sniffed != language:
+        language = sniffed
 
     return {
         "code": code,
