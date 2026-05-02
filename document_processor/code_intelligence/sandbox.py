@@ -476,18 +476,33 @@ class ExecutionSandbox:
                 ) as f:
                     f.write(fcontent)
 
-            # Build the command, optionally prefixing with package installs.
+            # Build the command, optionally prefixing with package
+            # installs.  Phase 17 Commit O — pip + npm install into
+            # /tmp (which the runner has as a writable tmpfs) and
+            # we set ``PYTHONPATH`` / ``NODE_PATH`` so the runtime
+            # finds the freshly-installed packages.  This keeps the
+            # base image's site-packages tree intact (so pip itself
+            # remains importable on a per-run basis) and avoids
+            # mounting tmpfs over the package directories.
             cmd_parts = list(cfg["cmd"])
             install_prefix = ""
             if install_packages:
                 if lang == "python":
                     pkgs = " ".join(f'"{p}"' for p in install_packages)
-                    install_prefix = f"pip install --quiet {pkgs} && "
+                    install_prefix = (
+                        "pip install --quiet --no-cache-dir "
+                        f"--target=/tmp/pip-prefix {pkgs} && "
+                        "export PYTHONPATH=/tmp/pip-prefix && "
+                    )
                 elif lang in ("javascript", "typescript"):
                     pkgs = " ".join(f'"{p}"' for p in install_packages)
-                    # Phase 16.5 Commit K — runner already cd-ed via
-                    # --workdir; no need for explicit cd here.
-                    install_prefix = f"npm install --silent {pkgs} && "
+                    install_prefix = (
+                        "mkdir -p /tmp/npm-prefix && "
+                        "cd /tmp/npm-prefix && "
+                        f"npm install --silent --prefix /tmp/npm-prefix {pkgs} && "
+                        "export NODE_PATH=/tmp/npm-prefix/node_modules && "
+                        "cd - >/dev/null && "
+                    )
             if install_prefix:
                 # Wrap whatever cmd we had in a single shell invocation.
                 original_cmd = " ".join(cmd_parts)
@@ -517,6 +532,20 @@ class ExecutionSandbox:
                 runner_workdir = "/sandbox/work"
                 volume_args = ["-v", f"{workdir}:/sandbox/work:ro"]
 
+            # Phase 17 Commit O — when ``install_packages`` is
+            # supplied we MUST allow network so pip / npm can reach
+            # the public registry.  Without packages we keep the
+            # strict ``--network none`` + read-only image
+            # isolation.  When packages are requested we ONLY
+            # widen the network — pip writes go to /tmp via the
+            # ``--target`` flag in the install_prefix builder,
+            # which keeps the site-packages tree of the base image
+            # untouched (and, critically, leaves pip itself
+            # importable so subsequent runs aren't poisoned).
+            install_mode = bool(install_packages)
+            network_mode = "bridge" if install_mode else "none"
+            extra_tmpfs: list[str] = []
+
             docker_args = [
                 "docker",
                 "run",
@@ -524,7 +553,7 @@ class ExecutionSandbox:
                 container_name,
                 "--rm",
                 "--network",
-                "none",
+                network_mode,
                 "--security-opt",
                 "no-new-privileges",
                 "--memory",
@@ -536,6 +565,7 @@ class ExecutionSandbox:
                 "--read-only",
                 "--tmpfs",
                 "/tmp:size=64m,exec",
+                *extra_tmpfs,
                 *volume_args,
                 "--workdir",
                 runner_workdir,
