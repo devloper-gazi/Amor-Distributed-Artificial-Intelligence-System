@@ -343,7 +343,13 @@ class CodeIntelligenceEngine:
         return {"models_used": self.models_used}
 
     async def _phase_plan(self) -> dict[str, Any]:
-        self._role_setter("planner")
+        # v17 PR #1 — emit ``architect`` as the active routing role
+        # so the per-role tag map (built by ``_phase_model_prep`` from
+        # ``select_models_for_session``) routes this phase to the
+        # reasoning-tuned model (DeepSeek-R1-Distill when installed,
+        # else qwen2.5:7b).  ``planner`` is preserved as a registry
+        # alias for back-compat with quick_code + older callers.
+        self._role_setter("architect")
         agent = PlannerAgent(self.llm_call, max_tokens=self._budgets["plan"])
         out = await agent.run(
             AgentContext(
@@ -363,7 +369,10 @@ class CodeIntelligenceEngine:
         return out.data
 
     async def _phase_implement(self) -> dict[str, Any]:
-        self._role_setter("coder")
+        # v17 PR #1 — fire ``editor`` so the implement phase routes
+        # to the code-specialist tag (qwen2.5-coder:7b/14b).  ``coder``
+        # remains in the registry as an alias.
+        self._role_setter("editor")
         agent = CoderAgent(self.llm_call, max_tokens=self._budgets["implement"])
         out = await agent.run(
             AgentContext(

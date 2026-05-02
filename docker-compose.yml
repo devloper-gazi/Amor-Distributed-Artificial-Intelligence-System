@@ -264,8 +264,15 @@ services:
     ports:
       - "11434:11434"
     environment:
-      - OLLAMA_KEEP_ALIVE=5m
-      - OLLAMA_MAX_LOADED_MODELS=1
+      # v17 PR #1 — keep two 7B models resident in 8 GB VRAM (~7.5
+      # GB total at Q4_K_M for deepseek-r1:7b + qwen2.5-coder:7b)
+      # so the engine's architect (plan) + editor (implement)
+      # phases don't pay an unload/reload tax between iterations.
+      # 30m keepalive trades idle VRAM for fewer cold-loads on
+      # the user's interactive workflow; revert to 5m if anything
+      # else GPU-bound runs alongside.
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_MAX_LOADED_MODELS=2
       - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_HOST=0.0.0.0
     volumes:

@@ -612,7 +612,7 @@ async def _run_session(session_id: str) -> None:
                     raise RuntimeError(
                         f"Failed to pull preferred model {tag!r}"
                     )
-            for role in ("planner", "coder", "tester",
+            for role in ("architect", "editor", "tester",
                          "debugger", "critic"):
                 models_used[role] = tag
             return models_used
@@ -627,7 +627,15 @@ async def _run_session(session_id: str) -> None:
         # role, with a 12-point degradation cap so a role never
         # drops to a meaningfully worse model just for visual
         # diversity.
-        roles = ["planner", "coder", "tester", "debugger", "critic"]
+        #
+        # v17 PR #1 — switched ``planner`` → ``architect`` and
+        # ``coder`` → ``editor``.  The engine fires the new role
+        # names at phase boundaries; the routing dict here MUST use
+        # the same names so ``_routing_apply_role`` finds a per-role
+        # tag.  ``select_models_for_session`` keeps both old and new
+        # roles in its priority list, so back-compat callers (e.g.
+        # quick_code passing the old roles) still work.
+        roles = ["architect", "editor", "tester", "debugger", "critic"]
         session_models = registry.select_models_for_session(
             roles, effort=session["effort"], spread=True,
         )
