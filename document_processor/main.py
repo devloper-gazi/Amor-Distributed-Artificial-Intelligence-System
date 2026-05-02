@@ -5,7 +5,7 @@ Provides REST API for document processing and monitoring.
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
@@ -408,14 +408,119 @@ app.add_middleware(
 # Mount static files and templates
 import os
 web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
+
+# ── v17 UI redesign — parallel v2 mount (PR-1) ─────────────────────────────
+#
+# MUST be mounted BEFORE the legacy ``/static`` mount because
+# Starlette matches mounts in registration order and ``/static`` is a
+# prefix of ``/static/v2``.  Wrong order → /static/v2/... gets routed
+# to the v1 StaticFiles which doesn't have that subtree, returning
+# 404.
+#
+# The v2 build (Vite + SolidJS + Tailwind v4) lives at ``web_ui/v2``.
+# Source: ``web_ui/v2/src/``.  Production output: ``web_ui/v2/dist/``.
+# Vite emits hashed asset filenames + a ``manifest.json`` that tells
+# us which entry chunk + CSS files to inject into the HTML shell.
+#
+# Behaviour:
+#  * GET /v2  → serves the v2 SPA shell.  Reads ``manifest.json`` to
+#    pull the latest hashed entry script + CSS, then injects them
+#    into a Jinja template.
+#  * GET /static/v2/*  → serves any file under ``web_ui/v2/dist/``.
+#
+# The legacy v1 UI at ``/`` is untouched.  Operators can flip the
+# default by setting ``AMOR_UI=v2`` env var (see /, below).
+_v2_dist_path = os.path.join(web_ui_path, "v2", "dist")
+_v2_available = os.path.isdir(_v2_dist_path) and os.path.isfile(
+    os.path.join(_v2_dist_path, ".vite", "manifest.json")
+)
+if _v2_available:
+    app.mount(
+        "/static/v2",
+        StaticFiles(directory=_v2_dist_path),
+        name="static_v2",
+    )
+    logger.info("v2_ui_mounted dist=%s", _v2_dist_path)
+else:
+    logger.info(
+        "v2_ui_not_built path=%s — run `cd web_ui/v2 && npm run build`",
+        _v2_dist_path,
+    )
+
 app.mount("/static", StaticFiles(directory=os.path.join(web_ui_path, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(web_ui_path, "templates"))
 app.state.static_version = os.getenv("STATIC_VERSION") or str(int(time.time()))
 
 
+def _read_v2_manifest() -> Optional[Dict[str, Any]]:
+    """Read Vite's manifest.json so the Jinja template knows which
+    hashed asset files to load.  Returns None if the build is missing
+    so the route can fall back to a build-required notice."""
+    if not _v2_available:
+        return None
+    try:
+        import json as _json
+        manifest_path = os.path.join(
+            _v2_dist_path, ".vite", "manifest.json",
+        )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception as exc:  # pragma: no cover - safety net
+        logger.warning("v2_manifest_read_failed: %s", exc)
+        return None
+
+
+async def _serve_v2_shell(request: Request) -> Response:
+    """Render the v2 SPA shell.  The Jinja template inlines the hashed
+    entry script + CSS from the Vite manifest."""
+    manifest = _read_v2_manifest()
+    if manifest is None:
+        # Build hasn't run yet — render a minimal "build required" page
+        # so the operator gets a clear next step instead of a blank screen.
+        return templates.TemplateResponse(
+            "v2_build_required.html",
+            {"request": request},
+            status_code=503,
+        )
+    # Vite's manifest keys entries by their source path.  ``index.html``
+    # is the canonical entry; its `file` is the hashed JS chunk and
+    # `css` is the array of CSS chunks.
+    entry = manifest.get("index.html") or {}
+    return templates.TemplateResponse(
+        "v2_shell.html",
+        {
+            "request": request,
+            "entry_js": "/static/v2/" + entry.get("file", ""),
+            "entry_css": [
+                "/static/v2/" + p for p in entry.get("css", [])
+            ],
+        },
+    )
+
+
+@app.get("/v2", include_in_schema=False)
+async def root_v2(request: Request):
+    """Serve the v2 SPA shell at the ``/v2`` entry point."""
+    return await _serve_v2_shell(request)
+
+
+@app.get("/v2/{rest:path}", include_in_schema=False)
+async def v2_spa_fallback(request: Request, rest: str):  # noqa: ARG001 — captures path
+    """SPA fallback — every ``/v2/*`` URL renders the same shell so
+    SolidJS Router (with ``base="/v2"``) can take over client-side.
+    Static assets bypass this via the earlier ``/static/v2`` mount."""
+    return await _serve_v2_shell(request)
+
+
 @app.get("/")
 async def root(request: Request):
-    """Serve the unified monochrome chat UI with Research, Thinking, and Coding modes."""
+    """Serve the unified monochrome chat UI with Research, Thinking, and Coding modes.
+
+    v17 UI redesign — when ``AMOR_UI=v2`` is set the redirect points at
+    ``/v2`` so operators can flip the default without editing nginx.
+    """
+    if os.getenv("AMOR_UI", "").lower() == "v2" and _v2_available:
+        return await root_v2(request)
     return templates.TemplateResponse(
         "index.html",
         {"request": request, "static_version": app.state.static_version},
