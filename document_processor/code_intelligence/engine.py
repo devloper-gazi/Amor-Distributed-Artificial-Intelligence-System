@@ -179,6 +179,14 @@ class CodeIntelligenceEngine:
         # Called once at the START of every agent phase with the role
         # name (e.g. "planner", "coder", "tester", "debugger", "critic").
         role_setter: Callable[[str | None], Any] | None = None,
+        # Phase 17 Commit S — routing_setter inverts the previous
+        # engine→routes layer violation.  Routes inject a callable
+        # that takes the auto-derived ``{role: tag}`` dict from
+        # ``_phase_model_prep`` and pushes it into the active
+        # routing ContextVar (so ``call_ollama_with`` can resolve
+        # per-role tags).  Default ``None`` is a no-op so the engine
+        # stays unit-testable in isolation.
+        routing_setter: Callable[[dict], None] | None = None,
     ) -> None:
         self.prompt = prompt
         self.code_context = code_context or None
@@ -205,6 +213,10 @@ class CodeIntelligenceEngine:
         # v4 — role_setter is a no-op fallback so engine code stays
         # branch-free at every phase boundary.
         self._role_setter = role_setter or (lambda _r: None)
+        # Phase 17 Commit S — routing_setter same shape as role_setter.
+        self._routing_setter: Callable[[dict], None] = (
+            routing_setter or (lambda _doc: None)
+        )
 
         self.phases: list[CodePhase] = [
             CodePhase(name=name, label=label) for name, label in CODE_PHASES
@@ -305,28 +317,18 @@ class CodeIntelligenceEngine:
         models_used = await self._prepare_models()
         self.models_used = dict(models_used or {})
 
-        # Phase 16.5 — promote the per-role tag map into the active
-        # routing ContextVar so every downstream LLM call (planner,
-        # coder, tester, debugger, critic) routes to its bound tag.
-        # User-set routing wins: when the request layer already
-        # installed a routing doc with strategy="per_role", we leave
-        # it alone.  When nothing was set, we install our auto-
-        # derived per-role doc.
+        # Phase 17 Commit S — promote the per-role tag map into the
+        # active routing via the injected ``routing_setter`` callback
+        # so the engine doesn't have to import from the routes layer
+        # (the previous engine→routes layer violation).  Routes wire
+        # the callback to ``set_active_routing`` when constructing
+        # the engine.
         if self.models_used and len(set(self.models_used.values())) > 1:
             try:
-                from ..api.local_ai_routes_simple import (  # noqa: PLC0415
-                    _ACTIVE_ROUTING, set_active_routing,
-                )
-                existing = _ACTIVE_ROUTING.get()
-                if (
-                    not existing
-                    or (existing or {}).get("strategy") != "per_role"
-                    or not (existing or {}).get("role_routes")
-                ):
-                    set_active_routing({
-                        "strategy": "per_role",
-                        "role_routes": dict(self.models_used),
-                    })
+                self._routing_setter({
+                    "strategy": "per_role",
+                    "role_routes": dict(self.models_used),
+                })
             except Exception as exc:  # pragma: no cover
                 logger.debug(
                     "auto-routing setup failed (non-fatal): %s", exc,
