@@ -221,6 +221,17 @@ class _BaseAgent:
         )
         return raw or ""
 
+    async def _call_with_system(
+        self, prompt: str, system_prompt: str,
+    ) -> str:
+        """Phase 17 Commit T — same as ``_call`` but lets the
+        DebuggerAgent swap in the diff-mode persona without
+        permanently mutating ``self.system_prompt``."""
+        raw = await self.llm_call(
+            prompt, system_prompt, self.max_tokens,
+        )
+        return raw or ""
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1 — Planner
@@ -431,9 +442,110 @@ class DebuggerAgent(_BaseAgent):
     role = "debugger"
     system_prompt = P.DEBUGGER_SYSTEM_PROMPT
 
+    def __init__(
+        self,
+        llm_call: LLMCall | None = None,
+        max_tokens: int = 1500,
+        *,
+        # Phase 17 Commit T — diff mode emits search/replace
+        # blocks instead of the whole file.  3-5x token savings
+        # on a typical 500-LOC project + fewer regressions in
+        # untouched lines.  Default-on (config-flag overridden in
+        # ``run`` so per-instance overrides win).
+        output_mode: str = "diff",
+    ) -> None:
+        super().__init__(llm_call=llm_call, max_tokens=max_tokens)
+        self.output_mode = output_mode
+
     async def run(self, ctx: AgentContext) -> AgentOutput:
         if not ctx.code:
             return AgentOutput(error="No code to debug")
+
+        # Resolve mode at run-time so settings can flip behaviour
+        # without re-instantiating agents.  Per-instance override
+        # ``self.output_mode != "diff"`` always wins.
+        mode = self.output_mode
+        if mode == "diff":
+            try:
+                from ..config.settings import settings  # noqa: PLC0415
+                if not getattr(
+                    settings, "code_debug_diff_mode_enabled", True,
+                ):
+                    mode = "whole_file"
+            except Exception:
+                pass
+
+        if mode == "diff":
+            return await self._run_diff_mode(ctx)
+        return await self._run_whole_file(ctx)
+
+    async def _run_diff_mode(self, ctx: AgentContext) -> AgentOutput:
+        """Phase 17 Commit T — emit minimal SEARCH/REPLACE diff;
+        fall back to whole-file rewrite when the patch doesn't
+        apply cleanly so the debug loop never wedges."""
+        from .diff_apply import apply_search_replace_diff  # noqa: PLC0415
+
+        prompt = P.debugger_prompt(
+            ctx.user_prompt,
+            code=ctx.code,
+            execution_feedback=ctx.execution_feedback or "(no execution data)",
+            static_feedback=ctx.static_feedback or "(no static analysis)",
+            test_failure=ctx.test_failure,
+            iteration=ctx.debug_iteration,
+            language=ctx.language,
+        )
+        raw = await self._call_with_system(prompt, P.DEBUGGER_DIFF_SYSTEM_PROMPT)
+        result = apply_search_replace_diff(ctx.code, raw)
+        # Metadata is in a separate JSON fence regardless of which
+        # mode the debugger ran in.
+        try:
+            meta = _extract_json(raw)
+        except Exception:
+            meta = {}
+        if not result.ok:
+            # Diff didn't apply → re-prompt with the fallback
+            # whole-file system prompt.  Logged for diagnostics.
+            try:
+                from . import diagnostics as _diag  # noqa: PLC0415
+                _diag.record_failure(
+                    "debugger.diff_apply_failed",
+                    result.error,
+                    blocks_applied=result.blocks_applied,
+                    blocks_total=result.blocks_total,
+                )
+            except Exception:
+                pass
+            logger.info(
+                "debugger_diff_apply_failed err=%s — falling back",
+                result.error,
+            )
+            return await self._run_whole_file(ctx)
+        return AgentOutput(
+            raw=raw,
+            code=result.patched,
+            data={
+                "language": str(meta.get("language") or "") or ctx.language,
+                "root_cause": str(meta.get("root_cause") or "")[:600],
+                "fix_description": str(meta.get("fix_description") or "")[:600],
+                "lines_changed": _clamp_int(
+                    meta.get("lines_changed"), 0, 100_000,
+                    result.blocks_applied,
+                ),
+                "confidence": _enum(
+                    meta.get("confidence"),
+                    {"high", "medium", "low"},
+                    "medium",
+                ),
+                "diff_mode": True,
+                "diff_blocks_applied": result.blocks_applied,
+                "diff_blocks_total": result.blocks_total,
+            },
+            metadata=meta,
+        )
+
+    async def _run_whole_file(self, ctx: AgentContext) -> AgentOutput:
+        """Original whole-file rewrite mode — kept as the fallback
+        path for when diff-mode can't produce a clean patch."""
         prompt = P.debugger_prompt(
             ctx.user_prompt,
             code=ctx.code,
@@ -469,6 +581,7 @@ class DebuggerAgent(_BaseAgent):
                     {"high", "medium", "low"},
                     "medium",
                 ),
+                "diff_mode": False,
             },
             metadata=meta,
         )

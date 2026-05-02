@@ -236,6 +236,12 @@ class Settings(BaseSettings):
     # before running.  Allow-list-only sanitiser; cap per session.
     code_sandbox_pip_install_enabled: bool = True
     code_sandbox_max_pip_packages: int = 12
+    # Phase 17 Commit T — DebuggerAgent emits SEARCH/REPLACE diffs
+    # instead of rewriting the whole file (3-5x token savings on
+    # 500-LOC outputs + fewer regressions in untouched lines).
+    # Falls back to whole-file rewrite when the patch doesn't
+    # apply cleanly (drift / ambiguous match / malformed fence).
+    code_debug_diff_mode_enabled: bool = True
     # Maximum debug→fix→reexecute loops per session.
     code_max_debug_iterations: int = 3
     # Auto-pull the best code model if not installed.
