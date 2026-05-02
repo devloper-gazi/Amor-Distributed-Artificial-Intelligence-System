@@ -229,6 +229,13 @@ class Settings(BaseSettings):
     code_sandbox_enabled: bool = True
     code_sandbox_timeout: int = 30
     code_sandbox_memory: str = "256m"
+    # Phase 17 Commit M — engine forwards `dependencies` from the
+    # plan spec block + coder metadata into the sandbox's
+    # ``install_packages`` so e.g. snake-game-website code that
+    # imports flask / pygame / requests actually pip-installs them
+    # before running.  Allow-list-only sanitiser; cap per session.
+    code_sandbox_pip_install_enabled: bool = True
+    code_sandbox_max_pip_packages: int = 12
     # Maximum debug→fix→reexecute loops per session.
     code_max_debug_iterations: int = 3
     # Auto-pull the best code model if not installed.

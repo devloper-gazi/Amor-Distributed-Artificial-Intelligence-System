@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -227,6 +228,11 @@ class CodeIntelligenceEngine:
         self.triage: dict[str, Any] = {}
         self.models_used: dict[str, str] = {}
         self.plan: dict[str, Any] = {}
+        # Phase 17 Commit M — coder metadata stored separately so
+        # ``_phase_execute`` can forward ``dependencies`` to the
+        # sandbox.  Without this, snake-game-website kept crashing
+        # with ``ModuleNotFoundError: No module named 'flask'``.
+        self.coder_metadata: dict[str, Any] = {}
         self.code: str | None = None
         self.tests: str | None = None
         self.execution_results: list[dict[str, Any]] = []
@@ -373,6 +379,10 @@ class CodeIntelligenceEngine:
         self.code = out.code
         if out.data.get("language"):
             self.detected_language = out.data["language"]
+        # Phase 17 Commit M — capture coder metadata (incl. the
+        # ``dependencies`` list) so ``_phase_execute`` can forward
+        # them as ``install_packages`` to the sandbox.
+        self.coder_metadata = dict(out.data or {})
         await self._emit(
             {
                 "type": "code_ready",
@@ -387,6 +397,39 @@ class CodeIntelligenceEngine:
             "metadata": out.data,
         }
 
+    # Phase 17 Commit M — dependency sanitiser.  Allow-list-only
+    # to keep arbitrary shell metacharacters out of the
+    # ``pip install ...`` command-line the sandbox builds.
+    _DEP_RE = re.compile(
+        r"^[a-zA-Z][\w\-\.]*(?:\[[\w\-\.,]+\])?(?:[<>=!~]=?[\w\-\.\+]+)?$"
+    )
+
+    @classmethod
+    def _sanitise_dependencies(
+        cls, raw: list, *, max_packages: int = 12,
+    ) -> list[str]:
+        """Filter a candidate dependency list against an allow-list
+        regex + cap at ``max_packages``.  Empty / non-string entries
+        are dropped; entries failing the regex are dropped.  Returns
+        the sanitised list.  Never raises."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for entry in raw or []:
+            if not isinstance(entry, str):
+                continue
+            cleaned = entry.strip()
+            if not cleaned or cleaned in seen:
+                continue
+            if len(cleaned) > 80:
+                continue
+            if not cls._DEP_RE.match(cleaned):
+                continue
+            out.append(cleaned)
+            seen.add(cleaned)
+            if len(out) >= max_packages:
+                break
+        return out
+
     async def _phase_execute(self) -> dict[str, Any]:
         if not self.enable_execution or not self.sandbox or not self.code:
             self._skip("execute", "execution disabled or no code")
@@ -397,9 +440,35 @@ class CodeIntelligenceEngine:
                 "language": self.detected_language,
             }
         )
+        # Phase 17 Commit M — forward `dependencies` from the plan
+        # spec block + coder metadata to the sandbox so the user's
+        # earlier ``ModuleNotFoundError: No module named 'flask'``
+        # scenario actually pip-installs flask before running.
+        deps_raw = []
+        spec = (self.plan or {}).get("spec") or {}
+        if isinstance(spec, dict):
+            deps_raw.extend(spec.get("dependencies") or [])
+        deps_raw.extend(self.coder_metadata.get("dependencies") or [])
+        install_packages = self._sanitise_dependencies(deps_raw)
+
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not getattr(settings, "code_sandbox_pip_install_enabled", True):
+                install_packages = []
+        except Exception:
+            pass
+
+        if install_packages:
+            await self._emit({
+                "type": "execution_install_packages",
+                "packages": list(install_packages),
+                "language": self.detected_language,
+            })
+
         result = await self.sandbox.execute(
             code=self.code,
             language=self.detected_language,
+            install_packages=install_packages or None,
         )
         self.execution_results.append(result.to_dict())
         await self._emit(

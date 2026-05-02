@@ -327,6 +327,12 @@ class PlannerAgent(_BaseAgent):
                 },
                 "code_snippet",
             ),
+            # Phase 17 Commit M — strict spec block flows downstream
+            # to the Coder prompt and to the engine's
+            # ``_phase_execute`` (for ``dependencies``).  Keys
+            # default to empty lists so older planners that don't
+            # emit a spec block degrade cleanly.
+            "spec": _normalise_spec(data.get("spec")),
         }
         return AgentOutput(raw=raw, data=normalized)
 
@@ -610,3 +616,45 @@ def _clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(lo, min(hi, n))
+
+
+# Phase 17 Commit M — spec-block normaliser.  The planner prompt
+# now requires a ``spec`` block (invariants / signatures /
+# preconditions / postconditions / error_cases / dependencies).
+# Older planners that don't emit the block degrade to empty lists
+# so downstream agents (Coder, engine ``_phase_execute``) keep
+# working.  Each list is capped so a runaway model doesn't blow
+# up the prompt or the sandbox install command-line.
+def _normalise_spec(value: Any) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {
+        "invariants": [],
+        "signatures": [],
+        "preconditions": [],
+        "postconditions": [],
+        "error_cases": [],
+        "dependencies": [],
+    }
+    if not isinstance(value, dict):
+        return out
+    caps = {
+        "invariants": (10, 300),
+        "signatures": (15, 400),
+        "preconditions": (10, 300),
+        "postconditions": (10, 300),
+        "error_cases": (10, 300),
+        "dependencies": (20, 80),
+    }
+    for key, (max_count, max_len) in caps.items():
+        items = value.get(key)
+        if not isinstance(items, list):
+            continue
+        cleaned: list[str] = []
+        for item in items[:max_count]:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            cleaned.append(s[:max_len])
+        out[key] = cleaned
+    return out
