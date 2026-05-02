@@ -65,15 +65,27 @@ class LanceDBVectorStore:
         embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
         table_name: str = "documents",
         device: str = "cpu",  # Use CPU to save VRAM for LLM
+        *,
+        embedding_dim: Optional[int] = None,
+        per_model_table: Optional[bool] = None,
     ):
         """
         Initialize LanceDB vector store.
 
         Args:
             db_path: Path to LanceDB storage directory
-            embedding_model: Sentence transformer model for embeddings
-            table_name: Name of the LanceDB table
+            embedding_model: Sentence transformer model for embeddings.
+                Phase 16 — pass ``"BAAI/bge-m3"`` for the 1024-dim
+                BGE-M3 embedder; ``per_model_table`` derives a fresh
+                table so existing nomic-768 corpora stay untouched.
+            table_name: Base table name.  Combined with the model slug
+                + dim suffix when ``per_model_table`` is True.
             device: Device for embeddings - 'cpu' or 'cuda'
+            embedding_dim: Override the auto-detected dimension.
+                Defaults to whatever the model reports.
+            per_model_table: When True, append a model-derived suffix
+                to ``table_name`` so per-model corpora coexist.
+                Defaults to ``settings.rag_per_model_table = True``.
         """
         if not _HAS_VECTOR_DEPS:
             raise ImportError(
@@ -83,7 +95,6 @@ class LanceDBVectorStore:
         self.db_path = Path(db_path)
         self.db_path.mkdir(parents=True, exist_ok=True)
 
-        self.table_name = table_name
         self.device = device
 
         # Initialize LanceDB
@@ -91,13 +102,49 @@ class LanceDBVectorStore:
 
         # Initialize embedding model (CPU-based to save VRAM)
         logger.info(f"Loading embedding model: {embedding_model} on {device}")
+        self.embedding_model_name = embedding_model
         self.embedding_model = SentenceTransformer(
             embedding_model,
             device=device,
+            trust_remote_code=True,  # nomic-embed + bge-m3 both want this
         )
 
-        # Set to 768 dimensions for nomic-embed
-        self.embedding_dim = 768
+        # Sniff the embedder's actual dimension; fall back to 768 if
+        # the API doesn't expose it.  Override allowed for
+        # off-the-shelf models with a documented dim.
+        if embedding_dim is not None:
+            self.embedding_dim = int(embedding_dim)
+        else:
+            try:
+                self.embedding_dim = int(
+                    self.embedding_model.get_sentence_embedding_dimension() or 768
+                )
+            except Exception:
+                self.embedding_dim = 768
+
+        # Resolve final table name.  Backwards-compat invariant: the
+        # historical ``documents`` table on nomic-embed-text-v1.5 +
+        # 768-dim is reached with default args.  Any *other* model
+        # gets its own table (``documents_<slug>_<dim>``) so writes
+        # never collide with the 768-dim schema.
+        is_historical = (
+            embedding_model == "nomic-ai/nomic-embed-text-v1.5"
+            and self.embedding_dim == 768
+        )
+        if per_model_table is None:
+            per_model_table = bool(self._settings_value(
+                "rag_per_model_table", True,
+            ))
+        if (
+            table_name == "documents"
+            and per_model_table
+            and not is_historical
+        ):
+            self.table_name = self._derive_table_name(
+                table_name, embedding_model, self.embedding_dim,
+            )
+        else:
+            self.table_name = table_name
 
         # Get or create table
         self.table = self._get_or_create_table()
@@ -109,6 +156,17 @@ class LanceDBVectorStore:
 
         logger.info(f"LanceDB initialized at {db_path} with {embedding_model}")
 
+    @staticmethod
+    def _derive_table_name(
+        base: str, embedding_model: str, embedding_dim: int,
+    ) -> str:
+        """Build a per-model table name like
+        ``documents_bge_m3_1024``.  Lowercases, replaces ``/`` and
+        ``-`` with ``_``, strips the dot in version tags."""
+        slug = embedding_model.split("/")[-1].lower()
+        slug = slug.replace("-", "_").replace(".", "")
+        return f"{base}_{slug}_{int(embedding_dim)}"
+
     def _get_or_create_table(self) -> "Any":  # lancedb.table.Table at runtime
         """Get existing table or create new one."""
         try:
@@ -118,13 +176,21 @@ class LanceDBVectorStore:
             return table
         except Exception:
             # Create new table with schema
-            logger.info(f"Creating new table: {self.table_name}")
+            logger.info(
+                "Creating new table: %s (dim=%d)",
+                self.table_name, self.embedding_dim,
+            )
 
-            # Create empty table with schema
+            # Create empty table with schema — vector dim follows
+            # the embedder so BGE-M3 (1024) and nomic (768) get
+            # their own correctly-shaped tables.
             schema = pa.schema([
                 pa.field("id", pa.string()),
                 pa.field("text", pa.string()),
-                pa.field("vector", pa.list_(pa.float32(), 768)),
+                pa.field(
+                    "vector",
+                    pa.list_(pa.float32(), int(self.embedding_dim)),
+                ),
                 pa.field("document_id", pa.string()),
                 pa.field("chunk_index", pa.int64()),
                 pa.field("source_url", pa.string()),

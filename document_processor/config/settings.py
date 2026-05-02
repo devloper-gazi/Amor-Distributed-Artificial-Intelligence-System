@@ -467,6 +467,25 @@ class Settings(BaseSettings):
     # fusion stage.  Larger means better quality and more latency.
     rag_reranker_top_k: int = 20
 
+    # ── Phase 16 Commit D2 — embedder + late-chunking ───────────────
+    # Default embedder.  The historical nomic-embed-text-v1.5 (768-dim)
+    # remains the on-disk default so existing ``documents`` corpora
+    # are unmoved.  Set to ``"BAAI/bge-m3"`` for the multilingual,
+    # 1024-dim BGE-M3 embedder; the vector store auto-creates a fresh
+    # ``documents_bge_m3_1024`` table.
+    rag_embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    # When True, non-default embedders land in their own per-model
+    # table so writes never collide with the historical schema.  Off
+    # only for advanced users who wipe + rebuild the index manually.
+    rag_per_model_table: bool = True
+    # Chunking strategy.  ``naive`` keeps the existing char-window
+    # behaviour; ``late`` uses ``LateChunker`` to attach a leading-
+    # window document context to each chunk's embed payload.
+    rag_chunking_strategy: str = "naive"
+    # Maximum length of the leading-window context attached by
+    # late-chunking.  Aligns with BGE-M3's 8192-token sequence cap.
+    rag_late_chunking_window: int = 8192
+
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
