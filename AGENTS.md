@@ -422,6 +422,40 @@ Enforcement: `tests/sentinel/test_prompts_no_filters.py` greps
 every Sentinel prompt template for the banned phrase set on every
 build, mirroring the Quick Code V2 test.
 
+## Amor — Phase 16 adapter foundations
+
+Phase 16 introduces the AMOR architecture brief's foundation
+primitives: a pluggable LLM backend, an OpenAI-compatible `/v1`
+facade, a RAG upgrade pack (BM25+RRF hybrid + cross-encoder
+reranker + BGE-M3 + late-chunking), an MCP-style typed tool
+registry, and a Letta-style 3-tier memory hierarchy.  All under
+`local_ai/` (top-level package).  Three rules:
+
+1. **Backwards compatibility is non-negotiable.**  Default
+   `llm_backend = "ollama"` preserves byte-equivalent behaviour
+   for the existing test suite.  The keyword-overlap hybrid path
+   becomes BM25+RRF (controlled by `rag_hybrid_search_enabled`,
+   default True); the existing `documents` corpus on
+   nomic-embed-text-v1.5 is never touched.  Opt-in features
+   (BGE-M3, late-chunking, MCP server, cross-encoder reranker,
+   memory ledger audit) all default off or behind a flag.
+2. **Every external SDK integration goes through the
+   abstraction.**  Letta, OpenHands V1 SDK, Aider, the OpenAI
+   Python SDK — all plug in via `OPENAI_BASE_URL=http://
+   localhost:8000/v1`, never by importing AMOR internals.
+3. **Memory writes append a Phase 15 ledger entry.**  When
+   `memory_ledger_audit_enabled` is on, every `MemoryStore`
+   write fires a `memory_core_written` / `memory_recall_appended`
+   / `memory_archival_written` ledger entry so the immutable
+   trail covers conversation history.
+
+The test surface lives at `tests/local_ai/`,
+`tests/api/test_openai_compat_routes.py`, and
+`tests/api/test_mcp_routes.py` (132 tests total).
+
+See `docs/amor-phase-16-foundations.md` for the full architecture
+map, settings reference, and live-smoke recipes.
+
 ## Sentinel — Phase 15 evolution policy
 
 Phase 15 adds nine self-improvement subsystems (governance,
@@ -464,4 +498,5 @@ configuration reference, and disk layout.
 - **`docs/sentinel-agent-prompts.md`** - All five Sentinel role prompts
 - **`docs/sentinel-ml-models.md`** - Classical ML pipeline + RAG layout
 - **`docs/sentinel-evolution.md`** - Phase 15 Evolution Engine (9 subsystems + Console)
+- **`docs/amor-phase-16-foundations.md`** - Phase 16 Adapter Foundations (LLM backend, /v1 facade, RAG upgrade, MCP, memory)
 - **`example_usage.py`** - Python client examples for pipeline APIs
