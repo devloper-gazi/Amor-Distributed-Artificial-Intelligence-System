@@ -49,6 +49,18 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     libgtk-3-0 \
     libxshmfence1 \
+    # Phase 16.5 — install the Docker *client* binaries so the bind-
+    # mounted /var/run/docker.sock is actually usable from inside the
+    # app container.  Without this the ExecutionSandbox short-circuits
+    # to ``docker_unavailable`` and Code Intelligence can't run any
+    # generated code (snake game, tests, etc.).  We pull the static
+    # client-only tarball from download.docker.com so we don't drag
+    # in the daemon, containerd, or any of the build dependencies.
+    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
+        | tar -xz -C /tmp \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker \
+    && chmod +x /usr/local/bin/docker \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
