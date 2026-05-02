@@ -28,21 +28,31 @@ interface StartResp {
   success?: boolean;
 }
 
-const PHASES: ReadonlyArray<{
+interface PhaseDef {
   key: string;
   label: string;
   pct: number;
-}> = [
-  { key: "triage", label: "Triage", pct: 10 },
-  { key: "model_prep", label: "Model prep", pct: 15 },
-  { key: "plan", label: "Plan", pct: 25 },
-  { key: "implement", label: "Implement", pct: 50 },
-  { key: "execute", label: "Execute", pct: 60 },
-  { key: "analyze", label: "Analyse", pct: 68 },
-  { key: "test", label: "Test", pct: 78 },
-  { key: "debug", label: "Debug", pct: 88 },
-  { key: "review", label: "Review", pct: 98 },
+  /** User-facing description shown while this phase is running so
+   *  the chat thread isn't a blank "starting…" for 1–2 minutes
+   *  during a slow LLM phase like implement. */
+  doingNow: string;
+}
+
+const PHASES: ReadonlyArray<PhaseDef> = [
+  { key: "triage",     label: "Triage",      pct: 10, doingNow: "Classifying the request" },
+  { key: "model_prep", label: "Model prep",  pct: 15, doingNow: "Preparing models" },
+  { key: "plan",       label: "Plan",        pct: 25, doingNow: "Drafting a plan" },
+  { key: "implement",  label: "Implement",   pct: 50, doingNow: "Writing the code (this is the slow phase — usually 30–120 s)" },
+  { key: "execute",    label: "Execute",     pct: 60, doingNow: "Running the code in the sandbox" },
+  { key: "analyze",    label: "Analyse",     pct: 68, doingNow: "Static-analysing the output" },
+  { key: "test",       label: "Test",        pct: 78, doingNow: "Generating tests" },
+  { key: "debug",      label: "Debug",       pct: 88, doingNow: "Debugging failures" },
+  { key: "review",     label: "Review",      pct: 98, doingNow: "Final review" },
 ];
+
+const PHASE_BY_KEY: Record<string, PhaseDef> = Object.fromEntries(
+  PHASES.map((p) => [p.key, p]),
+);
 
 type PhaseStatus = "pending" | "running" | "done" | "failed" | "skipped";
 
@@ -60,9 +70,28 @@ const [busy, setBusy] = createSignal(false);
 const [status, setStatus] = createSignal<StreamStatus>("closed");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
 const [phases, setPhases] = createSignal<Record<string, PhaseStatus>>({});
+/** Active phase key + when it started.  Drives the live status block
+ *  rendered above the composer so the user doesn't stare at a blank
+ *  "starting…" for 60+ seconds during a slow phase. */
+const [activePhase, setActivePhase] = createSignal<string | null>(null);
+const [phaseStartedAt, setPhaseStartedAt] = createSignal<number | null>(null);
+/** Re-renders every second so the elapsed counter ticks live. */
+const [tickNow, setTickNow] = createSignal<number>(Date.now());
 
 let stream: OpenedStream | null = null;
 let assistantTurnId: string | null = null;
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+
+const startTicker = (): void => {
+  if (tickTimer !== null) return;
+  tickTimer = setInterval(() => setTickNow(Date.now()), 1000);
+};
+const stopTicker = (): void => {
+  if (tickTimer !== null) {
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+};
 
 const cleanupStream = (): void => {
   if (stream) {
@@ -73,11 +102,14 @@ const cleanupStream = (): void => {
 
 export function resetBuild(): void {
   cleanupStream();
+  stopTicker();
   setTurns([]);
   setBusy(false);
   setStatus("closed");
   setSessionId(null);
   setPhases({});
+  setActivePhase(null);
+  setPhaseStartedAt(null);
   assistantTurnId = null;
 }
 
@@ -115,11 +147,19 @@ const handleEvent = (ev: SseEvent): void => {
   const phase = String(ev.phase ?? "");
   switch (type) {
     case "phase_start":
-      if (phase) setPhase(phase, "running");
+      if (phase) {
+        setPhase(phase, "running");
+        setActivePhase(phase);
+        setPhaseStartedAt(Date.now());
+        startTicker();
+      }
       patchAssistant(currentBuffer(), `phase: ${phase}`, true);
       break;
     case "phase_complete":
-      if (phase) setPhase(phase, "done");
+      if (phase) {
+        setPhase(phase, "done");
+        if (activePhase() === phase) setActivePhase(null);
+      }
       break;
     case "phase_failed":
       if (phase) setPhase(phase, "failed");
@@ -185,6 +225,8 @@ const handleEvent = (ev: SseEvent): void => {
       }
       patchAssistant(currentBuffer() || "_(done)_", "done");
       cleanupStream();
+      stopTicker();
+      setActivePhase(null);
       setBusy(false);
       break;
     case "error":
@@ -194,11 +236,15 @@ const handleEvent = (ev: SseEvent): void => {
         "failed",
       );
       cleanupStream();
+      stopTicker();
+      setActivePhase(null);
       setBusy(false);
       break;
     case "cancelled":
       patchAssistant(currentBuffer() + "\n\n_(cancelled)_", "cancelled");
       cleanupStream();
+      stopTicker();
+      setActivePhase(null);
       setBusy(false);
       break;
   }
@@ -257,8 +303,62 @@ const cancel = async (): Promise<void> => {
     }
   }
   cleanupStream();
+  stopTicker();
+  setActivePhase(null);
   patchAssistant("_(cancelled)_", "cancelled");
   setBusy(false);
+};
+
+/**
+ * Live phase status bar — rendered above the composer while busy.
+ * Shows the current phase's user-friendly description + an elapsed
+ * counter that ticks every second.  Empty when the pipeline isn't
+ * running.  Solves the "(starting…) for 60 s" black hole during
+ * the slow Implement phase.
+ */
+const PhaseStatusBar: Component = () => {
+  const elapsed = createMemo<number>(() => {
+    const start = phaseStartedAt();
+    if (start === null) return 0;
+    return Math.max(0, Math.floor((tickNow() - start) / 1000));
+  });
+
+  const fmtElapsed = (s: number): string => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}m ${r.toString().padStart(2, "0")}s`;
+  };
+
+  return (
+    <Show when={busy() && activePhase()}>
+      {(phase) => {
+        const def = (): PhaseDef | undefined => PHASE_BY_KEY[phase()];
+        return (
+          <div
+            role="status"
+            aria-live="polite"
+            class="flex items-center gap-3 border-t border-border-subtle bg-bg-secondary px-5 py-3 text-sm"
+          >
+            <span
+              class="h-2 w-2 rounded-full motion-safe:animate-pulse"
+              style={{ background: "var(--mode-accent)" }}
+              aria-hidden="true"
+            />
+            <span class="flex-1 truncate text-text-primary">
+              <span class="font-medium">{def()?.label ?? phase()}</span>
+              <span class="ml-2 text-text-secondary">
+                {def()?.doingNow ?? "running"}
+              </span>
+            </span>
+            <span class="font-mono text-xs text-text-tertiary tabular-nums">
+              {fmtElapsed(elapsed())}
+            </span>
+          </div>
+        );
+      }}
+    </Show>
+  );
 };
 
 /**
@@ -376,6 +476,7 @@ export const Build: Component = () => {
             </div>
           }
         />
+        <PhaseStatusBar />
         <ChatComposer
           onSubmit={start}
           busy={busy()}
