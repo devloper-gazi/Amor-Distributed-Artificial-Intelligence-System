@@ -6,6 +6,63 @@ body,
   height: 100%;
 }
 
+/* ============================================================================
+ * Cycle C Sprint 11 Day 1 — safe-area + touch-target tokens.
+ *
+ * ``viewport-fit=cover`` is set in index.html so the layout extends
+ * under the iOS notch / Android punch-hole / device home indicator.
+ * Components that hug a screen edge read these env() variables and
+ * pad themselves so content stays visible.
+ *
+ * Tokens
+ * ------
+ *   --safe-top, --safe-right, --safe-bottom, --safe-left
+ *     Per-edge safe-area inset; defaults to ``0px`` when the device
+ *     reports nothing (most desktops + non-notched phones).
+ *
+ *   --touch-target-min
+ *     Minimum hit-area diameter for any interactive element on
+ *     mobile.  44 px matches the Apple HIG + WCAG 2.5.5 minimum.
+ *     The ``.amor-touch`` utility below applies it.
+ * =========================================================================== */
+:root {
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --touch-target-min: 44px;
+}
+
+/* ``.amor-touch`` ⇒ guarantees a 44×44 minimum hit area for an
+ * interactive element on touch devices.  Visual size stays whatever
+ * Tailwind produces; the extra area is invisible padding around the
+ * focus / click target. */
+@media (pointer: coarse) {
+  .amor-touch {
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+  }
+}
+
+/* ``.amor-safe-bottom`` etc. — additive padding utilities.  Combine
+ * with Tailwind's regular padding for a "design padding + safe-area
+ * inset" stack:
+ *
+ *     <footer class="px-4 py-2 amor-safe-bottom"> … </footer>
+ */
+.amor-safe-top    { padding-top:    var(--safe-top);    }
+.amor-safe-right  { padding-right:  var(--safe-right);  }
+.amor-safe-bottom { padding-bottom: var(--safe-bottom); }
+.amor-safe-left   { padding-left:   var(--safe-left);   }
+.amor-safe-x      {
+  padding-left:  var(--safe-left);
+  padding-right: var(--safe-right);
+}
+.amor-safe-y      {
+  padding-top:    var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
 body {
   font-family: var(--font-sans);
   background: var(--color-bg-primary);

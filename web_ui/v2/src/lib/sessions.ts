@@ -48,6 +48,27 @@ export const sessions = {
     return api.get<ListResp>(path);
   },
 
+  /**
+   * Create a new chat session.  Returns the freshly-created session so
+   * the caller can use ``id`` to link it to a pipeline session_id (e.g.
+   * Build / Research / Thinking emit their own session_id; we feed this
+   * id to them as ``chat_session_id`` so backends keep the linkage).
+   *
+   * The backend normalises ``mode`` (``code`` ↔ ``coding`` ↔ ``build``
+   * — see ``chat_sessions_routes.py:_normalize_mode``).
+   */
+  async create(opts: {
+    mode: string;
+    title?: string;
+    idempotency_key?: string;
+  }) {
+    return api.post<ChatSession>("/api/sessions", {
+      mode: opts.mode,
+      title: opts.title?.slice(0, 240),
+      idempotency_key: opts.idempotency_key,
+    });
+  },
+
   async get(id: string) {
     return api.get<ChatSession & { messages?: unknown[] }>(
       `/api/sessions/${id}`,

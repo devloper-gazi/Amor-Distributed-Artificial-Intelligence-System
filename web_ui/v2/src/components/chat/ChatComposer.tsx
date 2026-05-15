@@ -1,9 +1,22 @@
 import {
   type Component,
-  createSignal,
+  For,
   Show,
+  createSignal,
 } from "solid-js";
 import { Button, Textarea } from "../ui";
+import { t } from "../../i18n";
+
+/**
+ * One option in an effort/depth segmented control.  Caller supplies
+ * the i18n keys; the composer renders ``t(label_key)`` + the
+ * description as a ``title`` tooltip.
+ */
+export interface EffortTierOption {
+  value: string;
+  label_key: string;
+  description_key: string;
+}
 
 export interface ChatComposerProps {
   onSubmit: (text: string) => void;
@@ -14,12 +27,29 @@ export interface ChatComposerProps {
   placeholder?: string;
   /** Shown next to the send button — usually "⌘+Enter to send". */
   hint?: string;
+  /** Cycle C polish — segmented control above the textarea.  When
+   *  ``effortTiers`` is provided, the composer renders a row of
+   *  buttons (one per tier) that call ``onEffortChange`` on click.
+   *  Pass-through pattern: the route owns the signal so persistence
+   *  + default selection live there.  When omitted, the composer
+   *  renders exactly the same as before — backward compatible. */
+  effortTiers?: ReadonlyArray<EffortTierOption>;
+  effortValue?: string;
+  onEffortChange?: (next: string) => void;
+  /** Localised group label rendered above the segmented control.
+   *  Defaults to ``t("composer.effort")`` so callers usually omit. */
+  effortLabelKey?: string;
 }
 
 /**
  * Chat composer.  Cmd/Ctrl-Enter sends; Shift-Enter newline; plain
  * Enter newline (chat convention — accidental sends are worse than
  * an extra keystroke).
+ *
+ * Cycle C polish — optional effort segmented control above the
+ * textarea, rendered when ``effortTiers`` is provided.  Used by
+ * Research today; Build/Thinking can opt in by passing the same
+ * three props (``effortTiers`` / ``effortValue`` / ``onEffortChange``).
  */
 export const ChatComposer: Component<ChatComposerProps> = (props) => {
   const [text, setText] = createSignal("");
@@ -48,6 +78,44 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
         submit();
       }}
     >
+      <Show when={props.effortTiers && props.effortTiers.length > 0}>
+        <div
+          class="flex flex-wrap items-center gap-2"
+          role="radiogroup"
+          aria-label={t(props.effortLabelKey ?? "composer.effort_aria")}
+          data-amor-effort-group=""
+        >
+          <span class="text-[0.7rem] font-medium uppercase tracking-wide text-text-tertiary">
+            {t(props.effortLabelKey ?? "composer.effort")}
+          </span>
+          <div class="flex flex-wrap gap-1 rounded-md border border-border-subtle bg-bg-elevated p-0.5">
+            <For each={props.effortTiers}>
+              {(tier) => (
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={tier.value === props.effortValue}
+                  title={t(tier.description_key)}
+                  onClick={() => props.onEffortChange?.(tier.value)}
+                  class={[
+                    "amor-touch rounded px-3 py-1 text-xs font-medium transition-colors",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2",
+                    tier.value === props.effortValue
+                      ? "bg-bg-hover text-text-primary"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                  ].join(" ")}
+                  data-amor-effort={tier.value}
+                  data-amor-effort-active={
+                    tier.value === props.effortValue ? "1" : "0"
+                  }
+                >
+                  {t(tier.label_key)}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
       <Textarea
         value={text()}
         onInput={(e) => setText(e.currentTarget.value)}
@@ -71,7 +139,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
               onClick={() => props.onCancel?.()}
               type="button"
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
           }
         >
@@ -80,7 +148,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
             size="sm"
             disabled={!text().trim()}
           >
-            Send
+            {t("composer.send")}
           </Button>
         </Show>
       </div>

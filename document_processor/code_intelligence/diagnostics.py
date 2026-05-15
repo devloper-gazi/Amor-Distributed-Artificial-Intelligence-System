@@ -230,6 +230,12 @@ async def collect_sandbox(probe: bool = True) -> dict:
         from .sandbox import ExecutionSandbox  # noqa: PLC0415
         sb = ExecutionSandbox()
         out["workdir_root"] = sb._workdir_root  # noqa: SLF001
+        # Cycle C Sprint 5 Day 2 — security posture (proxy / cap-drop /
+        # seccomp / etc).  Pure introspection — no probe latency.
+        try:
+            out["security"] = sb.security_posture()
+        except Exception as exc:  # pragma: no cover
+            out["security"] = {"error": f"{type(exc).__name__}: {exc}"}
         if probe:
             t0 = time.monotonic()
             ok = await sb.docker_available(force_refresh=False)

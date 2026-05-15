@@ -4,6 +4,7 @@ import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
+import { t } from "../i18n";
 import {
   getChatStream,
   SIMPLE_TEXT_REDUCER,
@@ -49,6 +50,9 @@ export const Sentinel: Component = () => {
     eventsPath: (sid) => `/api/sentinel/${sid}/events`,
     cancelPath: (sid) => `/api/sentinel/${sid}/cancel`,
     reduce: reducer,
+    // Cycle D Sessions polish — register the sentinel audit in the
+    // sidebar so the user can revisit it from the session list.
+    chatSessionMode: "sentinel",
   });
 
   const headerStatus = createMemo<Status>(() => {
@@ -62,13 +66,13 @@ export const Sentinel: Component = () => {
   return (
     <div data-mode="sentinel" class="flex h-full flex-col">
       <TopBar
-        title="Sentinel"
-        subtitle="governance, ledger, evolution"
+        title={t("sentinel.title")}
+        subtitle={t("sentinel.subtitle")}
         actions={
           <Show when={stream.busy()}>
             <StatusPill status={headerStatus()} size="sm" />
             <Button variant="secondary" size="sm" onClick={stream.cancel}>
-              Cancel
+              {t("common.cancel")}
             </Button>
           </Show>
         }
@@ -79,13 +83,10 @@ export const Sentinel: Component = () => {
         emptyState={
           <div class="max-w-md text-center">
             <p class="text-base text-text-primary">
-              Describe what to audit
+              {t("sentinel.empty.title")}
             </p>
             <p class="mt-2 text-sm text-text-tertiary">
-              Sentinel runs a multi-agent security + governance scan.
-              Pass a prompt describing the surface (codebase area,
-              session id, deliverable) and AMOR will audit + emit a
-              SARIF-shaped report.
+              {t("sentinel.empty.body")}
             </p>
           </div>
         }
@@ -94,7 +95,7 @@ export const Sentinel: Component = () => {
         onSubmit={stream.start}
         busy={stream.busy()}
         onCancel={stream.cancel}
-        placeholder="What should Sentinel audit? (e.g. 'check the auth middleware for CSRF + XSS')"
+        placeholder={t("sentinel.composer.placeholder")}
       />
     </div>
   );

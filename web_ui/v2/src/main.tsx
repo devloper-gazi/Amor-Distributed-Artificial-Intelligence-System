@@ -33,6 +33,22 @@ import { Settings } from "./routes/Settings";
 import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Showcase } from "./routes/Showcase";
+// Cycle C Sprint 0 Day 3 — admin baselines dashboard.
+import { Baselines } from "./routes/Baselines";
+// Cycle C Sprint 1 Day 4 — admin LLM dashboard.
+import { LLMDashboard } from "./routes/LLM";
+// Cycle C Sprint 2 Day 5 — admin Evals dashboard.
+import { Evals } from "./routes/Evals";
+// Cycle C Sprint 4 Day 1 — mode-agnostic chat surface.
+import { Chat } from "./routes/Chat";
+// Cycle C Sprint 6 Day 4 — admin Training surface.
+import { Training } from "./routes/Training";
+// Cycle C Sprint 7 Day 3 — admin Memory viewer (Mem0 OSS).
+import { Memory } from "./routes/Memory";
+// Cycle C Sprint 8 Day 4 — agentic ReAct loop UI.
+import { Agent } from "./routes/Agent";
+// Cycle C Sprint 12 Day 1 — PWA service-worker registration.
+import { registerServiceWorker } from "./lib/pwa";
 
 const root = document.getElementById("root");
 if (!root) {
@@ -49,6 +65,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// Cycle D — expose the client so module-scoped code (Build/Research/
+// Thinking ``start`` functions, defined outside any component) can
+// invalidate the Sessions sidebar query as soon as a new chat session
+// is created.
+import { setQueryClient } from "./lib/query-client";
+setQueryClient(queryClient);
+
 /* Apply saved theme before any component renders so the user
  * doesn't see a flash of the wrong theme. */
 const applyInitialTheme = () => {
@@ -62,6 +85,12 @@ const applyInitialTheme = () => {
   }
 };
 applyInitialTheme();
+
+// Cycle C Sprint 12 Day 1 — register the service worker.  No-op
+// in dev, no-op when the operator set ``localStorage["amor.pwa"]
+// = "off"``, no-op when navigator.serviceWorker is missing.
+// Errors are swallowed so a registration hiccup never blocks boot.
+void registerServiceWorker();
 
 /** Auth gate — wraps every route under AppShell.  When auth.user()
  *  is null AFTER bootstrap, redirect to /login.  The AppShell only
@@ -147,6 +176,13 @@ render(
             <Route path="/sentinel" component={Sentinel} />
             <Route path="/system" component={Diagnostics} />
             <Route path="/settings" component={Settings} />
+            <Route path="/admin/baselines" component={Baselines} />
+            <Route path="/admin/llm" component={LLMDashboard} />
+            <Route path="/admin/evals" component={Evals} />
+            <Route path="/admin/training" component={Training} />
+            <Route path="/admin/memory" component={Memory} />
+            <Route path="/agent" component={Agent} />
+            <Route path="/chat" component={Chat} />
           </Route>
 
           <Route path="*" component={NotFound} />

@@ -59,6 +59,10 @@ export const Button: Component<ButtonProps> = (props) => {
         "font-medium transition-[background-color,opacity] duration-100",
         "focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed",
+        // Sprint 11 Day 4 — guarantee 44×44 hit area on coarse-pointer
+        // devices.  Visual size stays whatever ``SIZE_CLASS`` set; the
+        // utility only enlarges when @media (pointer: coarse) hits.
+        "amor-touch",
         SIZE_CLASS[size()],
         VARIANT_CLASS[variant()],
         local.class ?? "",

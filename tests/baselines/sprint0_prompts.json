@@ -1,0 +1,95 @@
+{
+  "$schema": "./sprint0_schema.json",
+  "version": "1.0",
+  "created_utc": "2026-05-04T00:00:00Z",
+  "rationale": "10 prompts across 3 chat modes (Build/Research/Thinking); 4 Build (varied debug-retry triggers), 3 Research (1 citation-required), 3 Thinking (multi-step + tradeoff + plan). Sprint 0 baseline corpus per Cycle C plan.",
+  "prompts": [
+    {
+      "id": "build-snake-html",
+      "mode": "Build",
+      "prompt": "Create a single-file HTML snake game (no external assets). Must include: 20x20 grid, arrow-key controls, score, game over screen with replay. Self-contained <script> and <style>.",
+      "rationale": "End-to-end Build with one obvious correctness criterion (does it run in a browser); rarely triggers debug retry.",
+      "expected_mode_routing": "Build",
+      "expects_debug_retry": false,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "build-fizzbuzz-py",
+      "mode": "Build",
+      "prompt": "Write a Python 3.11 module fizzbuzz.py with a function fizzbuzz(n: int) -> list[str] returning the FizzBuzz output for 1..n inclusive. Include doctests covering n=15.",
+      "rationale": "Trivially small but tests doctest format adherence; usually one-shot.",
+      "expected_mode_routing": "Build",
+      "expects_debug_retry": false,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "build-todo-cli-rust",
+      "mode": "Build",
+      "prompt": "Create a Rust CLI 'todo' that supports add/list/done/rm subcommands, persists to ~/.todo.json, uses clap v4, serde, anyhow. Include Cargo.toml. The project must compile with cargo build.",
+      "rationale": "Multi-file Rust; cargo error output frequently triggers debug-retry pipeline.",
+      "expected_mode_routing": "Build",
+      "expects_debug_retry": true,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "build-flask-rest",
+      "mode": "Build",
+      "prompt": "Create a Flask 3.0 REST API for a notes CRUD: GET /notes, POST /notes, GET /notes/{id}, DELETE /notes/{id}, with SQLite via sqlite3 stdlib (no SQLAlchemy). Include requirements.txt and a 5-test pytest file using TestClient.",
+      "rationale": "Cross-file, includes tests; pytest failures trigger debug-retry.",
+      "expected_mode_routing": "Build",
+      "expects_debug_retry": true,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "research-crdt-vs-ot",
+      "mode": "Research",
+      "prompt": "Compare CRDTs and Operational Transform for collaborative text editing. Cover: convergence guarantees, network assumptions, payload size, server-vs-peer-to-peer suitability. Cite at least 3 primary sources (papers or canonical implementations) with URLs.",
+      "rationale": "Citations required; tests retrieval/citation discipline.",
+      "expected_mode_routing": "Research",
+      "expects_citations": true,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "research-arxiv-summary",
+      "mode": "Research",
+      "prompt": "Summarize 3 recent arXiv papers (last 90 days) on local LLM inference optimization. For each: 2-sentence abstract paraphrase, key contribution, hardware tested.",
+      "rationale": "Tests recency awareness without strict citation requirement; web access disabled = expect graceful degradation.",
+      "expected_mode_routing": "Research",
+      "expects_citations": false,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "research-explain-moe",
+      "mode": "Research",
+      "prompt": "Explain Mixture-of-Experts to a senior engineer who knows transformers but not MoE. Cover: routing, load balancing, expert capacity, why training is hard. ~400 words.",
+      "rationale": "Pure expository; tests pedagogical structure.",
+      "expected_mode_routing": "Research",
+      "expects_citations": false,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "thinking-reasoning-multi",
+      "mode": "Thinking",
+      "prompt": "A train leaves city A at 06:00 traveling 80 km/h east. Another leaves city B (200 km east of A) at 06:30 traveling 60 km/h west. When and where do they meet? Show your work.",
+      "rationale": "Closed-form math; verifiable answer (~07:18 at ~104 km east of A); tests step-by-step reasoning.",
+      "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "thinking-design-tradeoff",
+      "mode": "Thinking",
+      "prompt": "Should AMOR replace its FastAPI backend with a Rust (Axum) backend? Lay out the criteria, weigh them, and conclude with a recommendation. Be opinionated.",
+      "rationale": "Self-referential design tradeoff; tests opinion-with-evidence balance.",
+      "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "thinking-plan",
+      "mode": "Thinking",
+      "prompt": "Plan the migration of a 50K-LOC Python 3.9 codebase to Python 3.12. Output: ordered milestone list, risks per milestone, rollback per milestone, estimated weeks of solo developer effort.",
+      "rationale": "Tests structured planning output, the architect role's bread and butter.",
+      "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    }
+  ]
+}

@@ -4,14 +4,27 @@ import { MODES, type ModeMeta } from "../../lib/types";
 import { auth } from "../../lib/auth";
 import { Avatar, Tooltip, IconButton, Kbd } from "../ui";
 import { SessionList } from "./SessionList";
+import { modeLabel, t } from "../../i18n";
 
-const SYSTEM_LINKS: ReadonlyArray<{
+interface SystemLink {
   href: string;
-  label: string;
+  /** i18n key — looked up via ``t()`` at render time. */
+  label_key: string;
   glyph: string;
   external?: boolean;
-}> = [
-  { href: "/settings", label: "Settings", glyph: "⚙" },
+}
+
+const SYSTEM_LINKS: ReadonlyArray<SystemLink> = [
+  { href: "/settings", label_key: "sidebar.system.settings", glyph: "⚙" },
+  // Cycle C Sprint 0 Day 3 — baseline corpus dashboard.  Lives under
+  // System on purpose: it's an operator/owner view, not a per-mode
+  // workspace.  When Sprint 6's training tab lands it'll join here.
+  { href: "/admin/baselines", label_key: "sidebar.system.baselines", glyph: "▦" },
+  // Cycle C Sprint 1 Day 4 — LLM backend dashboard (resident models,
+  // swap events, p50/p95 latency).
+  { href: "/admin/llm", label_key: "sidebar.system.llm", glyph: "◆" },
+  // Cycle C Sprint 2 Day 5 — eval harness dashboard.
+  { href: "/admin/evals", label_key: "sidebar.system.evals", glyph: "▸" },
 ];
 
 interface SidebarProps {
@@ -51,11 +64,11 @@ export const Sidebar: Component<SidebarProps> = (props) => {
       <div class="flex h-12 items-center justify-between border-b border-border-subtle px-3">
         <Show when={!props.collapsed}>
           <A href="/" class="font-semibold tracking-tight">
-            AMOR
+            {t("sidebar.brand")}
           </A>
         </Show>
         <IconButton
-          aria-label={props.collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={props.collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
           size="sm"
           onClick={props.onToggle}
         >
@@ -69,17 +82,17 @@ export const Sidebar: Component<SidebarProps> = (props) => {
           type="button"
           onClick={props.onOpenPalette}
           class="mx-3 mt-3 flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
-          aria-label="Open command palette"
+          aria-label={t("sidebar.palette_open")}
         >
-          <span>Search…</span>
+          <span>{t("sidebar.search")}</span>
           <Kbd>Mod+K</Kbd>
         </button>
       </Show>
       <Show when={props.collapsed}>
         <div class="mx-2 mt-3 flex justify-center">
-          <Tooltip label="Command palette (⌘K)" placement="right">
+          <Tooltip label={`${t("palette.dialog_label")} (⌘K)`} placement="right">
             <IconButton
-              aria-label="Open command palette"
+              aria-label={t("sidebar.palette_open")}
               size="sm"
               onClick={props.onOpenPalette}
             >
@@ -93,7 +106,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
       <nav class="flex-1 overflow-y-auto px-2 py-3">
         <Show when={!props.collapsed}>
           <p class="mb-1.5 px-2 text-[0.65rem] font-semibold uppercase tracking-widest text-text-tertiary">
-            Modes
+            {t("sidebar.section.modes")}
           </p>
         </Show>
         <ul class="space-y-0.5">
@@ -106,7 +119,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
 
         <Show when={!props.collapsed}>
           <p class="mt-6 mb-1.5 px-2 text-[0.65rem] font-semibold uppercase tracking-widest text-text-tertiary">
-            System
+            {t("sidebar.section.system")}
           </p>
         </Show>
         <ul class="space-y-0.5">
@@ -134,7 +147,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
                         {link.glyph}
                       </span>
                       <Show when={!props.collapsed}>
-                        <span class="truncate">{link.label}</span>
+                        <span class="truncate">{t(link.label_key)}</span>
                       </Show>
                     </A>
                   }
@@ -153,7 +166,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
                       {link.glyph}
                     </span>
                     <Show when={!props.collapsed}>
-                      <span class="truncate">{link.label}</span>
+                      <span class="truncate">{t(link.label_key)}</span>
                     </Show>
                   </a>
                 </Show>
@@ -172,7 +185,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
           when={auth.user()}
           fallback={
             <Show when={!props.collapsed}>
-              <p class="text-xs text-text-tertiary">Signed out</p>
+              <p class="text-xs text-text-tertiary">{t("sidebar.signed_out")}</p>
             </Show>
           }
         >
@@ -229,10 +242,10 @@ const SidebarItem: Component<{
         {GLYPH[props.mode.glyph] ?? "•"}
       </span>
       <Show when={!props.collapsed}>
-        <span class="flex-1 truncate">{props.mode.label}</span>
+        <span class="flex-1 truncate">{modeLabel(props.mode)}</span>
         <Show when={!props.mode.wired}>
           <span class="rounded-full bg-bg-tertiary px-1.5 py-0.5 text-[0.55rem] uppercase tracking-wide text-text-tertiary">
-            soon
+            {t("sidebar.mode.soon")}
           </span>
         </Show>
       </Show>
@@ -244,7 +257,7 @@ const SidebarItem: Component<{
       <Show
         when={!props.collapsed}
         fallback={
-          <Tooltip label={props.mode.label} placement="right">
+          <Tooltip label={modeLabel(props.mode)} placement="right">
             {link}
           </Tooltip>
         }

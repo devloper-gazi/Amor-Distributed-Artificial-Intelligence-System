@@ -4,6 +4,7 @@ import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
+import { t } from "../i18n";
 import {
   getChatStream,
   SIMPLE_TEXT_REDUCER,
@@ -47,6 +48,9 @@ export const Consortium: Component = () => {
     eventsPath: (sid) => `/api/consortium/${sid}/events`,
     cancelPath: (sid) => `/api/consortium/${sid}/cancel`,
     reduce: reducer,
+    // Cycle D Sessions polish — register the consortium run in the
+    // sidebar so the user sees their goal listed immediately.
+    chatSessionMode: "consortium",
   });
 
   const headerStatus = createMemo<Status>(() => {
@@ -60,13 +64,13 @@ export const Consortium: Component = () => {
   return (
     <div data-mode="consortium" class="flex h-full flex-col">
       <TopBar
-        title="Consortium"
-        subtitle="research + think + build, orchestrated"
+        title={t("consortium.title")}
+        subtitle={t("consortium.subtitle")}
         actions={
           <Show when={stream.busy()}>
             <StatusPill status={headerStatus()} size="sm" />
             <Button variant="secondary" size="sm" onClick={stream.cancel}>
-              Cancel
+              {t("common.cancel")}
             </Button>
           </Show>
         }
@@ -77,12 +81,10 @@ export const Consortium: Component = () => {
         emptyState={
           <div class="max-w-md text-center">
             <p class="text-base text-text-primary">
-              State a project goal
+              {t("consortium.empty.title")}
             </p>
             <p class="mt-2 text-sm text-text-tertiary">
-              Consortium scopes the goal, researches background,
-              thinks through the approach, then builds.  Plan on
-              8–15 min for deep depth — keep this tab open.
+              {t("consortium.empty.body")}
             </p>
           </div>
         }
@@ -91,7 +93,7 @@ export const Consortium: Component = () => {
         onSubmit={stream.start}
         busy={stream.busy()}
         onCancel={stream.cancel}
-        placeholder="What should AMOR scope, plan, and build? (e.g. 'cli tool that lints markdown links')"
+        placeholder={t("consortium.composer.placeholder")}
       />
     </div>
   );

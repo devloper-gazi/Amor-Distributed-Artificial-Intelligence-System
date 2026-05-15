@@ -3,6 +3,7 @@ import {
   For,
   Show,
   createSignal,
+  createMemo,
   createEffect,
   onCleanup,
   onMount,
@@ -12,57 +13,259 @@ import {
   useQueryClient,
   createMutation,
 } from "@tanstack/solid-query";
-import { A } from "@solidjs/router";
+import { A, useLocation } from "@solidjs/router";
 import { auth } from "../../lib/auth";
 import { sessions, type ChatSession } from "../../lib/sessions";
 import { Modal, Button, Input } from "../ui";
+import { t } from "../../i18n";
 
 interface SessionListProps {
   collapsed: boolean;
 }
 
-/** Relative-time helper. */
-function relativeTime(iso: string | undefined): string {
+/**
+ * Cycle D — Sessions list polish.
+ *
+ * The previous build rendered every session as an unstyled row with
+ * no status differentiation, no mode tint, and no recency grouping.
+ * The user reported it as "Test · code · 12d ago" with no signal as
+ * to whether the session was active, completed, or archived.
+ *
+ * The backend has NO server-side ``status`` field — sessions just
+ * have ``updated_at`` / ``archived`` / ``pinned``.  We derive a
+ * client-side activity status from those fields:
+ *
+ *   pinned                          → "pinned"  (gold ★, top group)
+ *   archived                        → "archived" (◌ chip, dimmed)
+ *   updated_at < 60s                → "active"   (pulsing emerald)
+ *   updated_at < 1h                 → "recent"   (cool blue)
+ *   updated_at < 24h                → "idle"     (amber)
+ *   else                            → "stale"    (subdued gray)
+ *
+ * Mode chip colours are pulled from ``--color-mode-*`` tokens already
+ * present in ``styles/theme.css`` — the chip dot exposes the mode at
+ * a glance without opening the row.
+ *
+ * Active highlight: rows whose ``mode`` matches the current route
+ * are tagged with a left accent bar so the operator can immediately
+ * see "this is the page you're on".
+ */
+
+
+// ─── Status taxonomy ──────────────────────────────────────────────
+
+
+export type ActivityStatus =
+  | "active"
+  | "recent"
+  | "idle"
+  | "stale"
+  | "archived"
+  | "pinned";
+
+const ACTIVE_THRESHOLD_MS = 60 * 1000;       //  1 min
+const RECENT_THRESHOLD_MS = 60 * 60 * 1000;  //  1 hour
+const IDLE_THRESHOLD_MS   = 24 * 60 * 60 * 1000; // 24 hours
+
+export function deriveActivityStatus(
+  s: ChatSession,
+  now: number = Date.now(),
+): ActivityStatus {
+  if (s.pinned) return "pinned";
+  if (s.archived) return "archived";
+  const ts = new Date(s.updated_at ?? s.created_at ?? 0).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return "stale";
+  const delta = now - ts;
+  if (delta < ACTIVE_THRESHOLD_MS) return "active";
+  if (delta < RECENT_THRESHOLD_MS) return "recent";
+  if (delta < IDLE_THRESHOLD_MS) return "idle";
+  return "stale";
+}
+
+const STATUS_COLOR: Record<ActivityStatus, string> = {
+  active:   "var(--color-status-healthy)",
+  recent:   "var(--color-mode-research)",
+  idle:     "var(--color-status-warming)",
+  stale:    "var(--color-text-tertiary)",
+  archived: "var(--color-text-tertiary)",
+  pinned:   "var(--color-status-warming)",
+};
+
+
+// ─── Mode → color token + label ───────────────────────────────────
+
+
+function modeColorVar(mode: string | undefined): string {
+  switch (mode) {
+    case "research":   return "var(--color-mode-research)";
+    case "thinking":   return "var(--color-mode-thinking)";
+    case "build":
+    case "code":       return "var(--color-mode-build)";
+    case "consortium": return "var(--color-mode-consortium)";
+    case "sentinel":   return "var(--color-mode-sentinel)";
+    default:           return "var(--color-text-tertiary)";
+  }
+}
+
+function modeShortLabel(mode: string | undefined): string {
+  // 3-4 char compact label for the chip badge.
+  switch (mode) {
+    case "research":   return t("mode.research.label").slice(0, 4);
+    case "thinking":   return t("mode.thinking.label").slice(0, 4);
+    case "build":
+    case "code":       return t("mode.build.label").slice(0, 4);
+    case "consortium": return t("mode.consortium.label").slice(0, 4);
+    case "sentinel":   return t("mode.sentinel.label").slice(0, 4);
+    case "system":     return t("mode.system.label").slice(0, 4);
+    default:           return mode ? mode.slice(0, 4) : "—";
+  }
+}
+
+function modeHref(mode: string | undefined): string {
+  switch (mode) {
+    case "research":
+    case "thinking":
+    case "build":
+    case "consortium":
+    case "sentinel":
+      return `/${mode}`;
+    case "code":
+      return "/build";
+    default:
+      return "/";
+  }
+}
+
+
+// ─── Localized relative-time ──────────────────────────────────────
+
+
+export function relativeTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return "";
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 30) return "just now";
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 86400 * 14) return `${Math.floor(diff / 86400)}d ago`;
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return "";
+  const diff = (now - ts) / 1000;
+  if (diff < 30)        return t("time.just_now");
+  if (diff < 60)        return t("time.seconds_ago", { n: Math.floor(diff) });
+  if (diff < 3600)      return t("time.minutes_ago", { n: Math.floor(diff / 60) });
+  if (diff < 86400)     return t("time.hours_ago",   { n: Math.floor(diff / 3600) });
+  if (diff < 86400 * 14) return t("time.days_ago",   { n: Math.floor(diff / 86400) });
   return new Date(iso).toLocaleDateString();
 }
+
+
+// ─── Recency grouping ─────────────────────────────────────────────
+
+
+type GroupKey = "pinned" | "today" | "this_week" | "older" | "archived";
+
+interface SessionGroup {
+  key: GroupKey;
+  label: string;
+  items: ChatSession[];
+}
+
+function groupSessions(items: ChatSession[], now: number = Date.now()): SessionGroup[] {
+  const pinned: ChatSession[] = [];
+  const today: ChatSession[] = [];
+  const week: ChatSession[] = [];
+  const older: ChatSession[] = [];
+  const archived: ChatSession[] = [];
+
+  for (const s of items) {
+    if (s.archived) {
+      archived.push(s);
+      continue;
+    }
+    if (s.pinned) {
+      pinned.push(s);
+      continue;
+    }
+    const ts = new Date(s.updated_at ?? s.created_at ?? 0).getTime();
+    if (!Number.isFinite(ts) || ts <= 0) {
+      older.push(s);
+      continue;
+    }
+    const delta = now - ts;
+    if (delta < 24 * 60 * 60 * 1000) today.push(s);
+    else if (delta < 7 * 24 * 60 * 60 * 1000) week.push(s);
+    else older.push(s);
+  }
+
+  const byTime = (a: ChatSession, b: ChatSession): number => {
+    const ta = new Date(a.updated_at ?? a.created_at ?? 0).getTime();
+    const tb = new Date(b.updated_at ?? b.created_at ?? 0).getTime();
+    return tb - ta;
+  };
+  pinned.sort(byTime);
+  today.sort(byTime);
+  week.sort(byTime);
+  older.sort(byTime);
+  archived.sort(byTime);
+
+  const out: SessionGroup[] = [];
+  if (pinned.length)
+    out.push({ key: "pinned", label: t("sessions.status.pinned"), items: pinned });
+  if (today.length)
+    out.push({ key: "today", label: t("sessions.group.today"), items: today });
+  if (week.length)
+    out.push({ key: "this_week", label: t("sessions.group.this_week"), items: week });
+  if (older.length)
+    out.push({ key: "older", label: t("sessions.group.older"), items: older });
+  if (archived.length)
+    out.push({ key: "archived", label: t("sessions.group.archived"), items: archived });
+  return out;
+}
+
+
+// ─── Auto-tick clock for "active" pulse + relative time ──────────
+
+
+/** Refresh the activity-status derivation every 30 s so the
+ *  "Active" pulse fades to "Recent" without a manual reload.
+ *  Uses a single shared signal so the tick rate is paid once for
+ *  the whole list, not per row. */
+const [tickNow, setTickNow] = createSignal<number>(Date.now());
+let tickerTimer: ReturnType<typeof setInterval> | null = null;
+function ensureTicker(): void {
+  if (tickerTimer) return;
+  tickerTimer = setInterval(() => setTickNow(Date.now()), 30_000);
+}
+
 
 type Pending =
   | { kind: "rename"; session: ChatSession }
   | { kind: "delete"; session: ChatSession }
   | null;
 
-/**
- * Sidebar section listing the user's chat sessions.  Now shows
- * ALL sessions (was capped at 20 in the prior build), scrolls in
- * a fixed-height container, and uses in-app modals for rename +
- * delete instead of the browser-native ``confirm()`` / ``prompt()``
- * which surfaced ugly "localhost:8000 says" banners.
- *
- * Backend listing already filters by ``user_id`` only (not by
- * ``X-Client-Id``) so sessions from older v1 sessions / different
- * tabs of the same user account stay visible.  When the user has
- * >100 sessions the fetch caps at 100 — pagination can be added
- * later if anyone hits the cap routinely.
- */
+
+// ─── Main component ───────────────────────────────────────────────
+
+
 export const SessionList: Component<SessionListProps> = (props) => {
   const qc = useQueryClient();
+  const location = useLocation();
   const [pending, setPending] = createSignal<Pending>(null);
+
+  onMount(ensureTicker);
+  onCleanup(() => {
+    // Don't kill the shared ticker — other instances may still need it.
+    // Kept here as a no-op so removing this list later doesn't leak the
+    // interval (the module-level guard handles re-creation).
+  });
 
   const q = createQuery<{ sessions: ChatSession[] }>(() => ({
     queryKey: ["sessions", "list"],
     queryFn: () => sessions.list({ limit: 100, archived: true }),
     enabled: !!auth.user() && !props.collapsed,
     refetchOnWindowFocus: true,
-    staleTime: 30_000,
+    // Cycle D — short staleTime + 15 s background poll so a session
+    // started in another tab / by another route shows up without a
+    // manual refresh.  Pipeline ``done`` events also trigger an
+    // explicit invalidate via ``invalidateSessionsList()``, so the
+    // typical case lands in <1 s.
+    staleTime: 5_000,
+    refetchInterval: 15_000,
   }));
 
   const renameMutation = createMutation(() => ({
@@ -88,63 +291,85 @@ export const SessionList: Component<SessionListProps> = (props) => {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions", "list"] }),
   }));
 
-  const sortedSessions = (): ChatSession[] => {
+  /** Current route → which mode is "active" (lit accent bar). */
+  const currentMode = createMemo<string>(() => {
+    const path = location.pathname.replace(/^\/+/, "").split("/")[0] ?? "";
+    return path;
+  });
+
+  const groups = createMemo<SessionGroup[]>(() => {
+    void tickNow(); // re-group when the clock ticks
     const list = q.data?.sessions ?? [];
-    return [...list].sort((a, b) => {
-      // Pinned first, then most recent.
-      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
-      const ta = new Date(a.updated_at ?? a.created_at ?? 0).getTime();
-      const tb = new Date(b.updated_at ?? b.created_at ?? 0).getTime();
-      return tb - ta;
-    });
-  };
+    return groupSessions(list);
+  });
+
+  const total = createMemo<number>(() => q.data?.sessions?.length ?? 0);
 
   return (
     <Show when={!props.collapsed && auth.user()}>
       <div class="mt-6 flex items-center justify-between px-2 mb-1.5">
         <p class="text-[0.65rem] font-semibold uppercase tracking-widest text-text-tertiary">
-          Sessions
+          {t("sessions.title")}
         </p>
-        <Show when={(q.data?.sessions?.length ?? 0) > 0}>
+        <Show when={total() > 0}>
           <span class="text-[0.6rem] text-text-tertiary tabular-nums">
-            {q.data!.sessions.length}
+            {total()}
           </span>
         </Show>
       </div>
       <Show
         when={!q.isLoading}
         fallback={
-          <p class="px-2 text-xs text-text-tertiary">Loading…</p>
+          <p class="px-2 text-xs text-text-tertiary">
+            {t("sessions.loading")}
+          </p>
         }
       >
         <Show
-          when={sortedSessions().length > 0}
+          when={total() > 0}
           fallback={
             <p class="px-2 text-xs text-text-tertiary">
-              No sessions yet.
+              {t("sessions.empty")}
             </p>
           }
         >
-          <ul class="max-h-[40vh] overflow-y-auto space-y-0.5 pr-0.5">
-            <For each={sortedSessions()}>
-              {(s) => (
-                <SessionRow
-                  session={s}
-                  onRename={() => setPending({ kind: "rename", session: s })}
-                  onArchive={() =>
-                    archiveMutation.mutate({
-                      id: s.id,
-                      archived: !s.archived,
-                    })
-                  }
-                  onPin={() =>
-                    pinMutation.mutate({ id: s.id, pinned: !s.pinned })
-                  }
-                  onDelete={() => setPending({ kind: "delete", session: s })}
-                />
+          <div class="max-h-[44vh] overflow-y-auto pr-0.5 space-y-2">
+            <For each={groups()}>
+              {(group) => (
+                <section
+                  data-amor-session-group={group.key}
+                  aria-label={group.label}
+                >
+                  <h3 class="px-2 pb-0.5 text-[0.55rem] font-semibold uppercase tracking-wider text-text-tertiary/80">
+                    {group.label}
+                  </h3>
+                  <ul class="space-y-0.5">
+                    <For each={group.items}>
+                      {(s) => (
+                        <SessionRow
+                          session={s}
+                          isCurrentMode={
+                            currentMode() === (s.mode === "code" ? "build" : s.mode)
+                          }
+                          onRename={() => setPending({ kind: "rename", session: s })}
+                          onArchive={() =>
+                            archiveMutation.mutate({
+                              id: s.id,
+                              archived: !s.archived,
+                            })
+                          }
+                          onPin={() =>
+                            pinMutation.mutate({ id: s.id, pinned: !s.pinned })
+                          }
+                          onDelete={() => setPending({ kind: "delete", session: s })}
+                        />
+                      )}
+                    </For>
+                  </ul>
+                </section>
               )}
             </For>
-          </ul>
+          </div>
         </Show>
       </Show>
 
@@ -175,8 +400,13 @@ export const SessionList: Component<SessionListProps> = (props) => {
   );
 };
 
+
+// ─── Single row ───────────────────────────────────────────────────
+
+
 interface SessionRowProps {
   session: ChatSession;
+  isCurrentMode: boolean;
   onRename: () => void;
   onArchive: () => void;
   onPin: () => void;
@@ -187,23 +417,25 @@ const SessionRow: Component<SessionRowProps> = (props) => {
   const [menuOpen, setMenuOpen] = createSignal(false);
 
   const title = (): string => {
-    const t = props.session.title?.trim();
-    if (t) return t;
-    return `Session ${(props.session.id ?? props.session.session_id ?? "?").slice(0, 8)}`;
+    const tt = props.session.title?.trim();
+    if (tt) return tt;
+    const id8 = (props.session.id ?? props.session.session_id ?? "?").slice(0, 8);
+    return `${t("sessions.unnamed")} ${id8}`;
   };
 
-  const href = (): string => {
-    const mode = props.session.mode;
-    switch (mode) {
-      case "research":
-      case "thinking":
-      case "build":
-      case "code":
-      case "consortium":
-      case "sentinel":
-        return `/${mode === "code" ? "build" : mode}`;
-      default:
-        return "/";
+  const status = createMemo<ActivityStatus>(() => {
+    void tickNow();
+    return deriveActivityStatus(props.session);
+  });
+
+  const statusLabel = (): string => {
+    switch (status()) {
+      case "active":   return t("sessions.status.active");
+      case "recent":   return t("sessions.status.recent");
+      case "idle":     return t("sessions.status.idle");
+      case "stale":    return t("sessions.status.stale");
+      case "archived": return t("sessions.status.archived");
+      case "pinned":   return t("sessions.status.pinned");
     }
   };
 
@@ -214,36 +446,82 @@ const SessionRow: Component<SessionRowProps> = (props) => {
     fn();
   };
 
+  const modeKey = (): string => props.session.mode ?? "";
+  const isActive = (): boolean => status() === "active";
+
   return (
     <li class="group relative">
       <A
-        href={href()}
+        href={modeHref(modeKey())}
+        data-amor-session-row=""
+        data-amor-session-status={status()}
+        data-amor-session-mode={modeKey()}
         class={[
-          "flex items-center gap-2 rounded-md px-2 py-1.5 pr-7 text-xs",
+          "relative flex items-start gap-2 rounded-md px-2 py-1.5 pr-7 text-xs",
+          "border border-transparent",
           "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+          "focus-visible:outline-2 focus-visible:outline-offset-1",
+          props.isCurrentMode ? "bg-bg-hover/50 border-border-subtle" : "",
           props.session.archived ? "opacity-60" : "",
         ].join(" ")}
-        title={`${title()} · ${props.session.mode ?? "unknown"} · ${relativeTime(
+        title={`${title()} · ${statusLabel()} · ${relativeTime(
           props.session.updated_at ?? props.session.created_at,
-        )}${props.session.archived ? " · archived" : ""}`}
+        )}`}
+        aria-current={props.isCurrentMode ? "page" : undefined}
       >
-        <Show when={props.session.pinned}>
-          <span class="text-text-tertiary" aria-hidden="true">
-            ★
-          </span>
+        {/* Mode-tinted left accent bar — visible only on the
+            currently-selected mode, gives "you are here" cue. */}
+        <Show when={props.isCurrentMode}>
+          <span
+            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full"
+            style={{ background: modeColorVar(modeKey()) }}
+            aria-hidden="true"
+          />
         </Show>
-        <Show when={props.session.archived}>
-          <span class="text-text-tertiary" aria-hidden="true" title="Archived">
-            ◌
-          </span>
-        </Show>
+
+        {/* Status dot — pulses when "active". */}
+        <span
+          class={[
+            "mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+            isActive() ? "motion-safe:animate-pulse" : "",
+          ].join(" ")}
+          style={{ background: STATUS_COLOR[status()] }}
+          aria-label={statusLabel()}
+          role="img"
+        />
+
         <span class="flex min-w-0 flex-1 flex-col">
-          <span class="truncate">{title()}</span>
-          <span class="truncate text-[0.6rem] text-text-tertiary">
-            {props.session.mode ?? "—"} ·{" "}
-            {relativeTime(
-              props.session.updated_at ?? props.session.created_at,
-            )}
+          <span class="flex items-center gap-1.5">
+            <Show when={props.session.pinned}>
+              <span
+                class="text-[0.65rem] leading-none"
+                style={{ color: "var(--color-status-warming)" }}
+                aria-hidden="true"
+                title={t("sessions.status.pinned")}
+              >
+                ★
+              </span>
+            </Show>
+            <span class="truncate font-medium">{title()}</span>
+          </span>
+          <span class="mt-0.5 flex items-center gap-1.5 text-[0.6rem] text-text-tertiary">
+            {/* Mode chip */}
+            <Show when={modeKey()}>
+              <span
+                class="inline-flex items-center gap-1 rounded px-1 py-px text-[0.55rem] font-medium uppercase tracking-wide"
+                style={{
+                  background: "color-mix(in oklch, " + modeColorVar(modeKey()) + " 14%, transparent)",
+                  color: modeColorVar(modeKey()),
+                }}
+              >
+                {modeShortLabel(modeKey())}
+              </span>
+            </Show>
+            <span class="truncate">
+              {relativeTime(
+                props.session.updated_at ?? props.session.created_at,
+              )}
+            </span>
           </span>
         </span>
       </A>
@@ -257,7 +535,7 @@ const SessionRow: Component<SessionRowProps> = (props) => {
             ? "bg-bg-tertiary text-text-primary opacity-100"
             : "opacity-0 group-hover:opacity-100 focus:opacity-100",
         ].join(" ")}
-        aria-label="Session actions"
+        aria-label={t("sessions.actions_label")}
         aria-haspopup="menu"
         aria-expanded={menuOpen()}
         onClick={(e) => {
@@ -283,6 +561,10 @@ const SessionRow: Component<SessionRowProps> = (props) => {
   );
 };
 
+
+// ─── Action menu ──────────────────────────────────────────────────
+
+
 const SessionMenu: Component<{
   onRename: (e: MouseEvent) => void;
   onArchive: (e: MouseEvent) => void;
@@ -292,12 +574,6 @@ const SessionMenu: Component<{
   pinned: boolean;
   onClose: () => void;
 }> = (props) => {
-  /** Outside-click + Esc dismissal.  Critical: attach the document
-   *  listener AFTER the click that opened the menu finishes (one
-   *  microtask delay) so the trigger click doesn't immediately
-   *  fire onClose.  And REMOVE the listener on unmount so a stale
-   *  leaked handler from a previous open can't auto-close the
-   *  next-opened instance. */
   const onDocClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement | null;
     if (!target?.closest("[data-amor-session-menu]")) props.onClose();
@@ -336,7 +612,7 @@ const SessionMenu: Component<{
         class="block w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-bg-hover"
         onClick={props.onRename}
       >
-        Rename
+        {t("sessions.action.rename")}
       </button>
       <button
         type="button"
@@ -344,7 +620,9 @@ const SessionMenu: Component<{
         class="block w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-bg-hover"
         onClick={props.onPin}
       >
-        {props.pinned ? "Unpin" : "Pin"}
+        {props.pinned
+          ? t("sessions.action.unpin")
+          : t("sessions.action.pin")}
       </button>
       <button
         type="button"
@@ -352,7 +630,9 @@ const SessionMenu: Component<{
         class="block w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-bg-hover"
         onClick={props.onArchive}
       >
-        {props.archived ? "Restore" : "Archive"}
+        {props.archived
+          ? t("sessions.action.restore")
+          : t("sessions.action.archive")}
       </button>
       <button
         type="button"
@@ -361,11 +641,15 @@ const SessionMenu: Component<{
         style={{ color: "var(--color-status-failed)" }}
         onClick={props.onDelete}
       >
-        Delete
+        {t("sessions.action.delete")}
       </button>
     </div>
   );
 };
+
+
+// ─── Modals ───────────────────────────────────────────────────────
+
 
 const RenameModal: Component<{
   pending: Pending;
@@ -381,17 +665,12 @@ const RenameModal: Component<{
     return p && p.kind === "rename" ? p.session : null;
   };
 
-  // Initial value on open.
   const initialTitle = (): string => {
     const s = session();
-    return s?.title?.trim() || `Session ${s?.id?.slice(0, 8) ?? ""}`;
+    return s?.title?.trim()
+      || `${t("sessions.unnamed")} ${s?.id?.slice(0, 8) ?? ""}`;
   };
 
-  // Re-seed draft on every open transition.  ``createEffect`` re-runs
-  // when ``open()`` changes, so the input pre-fills with the
-  // session's current title each time the modal appears (the prior
-  // ``ensureSeeded`` ran once at component init and missed every
-  // subsequent open).
   let lastOpen = false;
   createEffect(() => {
     const isOpen = open();
@@ -412,16 +691,16 @@ const RenameModal: Component<{
     <Modal
       open={open()}
       onClose={props.onClose}
-      title="Rename session"
-      description="Pick a name that helps you find this conversation later."
+      title={t("sessions.rename.title")}
+      description={t("sessions.rename.description")}
       size="md"
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={props.onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button size="sm" onClick={submit} disabled={!draft().trim()}>
-            Save
+            {t("sessions.rename.save")}
           </Button>
         </>
       }
@@ -435,7 +714,7 @@ const RenameModal: Component<{
             if (e.key === "Enter") submit();
             if (e.key === "Escape") props.onClose();
           }}
-          placeholder="Session title…"
+          placeholder={t("sessions.rename.placeholder")}
         />
       </Show>
     </Modal>
@@ -454,24 +733,29 @@ const ConfirmDeleteModal: Component<{
     return p && p.kind === "delete" ? p.session : null;
   };
 
+  const description = (): string => {
+    const s = session();
+    if (!s) return "";
+    const title =
+      s.title?.trim()
+      || `${t("sessions.unnamed")} ${s.id?.slice(0, 8) ?? ""}`;
+    return t("sessions.delete.description", { title });
+  };
+
   return (
     <Modal
       open={open()}
       onClose={props.onClose}
-      title="Delete this session?"
-      description={
-        session()
-          ? `"${session()?.title || `Session ${session()?.id?.slice(0, 8)}`}" will be removed permanently.  This cannot be undone.`
-          : ""
-      }
+      title={t("sessions.delete.title")}
+      description={description()}
       size="md"
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={props.onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="danger" size="sm" onClick={props.onConfirm}>
-            Delete
+            {t("sessions.action.delete")}
           </Button>
         </>
       }

@@ -9,6 +9,7 @@ import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
+import { t } from "../i18n";
 import {
   Button,
   StatusPill,
@@ -22,6 +23,8 @@ import {
   type SseEvent,
 } from "../lib/sse";
 import type { ChatTurn } from "../lib/types";
+import { sessions } from "../lib/sessions";
+import { invalidateSessionsList } from "../lib/query-client";
 
 interface StartResp {
   session_id: string;
@@ -69,6 +72,40 @@ const newId = (): string => `b-${Date.now()}-${++_idCounter}`;
 
 const STORAGE_KEY_TURNS = "amor.chat.v1.build.turns";
 const STORAGE_KEY_PHASES = "amor.chat.v1.build.phases";
+// Cycle D — per-mode effort persistence (twin of Research's
+// `amor.research.effort`).  Build accepts the same five canonical
+// tiers as the LocalAI backend.  Default = "medium" matches the
+// long-standing hardcoded default.
+const STORAGE_KEY_EFFORT = "amor.build.effort";
+
+const BUILD_EFFORT_TIERS = [
+  { value: "basic",  label_key: "effort.basic.label",  description_key: "effort.basic.description" },
+  { value: "medium", label_key: "effort.medium.label", description_key: "effort.medium.description" },
+  { value: "deep",   label_key: "effort.deep.label",   description_key: "effort.deep.description" },
+  { value: "expert", label_key: "effort.expert.label", description_key: "effort.expert.description" },
+  { value: "ultra",  label_key: "effort.ultra.label",  description_key: "effort.ultra.description" },
+] as const;
+type BuildEffort = (typeof BUILD_EFFORT_TIERS)[number]["value"];
+
+function loadBuildEffort(): BuildEffort {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EFFORT);
+    if (raw && BUILD_EFFORT_TIERS.some((t) => t.value === raw)) {
+      return raw as BuildEffort;
+    }
+  } catch {
+    // ignore
+  }
+  return "medium";
+}
+
+function saveBuildEffort(value: BuildEffort): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_EFFORT, value);
+  } catch {
+    // ignore
+  }
+}
 
 function loadJSON<T>(key: string, fallback: T): T {
   try {
@@ -101,6 +138,15 @@ const setTurns = ((next: Parameters<typeof setTurnsRaw>[0]) => {
 const [busy, setBusy] = createSignal(false);
 const [status, setStatus] = createSignal<StreamStatus>("closed");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
+// Cycle D Sessions polish — links the running pipeline to its
+// chat_sessions row so done/error events can bump updated_at and
+// nudge the sidebar's derived activity status to "recent".
+const [chatSessionId, setChatSessionId] = createSignal<string | null>(null);
+const [effort, setEffortRaw] = createSignal<BuildEffort>(loadBuildEffort());
+const setEffort = (next: BuildEffort): void => {
+  setEffortRaw(next);
+  saveBuildEffort(next);
+};
 const [phasesRaw, setPhasesRaw] = createSignal<Record<string, PhaseStatus>>(
   loadJSON<Record<string, PhaseStatus>>(STORAGE_KEY_PHASES, {}),
 );
@@ -223,9 +269,190 @@ const handleEvent = (ev: SseEvent): void => {
       appendBlock(`### Code (${lang})\n\n\`\`\`${lang}\n${code}\n\`\`\`\n`);
       break;
     }
+    case "language_corrected": {
+      // Cycle B Commit V — engine flipped the language post-coder
+      // (e.g. python→html when the body sniffed as HTML).  Surface it
+      // so the user knows we re-routed without them seeing a Python
+      // pip-install attempt against an HTML runner.
+      const from = String(ev.from ?? "");
+      const to = String(ev.to ?? "");
+      appendBlock(
+        `_Language corrected: \`${from}\` → \`${to}\` (sandbox runner switched, stale dependencies dropped)._\n`,
+      );
+      break;
+    }
+    case "planner_fallback": {
+      // Cycle D Fix #6 — planner LLM emitted unparseable / empty
+      // output; engine swapped in a deterministic minimal plan so
+      // the pipeline can still produce a deliverable.  Surface it
+      // as a subtle italic notice so the operator can spot the
+      // degradation without thinking the run failed.
+      appendBlock(
+        "_⚠ Planner fallback active — model produced unparseable output, " +
+        "running with a minimal generated plan._\n",
+      );
+      break;
+    }
+    case "install_packages_filtered": {
+      // Cycle D Fix #3 — engine cross-checked declared deps against
+      // actual code use and dropped some packages (e.g. doxygen+latex
+      // for a self-contained C++ formatter).  Surface so the operator
+      // sees why a "pip install" they expected didn't happen.
+      const dropped = Array.isArray(ev.dropped) ? ev.dropped : [];
+      if (dropped.length) {
+        appendBlock(
+          `_Skipped install: \`${dropped.join("`, `")}\` ` +
+          "(package not referenced in generated code)._\n",
+        );
+      }
+      break;
+    }
+    case "execution_install_packages": {
+      const pkgs = Array.isArray(ev.packages) ? ev.packages : [];
+      if (pkgs.length) {
+        appendBlock(`_Installing packages: \`${pkgs.join("`, `")}\`_\n`);
+      }
+      break;
+    }
+    case "execution_extra_files": {
+      const files = Array.isArray(ev.files) ? ev.files : [];
+      if (files.length) {
+        appendBlock(
+          `_Mounting sidecar files: ${files.map((f) => `\`${f}\``).join(", ")}_\n`,
+        );
+      }
+      break;
+    }
+    case "repomap_attached": {
+      // Sprint 3 Day 4 — engine prepended a repomap excerpt to the
+      // triage system message.  Surface it as a small collapsible
+      // <details> block so the user sees what context the planner
+      // actually had.  Render only the metadata (token count + render
+      // time) — the full repomap markdown isn't streamed to the UI
+      // (it's already in the LLM's prompt).
+      const tk = Number(ev.tokens_estimate ?? 0);
+      const ms = Number(ev.render_ms ?? 0);
+      const budget = Number(ev.budget_tokens ?? 0);
+      appendBlock(
+        `<details><summary>📚 Repomap context attached — ${tk} tokens / ${budget} budget · rendered in ${ms} ms</summary>\n\nThe triage agent saw a token-budgeted summary of the workspace symbol graph before classifying this prompt. Toggle <code>AMOR_REPOMAP_ENABLED</code> on the app service to disable.</details>\n`,
+      );
+      break;
+    }
+    case "memory_recalled": {
+      // Sprint 7 Day 4 — Mem0 surfaced N memories before triage.
+      // Stamp the assistant turn with ``remembered`` metadata so
+      // ``MessageBubble`` renders the "Remembered N" pill, and add
+      // a small <details> block below the bubble for inspection.
+      const count = Number(ev.count ?? 0);
+      if (count > 0 && assistantTurnId) {
+        const id = assistantTurnId;
+        const snippetsArr = Array.isArray(ev.snippets) ? ev.snippets : [];
+        const snippets = snippetsArr
+          .filter((s): s is string => typeof s === "string")
+          .slice(0, 3);
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, remembered: { count, snippets } }
+              : t,
+          ),
+        );
+        if (snippets.length > 0) {
+          appendBlock(
+            `<details><summary>🧠 Remembered ${count} prior fact${count === 1 ? "" : "s"}</summary>\n\n${snippets.map((s) => `- ${s}`).join("\n")}\n</details>\n`,
+          );
+        }
+      }
+      break;
+    }
     case "test_ready": {
       const code = String(ev.code ?? "");
       appendBlock(`### Tests\n\n\`\`\`\n${code}\n\`\`\`\n`);
+      break;
+    }
+    case "test_execution_result": {
+      // Cycle D — Tests actually ran against the implementation.
+      // Render a pass/fail block so the operator can see test
+      // outcomes in addition to the standalone test source.
+      const result = (ev.result ?? {}) as Record<string, unknown>;
+      const exit = result.exit_code;
+      const skipped = Boolean(result.skipped);
+      const stdout = String(result.stdout ?? "").trim();
+      const stderr = String(result.stderr ?? "").trim();
+      if (skipped) {
+        appendBlock(
+          "_Test execution skipped — runner not configured for this language._\n",
+        );
+        break;
+      }
+      const passed = exit === 0;
+      const head = passed
+        ? "### Test Results — ✅ Pass"
+        : "### Test Results — ❌ Fail";
+      const block = [
+        head,
+        exit !== undefined ? `exit_code: ${exit}` : "",
+        stdout
+          ? `\n**stdout:**\n\n\`\`\`\n${stdout.slice(0, 2000)}\n\`\`\``
+          : "",
+        stderr && !passed
+          ? `\n**stderr:**\n\n\`\`\`\n${stderr.slice(0, 1000)}\n\`\`\``
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      appendBlock(block + "\n");
+      break;
+    }
+    case "test_execution_skipped": {
+      const reason = String(ev.reason ?? "");
+      appendBlock(
+        `_Test execution skipped (${reason}).  Tests rendered as code only._\n`,
+      );
+      break;
+    }
+    case "reflexion_score": {
+      // Cycle D — Reflexion baseline score emitted right after the
+      // first review.  Subtle italic so it stays unobtrusive.
+      const score = Number(ev.score ?? 0);
+      const phase = String(ev.phase ?? "");
+      appendBlock(
+        `_Quality score (${phase}): ${score}/100._\n`,
+      );
+      break;
+    }
+    case "reflexion_iteration_start": {
+      const iter = Number(ev.iteration ?? 0);
+      const max = Number(ev.max ?? 0);
+      const baseline = Number(ev.baseline_score ?? 0);
+      const threshold = Number(ev.threshold ?? 80);
+      appendBlock(
+        `_♻ Reflexion iteration ${iter}/${max} starting — ` +
+        `baseline ${baseline}/100 below threshold ${threshold}._\n`,
+      );
+      break;
+    }
+    case "reflexion_iteration_complete": {
+      const iter = Number(ev.iteration ?? 0);
+      const outcome = String(ev.outcome ?? "");
+      const baseline = Number(ev.baseline_score ?? 0);
+      const newScore = Number(ev.new_score ?? 0);
+      if (outcome === "improved") {
+        appendBlock(
+          `_✨ Reflexion ${iter} improved quality: ` +
+          `${baseline} → ${newScore}/100.  Adopted the new version._\n`,
+        );
+      } else if (outcome === "no_gain") {
+        appendBlock(
+          `_Reflexion ${iter} produced no gain (${newScore} ≤ ${baseline}).  ` +
+          `Kept the original version._\n`,
+        );
+      } else if (outcome === "error") {
+        const err = String(ev.error ?? "unknown");
+        appendBlock(
+          `_Reflexion ${iter} errored (${err}).  Kept the original version._\n`,
+        );
+      }
       break;
     }
     case "execution_result": {
@@ -276,6 +503,7 @@ const handleEvent = (ev: SseEvent): void => {
       stopTicker();
       setActivePhase(null);
       setBusy(false);
+      bumpChatSession();
       break;
     case "error":
       patchAssistant(
@@ -287,6 +515,7 @@ const handleEvent = (ev: SseEvent): void => {
       stopTicker();
       setActivePhase(null);
       setBusy(false);
+      bumpChatSession();
       break;
     case "cancelled":
       patchAssistant(currentBuffer() + "\n\n_(cancelled)_", "cancelled");
@@ -294,8 +523,28 @@ const handleEvent = (ev: SseEvent): void => {
       stopTicker();
       setActivePhase(null);
       setBusy(false);
+      bumpChatSession();
       break;
   }
+};
+
+/** Cycle D — at the end of a pipeline run, bump the linked
+ *  chat_session's ``updated_at`` so the sidebar moves the row to the
+ *  top of the "Today" / "Now" group and the derived activity dot
+ *  reflects the recent finish.  Touches title with a no-op patch
+ *  (the smallest mutation that updates ``updated_at`` server-side).
+ *  Best-effort — failure is logged and silently swallowed. */
+const bumpChatSession = (): void => {
+  const id = chatSessionId();
+  if (!id) return;
+  // Mode pipelines emit ``done`` from a stream callback; we don't want
+  // to await here and slow the UI cleanup.  Fire-and-forget.
+  void sessions
+    .update(id, {})
+    .then(() => invalidateSessionsList())
+    .catch((err) => {
+      console.warn("[build] sessions.update on done/error failed:", err);
+    });
 };
 
 const start = async (prompt: string): Promise<void> => {
@@ -321,11 +570,34 @@ const start = async (prompt: string): Promise<void> => {
   ]);
 
   try {
+    // Cycle D Sessions polish — register a chat_session ROW first so
+    // the sidebar shows the new session immediately (before the
+    // pipeline even reaches the triage phase).  ``code`` is the
+    // backend's canonical mode tag for Build sessions.
+    let chatSessionId: string | undefined;
+    try {
+      const created = await sessions.create({
+        mode: "code",
+        title: prompt.slice(0, 60),
+      });
+      chatSessionId = (created as { id?: string }).id;
+      invalidateSessionsList();
+    } catch (err: unknown) {
+      // Don't block the run if the chat-session create fails —
+      // the pipeline can still run; the sidebar just won't list it.
+      console.warn("[build] chat_session create failed:", err);
+    }
+
     const resp = await api.post<StartResp>("/api/code/start", {
       prompt,
-      effort: "medium",
+      effort: effort(),
+      chat_session_id: chatSessionId,
     });
     setSessionId(resp.session_id);
+    // Track the chat_session_id so ``done`` / ``error`` events can
+    // bump ``updated_at`` and refresh the sidebar's relative-time +
+    // status-dot derivation.
+    setChatSessionId(chatSessionId ?? null);
     stream = openEventStream({
       url: `/api/code/${resp.session_id}/events`,
       onStatusChange: (s) => setStatus(s),
@@ -497,13 +769,13 @@ export const Build: Component = () => {
       {/* Right side — chat */}
       <div class="flex min-w-0 flex-1 flex-col">
         <TopBar
-          title="Build"
-          subtitle="code, test, debug"
+          title={t("build.title")}
+          subtitle={t("build.subtitle")}
           actions={
             <Show when={busy()}>
               <StatusPill status={headerStatus()} size="sm" />
               <Button variant="secondary" size="sm" onClick={cancel}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </Show>
           }
@@ -514,12 +786,10 @@ export const Build: Component = () => {
           emptyState={
             <div class="max-w-md text-center">
               <p class="text-base text-text-primary">
-                Describe what you want built
+                {t("build.empty.title")}
               </p>
               <p class="mt-2 text-sm text-text-tertiary">
-                Plan → Implement → Execute → Analyse → Test → Debug
-                → Review.  Code Intelligence runs the full pipeline
-                with live updates here.
+                {t("build.empty.body")}
               </p>
             </div>
           }
@@ -529,7 +799,10 @@ export const Build: Component = () => {
           onSubmit={start}
           busy={busy()}
           onCancel={cancel}
-          placeholder="What should AMOR build? (e.g. 'fizzbuzz with pytest')"
+          placeholder={t("build.composer.placeholder")}
+          effortTiers={BUILD_EFFORT_TIERS}
+          effortValue={effort()}
+          onEffortChange={(v) => setEffort(v as BuildEffort)}
         />
       </div>
     </div>

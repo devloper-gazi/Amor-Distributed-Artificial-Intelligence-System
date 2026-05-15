@@ -104,8 +104,45 @@ services:
       - CODE_LANGFUSE_PUBLIC_KEY=${CODE_LANGFUSE_PUBLIC_KEY:-}
       - CODE_LANGFUSE_SECRET_KEY=${CODE_LANGFUSE_SECRET_KEY:-}
 
+      # Cycle C Sprint 1 — pluggable LLM backend selector.
+      # Default empty → fall through to settings.llm_backend (also empty
+      # by default Cycle C Sprint 1 Day 1 commit) → fall through to
+      # AMOR_LLM_BACKEND env → fall through to "ollama".
+      # Set AMOR_LLM_BACKEND=llama-cpp + AMOR_LLM_BACKEND_URL=...
+      # in your .env (or override below) to flip to llama-swap.
+      - AMOR_LLM_BACKEND=${AMOR_LLM_BACKEND:-}
+      - AMOR_LLM_BACKEND_URL=${AMOR_LLM_BACKEND_URL:-}
+      # llama-swap probe URL for /api/admin/llm dashboard probes.
+      - AMOR_LLAMASWAP_URL=${AMOR_LLAMASWAP_URL:-http://amor-llama-swap:9100}
+
+      # Cycle F Sprint 5 (Wrong #2 fix) — Docker socket proxy is
+      # now the DEFAULT.  Sandbox calls route through the
+      # tecnativa/docker-socket-proxy allowlist
+      # (VERSION+PING+INFO+IMAGES+CONTAINERS+POST+EXEC+VOLUMES) so a
+      # compromised app or LLM-generated tool call cannot reach
+      # destructive Docker APIs (network create, swarm, system
+      # prune, build, configs, etc.).
+      #
+      # Proven safe by tools/sandbox_proxy_smoke.py: 11/11
+      # assertions pass on 2026-05-15 (7 sandbox-required ops
+      # allowed, 4 destructive ops denied).
+      #
+      # Escape hatch: dev hosts that genuinely need raw socket
+      # access (e.g. for `docker network inspect` from within the
+      # sandbox) can set AMOR_DOCKER_HOST="" in .env to fall back
+      # to the bind-mounted unix socket.  When raw access is
+      # enabled the sandbox surface widens significantly — only use
+      # on trusted hosts.  See docs/sandbox_hardening.md.
+      - DOCKER_HOST=${AMOR_DOCKER_HOST-tcp://amor-docker-proxy:2375}
+      - AMOR_DOCKER_HOST=${AMOR_DOCKER_HOST-tcp://amor-docker-proxy:2375}
+
     depends_on:
       ollama:
+        condition: service_healthy
+      # Cycle F Sprint 1 — llama-swap is now the default inference
+      # path.  Wait for /health before app starts so the first
+      # request doesn't 502 while the model loads.
+      llama-swap:
         condition: service_healthy
       kafka:
         condition: service_started
@@ -115,9 +152,19 @@ services:
         condition: service_started
       mongo:
         condition: service_started
+      docker-socket-proxy:
+        condition: service_started
 
+    # Cycle F Sprint 1 — Wrong #1 fix: dropped from `replicas: 2` to
+    # single replica.  The sticky-cookie nginx setup
+    # (`hash $cookie_amor_session consistent`) was the rationale for
+    # 2 replicas (per-session stickiness for SSE continuity), but
+    # with llama-swap as the inference layer the prefix cache lives
+    # in the llama-server process — splitting traffic across FastAPI
+    # replicas can no longer help (cross-replica prefix sharing isn't
+    # a thing here).  The nginx config still routes via the cookie
+    # so re-adding a 2nd replica later remains zero-change.
     deploy:
-      replicas: 2
       resources:
         limits:
           cpus: '2'
@@ -153,6 +200,13 @@ services:
       # web_ui).  Mount RW so the in-container Python sees the same
       # package the host tests do.
       - ./local_ai:/app/local_ai
+      # Cycle F Sprint 6 (Step 5 fix) — the `tools/` package was not
+      # mounted, so `main.py:_register_eval_runners()` failed with
+      # ModuleNotFoundError when importing tools.eval.{humaneval_plus,
+      # swebench_lite,ragas_lancedb}.  Mount RW so the eval-runner
+      # registry actually populates + the v18 launch gate's
+      # conditions #2 + #3 become measurable.
+      - ./tools:/app/tools
       - ./requirements.txt:/app/requirements.txt:ro
       # Code Intelligence sandbox — gives the app container access to
       # the host Docker daemon so it can spin up ephemeral runner
@@ -170,6 +224,13 @@ services:
       # and the sandbox runner mounts the SAME volume so the file is
       # visible at the same path.
       - amor-sandbox-shared:/sandbox-shared
+      # Cycle C Sprint 0 Day 3 — shared baselines + admin-managed data
+      # across replicas.  /app/data lives in a named volume so app-1 +
+      # app-2 see the same baseline JSON snapshots; without this, the
+      # nginx sticky-cookie can route the dashboard to the replica that
+      # never wrote anything → "no run yet" empty state on /admin/baselines
+      # despite a successful run on the other replica.
+      - amor-app-data:/app/data
 
     # P2.3: Healthcheck so a frozen worker (e.g. Ollama hang, deadlocked
     # event loop) is detected and restarted by Docker rather than
@@ -327,16 +388,86 @@ services:
       # enough — Ollama only reads the FROM path; copies bytes into
       # its own ollama-data store.
       - custom-models-data:/data/custom_models:ro
+    # Cycle B Commit V — expose the host RTX 4060 to ollama.  Without
+    # this reservation Docker Desktop / nvidia-container-toolkit blocks
+    # ``nvidia.so`` from being mounted into the container; ``ollama ps``
+    # reports ``100% CPU`` and a 7B Q4 plan phase takes 2-3 minutes
+    # instead of ~10 s.  ``count: all`` with the nvidia driver is the
+    # canonical syntax for Compose v3.8+.
     deploy:
       resources:
         limits:
           memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - docprocessor-network
+
+  # Cycle C Sprint 1 — llama-swap with llama.cpp backend.
+  #
+  # AMOR's pluggable LLMBackend factory (local_ai/llm_backend) routes
+  # to this container when AMOR_LLM_BACKEND=llama-cpp (or llama-swap).
+  # The OllamaBackend stays in-tree as a flag-flip rollback path —
+  # NOT removed in Sprint 1.
+  #
+  # Profile-gated so the legacy Ollama-only deploy keeps working
+  # without llama-swap:
+  #     docker compose --profile llamaswap up -d
+  # adds this service.  Without --profile, ollama keeps serving and
+  # this container never starts.
+  #
+  # Models live under amor_custom-models-data:/data/custom_models/llamaswap/.
+  # Pull them via tools/pull_models.py before starting the service.
+  # Cycle F Sprint 1 — promoted from opt-in (`profiles: [llamaswap]`)
+  # to default-on.  AMOR's pluggable LLMBackend now defaults to
+  # AMOR_LLM_BACKEND=llama-swap via select_kv_quant.py before boot.
+  # Rollback: set AMOR_LLM_BACKEND=ollama; this container can stay up.
+  llama-swap:
+    image: ghcr.io/mostlygeek/llama-swap:cuda
+    container_name: amor-llama-swap
+    restart: unless-stopped
+    ports:
+      # Host 9100 is reserved.  Internal access from the app
+      # container goes via the docprocessor-network at
+      # http://amor-llama-swap:9100/v1/...
+      - "9100:9100"
+    volumes:
+      - ./compose/llama-swap/config.yaml:/etc/llama-swap/config.yaml:ro
+      # Mount the GGUFs from the SAME named volume the judge uses
+      # so we don't duplicate disk + tools/pull_models.py writes
+      # land in one canonical place.  Sprint 1 GGUFs sit under
+      # /data/custom_models/llamaswap/.
+      - custom-models-data:/models:ro
+    command:
+      - --config
+      - /etc/llama-swap/config.yaml
+      - --listen
+      - "0.0.0.0:9100"
+      - --watch-config
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -fsS http://127.0.0.1:9100/health || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
     networks:
       - docprocessor-network
 
@@ -399,6 +530,12 @@ volumes:
   # — ExecutionSandbox refers to the volume by this exact tag.
   amor-sandbox-shared:
     name: amor-sandbox-shared
+  # Cycle C Sprint 0 Day 3 — shared /app/data across the 2 app
+  # replicas (baselines, future training adapters, eval runs).  Without
+  # this, sticky-cookie routes /admin/baselines to whichever replica
+  # last won → empty-state when the dashboard hits the OTHER replica.
+  amor-app-data:
+    name: amor-app-data
 
 networks:
   docprocessor-network:

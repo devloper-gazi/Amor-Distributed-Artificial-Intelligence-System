@@ -358,11 +358,54 @@ class AdvancedResearcher:
             if len(unique) >= self.max_total_sources:
                 break
 
+        # Last-ditch rescue: if every variant returned empty, try the raw
+        # user query AND a Wikipedia-targeted variant directly.  This
+        # handles abstract / underspecified queries (e.g. "a c++ system
+        # for user guide") where the keyword-stripper produced variants
+        # that no engine could match.  We fail-open on any exception.
         if not unique:
-            await self._fail_phase(
-                "gathering", "No usable search results were returned."
+            await self._emit(
+                "search_retry",
+                {"reason": "no_results_from_planned_variants", "query": self.query},
+            )
+            rescue_queries = [
+                self.query.strip(),
+                f"{self.query.strip()} site:wikipedia.org",
+                f"{self.query.strip()} overview",
+            ]
+            for rq in rescue_queries:
+                if not rq:
+                    continue
+                try:
+                    rescue_results = await self.web_search(
+                        rq, max(5, self.sources_per_subquestion + 2)
+                    )
+                except Exception as e:
+                    logger.warning("rescue search failed for %r: %s", rq, e)
+                    rescue_results = []
+                for r in rescue_results:
+                    url = r.get("url")
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    r.setdefault("sub_question_index", 0)
+                    unique.append(r)
+                if unique:
+                    break  # one good rescue query is enough
+
+        if not unique:
+            # Don't fail the phase — synthesize() now has a knowledge-only
+            # fallback that produces a useful (albeit uncited) report.
+            await self._emit(
+                "phase_warning",
+                {
+                    "phase": "gathering",
+                    "warning": "No usable search results were returned; "
+                    "report will fall back to model knowledge.",
+                },
             )
             self.sources = []
+            await self._complete_phase("gathering", sources_collected=0)
             return []
 
         urls = [r["url"] for r in unique]
@@ -646,7 +689,53 @@ class AdvancedResearcher:
 
         # Filter to relevant sources and renumber citation IDs.
         # Threshold relaxed from 0.35 → 0.22 so 1-finding sources survive.
+        all_after_extract = list(self.sources)
         kept = [s for s in self.sources if s.relevance >= 0.22 and s.findings]
+
+        # Phase 2 rescue: if the relevance filter eliminated EVERY source,
+        # don't drop to "(no sources)" — keep the best-effort findings
+        # we have so synthesize() can still produce a cited report.  The
+        # synthesizer's hallucination guard is a separate concern; here
+        # we only ensure the corpus isn't empty when the gatherer DID
+        # find something.
+        if not kept and all_after_extract:
+            with_findings = [s for s in all_after_extract if s.findings]
+            if with_findings:
+                # Recover anything with extracted findings, regardless of
+                # relevance score.
+                kept = with_findings
+                await self._emit(
+                    "relevance_filter",
+                    {
+                        "filtered_out": 0,
+                        "rescued": len(with_findings),
+                        "reason": "all_below_threshold_keep_findings",
+                    },
+                )
+            else:
+                # Last-resort: keep the top-N with content, synthesise
+                # auto-stub findings from snippets so the synthesiser
+                # has SOMETHING to quote.
+                with_content = [s for s in all_after_extract if s.content]
+                rescued = with_content[: max(3, self.sources_per_subquestion)]
+                for s in rescued:
+                    if not s.findings:
+                        s.findings = (
+                            f"- {s.snippet}" if s.snippet
+                            else f"- (auto-extracted) {s.content[:200]}"
+                        )
+                        s.relevance = max(s.relevance, 0.20)
+                kept = rescued
+                if rescued:
+                    await self._emit(
+                        "relevance_filter",
+                        {
+                            "filtered_out": 0,
+                            "rescued": len(rescued),
+                            "reason": "no_findings_use_snippet_stubs",
+                        },
+                    )
+
         for new_id, s in enumerate(kept, start=1):
             s.id = new_id
         self.sources = kept
@@ -670,20 +759,12 @@ class AdvancedResearcher:
         await self._start_phase("synthesizing", sources=len(self.sources))
 
         if not self.sources:
-            fallback = (
-                f"# {self.query}\n\n"
-                "## Executive Summary\n\n"
-                "No usable web sources were retrieved for this query. The report "
-                "cannot be grounded in cited evidence and has therefore not been "
-                "produced. Consider rephrasing the query or trying again later."
-            )
-            self.report_markdown = fallback
-            self.confidence = 20
-            await self._emit(
-                "report_ready", {"markdown": fallback, "confidence": self.confidence}
-            )
-            await self._complete_phase("synthesizing", length=len(fallback))
-            return fallback
+            # Phase 2 robustness: rather than returning a brick-wall error,
+            # produce a knowledge-based report from the local LLM with a
+            # prominent disclaimer.  The user gets a useful answer, the
+            # confidence cap stays low, and the disclaimer is the contract
+            # that says "this is NOT cited evidence".
+            return await self._synthesise_knowledge_fallback()
 
         sources_block_parts: List[str] = []
         for s in self.sources:
@@ -757,6 +838,32 @@ RULES
         except Exception as e:
             logger.exception("synthesis LLM call failed: %s", e)
             report = ""
+
+        # Phase 2 robustness: detect "empty LLM result" before postprocess
+        # wraps it in the "(empty report)" placeholder.  An empty stripped
+        # response, or one shorter than ~80 chars, indicates the model
+        # bailed (timeout / context overflow / token budget exhaustion).
+        # Retry once with a tightened prompt + fewer sources, then fall
+        # back to a deterministic source-list report so the user always
+        # gets something useful.
+        if not report or len(report.strip()) < 80:
+            logger.warning(
+                "synthesis returned empty report (len=%d); retrying with "
+                "compact prompt", len(report.strip()) if report else 0
+            )
+            report = await self._synthesise_compact_retry(
+                sub_qs_block, self.sources
+            )
+
+        # Final guard: even after retry, if STILL empty, emit a deterministic
+        # source-list report so the user gets actionable content rather than
+        # the "(empty report)" placeholder.
+        if not report or len(report.strip()) < 80:
+            logger.warning(
+                "synthesis retry also empty; emitting deterministic "
+                "source-list fallback for query %r", self.query
+            )
+            report = self._build_deterministic_source_report()
 
         report = self._postprocess_report(report, self.query)
         self.report_markdown = report
@@ -836,6 +943,285 @@ RULES
         if not text:
             text = f"# {query}\n\n*(The model produced an empty report.)*"
         return text
+
+    # ─── Compact retry (LLM returned empty / truncated) ──────────────
+
+    async def _synthesise_compact_retry(
+        self, sub_qs_block: str, sources: List[Source]
+    ) -> str:
+        """Retry synthesize with a tighter prompt + fewer sources.
+
+        Used when the first synthesize LLM call returned an empty or
+        truncated response (typically context-overflow or token-budget
+        exhaustion on a long source list).  Falls back to a smaller
+        prompt that still gives the model enough material to produce
+        a coherent report.
+        """
+        # Trim to top 8 sources by relevance — typically enough to
+        # write a 700-word report without overflowing context.
+        compact_sources = sorted(
+            sources, key=lambda s: s.relevance, reverse=True
+        )[:8]
+        if not compact_sources:
+            return ""
+
+        compact_block_parts = []
+        for s in compact_sources:
+            findings = s.findings or f"- {s.snippet or s.title}"
+            # Trim each source block to ~600 chars to keep prompt small.
+            block = (
+                f"[{s.id}] {s.title} — {s.domain}\n"
+                f"URL: {s.url}\n"
+                f"{findings[:600]}\n"
+            )
+            compact_block_parts.append(block)
+        compact_block = "\n".join(compact_block_parts)
+
+        retry_system = (
+            "You are a professional research writer. Write a focused "
+            "research report grounded in the supplied sources. Cite "
+            "inline using [n]. Be concise but complete. Use markdown."
+        )
+        retry_prompt = (
+            f"# {self.query}\n\n"
+            f"Write a research report answering the query above using "
+            f"these {len(compact_sources)} sources.\n\n"
+            f"SUB-QUESTIONS\n{sub_qs_block}\n\n"
+            f"SOURCES (cite as [n])\n{compact_block}\n\n"
+            f"STRUCTURE:\n"
+            f"# {self.query}\n"
+            f"## Executive Summary (3 sentences, 2 citations)\n"
+            f"## Background\n"
+            f"## Key Findings (one ### sub-section per sub-question)\n"
+            f"## Conclusion\n\n"
+            f"Length: 500-800 words. Every claim cited."
+        )
+        try:
+            # Compact retry uses a slightly smaller token budget so the
+            # model is more likely to finish within the timeout window.
+            retry_tokens = max(800, int(self.report_tokens * 0.7))
+            report = await self.llm_call(
+                retry_prompt, retry_system, retry_tokens
+            )
+        except Exception as exc:
+            logger.warning("compact retry LLM call failed: %s", exc)
+            return ""
+        return report or ""
+
+    # ─── Deterministic source-list fallback (last resort) ────────────
+
+    def _build_deterministic_source_report(self) -> str:
+        """Emit a hand-rolled markdown source list when the LLM failed
+        twice.  This is the LAST line of defence — guarantees the user
+        gets actionable content (titles, URLs, findings) instead of the
+        `(empty report)` placeholder.
+
+        Pure Python — no LLM call.  Always succeeds if there are sources.
+        """
+        if not self.sources:
+            return ""
+
+        parts: List[str] = [
+            f"# {self.query}",
+            "",
+            "> **Note:** The synthesis model could not produce a "
+            "narrative report. Below is a deterministic listing of the "
+            "sources AMOR retrieved for this query, with the key "
+            "findings extracted from each. You can use this as a "
+            "research starting point.",
+            "",
+            f"## Sources retrieved ({len(self.sources)})",
+            "",
+        ]
+
+        # Group sources by sub-question if we have them.
+        if self.sub_questions:
+            by_subq: Dict[int, List[Source]] = {}
+            for s in self.sources:
+                by_subq.setdefault(s.sub_question_index, []).append(s)
+            for i, sub_q in enumerate(self.sub_questions):
+                bucket = by_subq.get(i, [])
+                if not bucket:
+                    continue
+                parts.append(f"### {sub_q}")
+                parts.append("")
+                for s in bucket:
+                    parts.append(f"**[{s.id}] [{s.title}]({s.url})** "
+                                 f"— *{s.domain}*")
+                    if s.findings:
+                        parts.append("")
+                        parts.append(s.findings)
+                    elif s.snippet:
+                        parts.append("")
+                        parts.append(f"> {s.snippet}")
+                    parts.append("")
+        else:
+            for s in self.sources:
+                parts.append(f"**[{s.id}] [{s.title}]({s.url})** "
+                             f"— *{s.domain}*")
+                if s.findings:
+                    parts.append("")
+                    parts.append(s.findings)
+                elif s.snippet:
+                    parts.append("")
+                    parts.append(f"> {s.snippet}")
+                parts.append("")
+
+        parts.append("## Recommendation")
+        parts.append("")
+        parts.append(
+            "Re-run the query with more specific terms, or try a "
+            "different effort tier (Derin / Uzman) — the synthesis "
+            "model occasionally times out on broad queries."
+        )
+        return "\n".join(parts)
+
+    # ─── Knowledge-only fallback (no sources) ────────────────────────
+
+    async def _synthesise_knowledge_fallback(self) -> str:
+        """Produce a research report from local LLM knowledge when web
+        sources fail.  Prominent disclaimer + low confidence cap.
+
+        Used when ``self.sources == []`` after the gather + analyze
+        phases.  Better UX than the legacy brick-wall error message —
+        the user gets a useful answer and an honest caveat.
+        """
+
+        sub_qs_block = ""
+        if self.sub_questions:
+            sub_qs_block = "\n".join(f"- {q}" for q in self.sub_questions)
+
+        system = (
+            "You are a senior technical writer producing a knowledge-based "
+            "research report. The web research backend was unable to retrieve "
+            "any usable sources, so you must write from your training knowledge. "
+            "Be precise, factual, well-structured, and HONEST about the lack "
+            "of cited evidence (the report begins with a disclaimer block — "
+            "do not contradict it). Do NOT invent fake citation numbers like "
+            "[1], [2] — there are no sources to cite. Use measured, analytical "
+            "language. Write in markdown."
+        )
+
+        sub_q_section = (
+            "## Key Findings\n\n"
+            "Organize as `###` sub-sections, one per sub-question listed above. "
+            "Be specific.\n"
+            if sub_qs_block
+            else "## Key Findings\n\nCover the key facts the reader should know.\n"
+        )
+
+        sub_qs_part = (
+            f"\nSUB-QUESTIONS TO COVER\n{sub_qs_block}\n" if sub_qs_block else ""
+        )
+
+        prompt = (
+            f"Write a comprehensive research report from your training knowledge.\n"
+            f"\nQUERY\n{self.query}\n"
+            f"{sub_qs_part}"
+            f"\nSTRUCTURE — follow this exact structure, using markdown headings:\n"
+            f"\n# {self.query}\n"
+            f"\n> **Note:** No external web sources were retrievable for this "
+            f"query, so the report below draws on the model's training "
+            f"knowledge rather than cited evidence. Treat specific facts as "
+            f"starting points to verify independently.\n"
+            f"\n## Executive Summary\n"
+            f"Three to five sentences capturing the essential answer.\n"
+            f"\n## Background\n"
+            f"Context the reader needs: definitions, history, scope, why "
+            f"this topic matters.\n"
+            f"\n{sub_q_section}"
+            f"\n## Analysis\n"
+            f"What the facts mean when taken together. Patterns, tensions, "
+            f"tradeoffs.\n"
+            f"\n## Limitations & Open Questions\n"
+            f"What this report cannot answer or where the evidence is "
+            f"uncertain. Acknowledge the lack of cited sources.\n"
+            f"\n## Conclusion\n"
+            f"Two to four sentences that directly answer the original query.\n"
+            f"\nRULES\n"
+            f"- DO NOT invent fake citations like [1], [2] — there are no "
+            f"sources.\n"
+            f"- Be honest about the lack of cited evidence; the disclaimer "
+            f"above is your contract with the reader.\n"
+            f"- No 'As an AI' preamble, no preamble before the `#` title.\n"
+            f"- Length target: 600–1000 words.\n"
+            f"- Use clear, precise, analytical prose.\n"
+        )
+
+        llm_failed = False
+        try:
+            report = await self.llm_call(prompt, system, self.report_tokens)
+        except Exception as exc:
+            logger.warning(
+                "knowledge-based fallback LLM call failed: %s", exc
+            )
+            report = ""
+            llm_failed = True
+
+        # Detect "empty report" case BEFORE postprocess wraps it in a
+        # placeholder — _postprocess_report() inflates the length, so
+        # checking after it would never trigger the hard-floor.  The
+        # threshold is intentionally tiny (15 chars) so a sub-question
+        # query that produces a brief but valid markdown body still
+        # gets the disclaimer-injection path, not the brick wall.
+        empty_response = not report or len(report.strip()) < 15
+
+        report = self._postprocess_report(report, self.query)
+
+        # Hard floor: only triggered when the LLM call itself raised, OR
+        # the model returned essentially nothing.  Keeping these paths
+        # separate avoids the layered "model produced empty report" +
+        # "Note" combo that confuses users.
+        if llm_failed or empty_response:
+            report = (
+                f"# {self.query}\n\n"
+                "> **Note:** AMOR could not retrieve any web sources for "
+                "this query, and the local model could not produce a "
+                "knowledge-based fallback report at this time.\n\n"
+                "## Executive Summary\n\n"
+                "Try rephrasing the query with more specific terms, or "
+                "wait a moment and resubmit — the search backend may be "
+                "temporarily unavailable. If the problem persists, check "
+                "the search service in `/admin/baselines`."
+            )
+        elif "> **Note:**" not in report and "**Note:**" not in report:
+            # Ensure the disclaimer survives even if the model dropped it
+            # (some local models elide the blockquote on shorter prompts).
+            disclaimer = (
+                "\n\n> **Note:** No external web sources were retrievable "
+                "for this query, so this report draws on the model's "
+                "training knowledge rather than cited evidence. Treat "
+                "specific facts as starting points to verify independently."
+            )
+            # Insert disclaimer right after the first heading line
+            lines = report.split("\n", 1)
+            if lines and lines[0].startswith("#"):
+                report = lines[0] + disclaimer + (
+                    "\n\n" + lines[1] if len(lines) > 1 else ""
+                )
+            else:
+                report = (
+                    f"# {self.query}\n{disclaimer}\n\n{report}"
+                )
+
+        self.report_markdown = report
+        # Knowledge-only ceiling: cap confidence below the cited-report band.
+        self.confidence = 30
+        await self._emit(
+            "report_ready",
+            {
+                "markdown": report,
+                "confidence": self.confidence,
+                "knowledge_only": True,
+            },
+        )
+        await self._complete_phase(
+            "synthesizing",
+            length=len(report),
+            source_count=0,
+            knowledge_only=True,
+        )
+        return report
 
     # ─── Orchestration ───────────────────────────────────────────────
 

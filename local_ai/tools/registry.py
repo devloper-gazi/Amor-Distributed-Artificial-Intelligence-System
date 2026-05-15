@@ -106,6 +106,10 @@ class ToolRegistry:
 
     async def dispatch(
         self, name: str, arguments: dict | None,
+        *,
+        session_id: str | None = None,
+        actor_role: str | None = None,
+        approval_callback: Any = None,   # awaitable; see comments below
     ) -> MCPToolResult:
         tool = self._tools.get(name)
         if tool is None:
@@ -114,6 +118,82 @@ class ToolRegistry:
                 error=f"unknown tool: {name!r}",
             )
         started = time.monotonic()
+
+        # ─── Cycle F Sprint 5: Approval-policy gate ────────────────
+        # No-op when settings.code_approval_enabled=False (the
+        # `DEFAULT_POLICY` ApprovalPolicy() is constructed with
+        # `enabled=False` so `decide()` returns ALLOW immediately).
+        # When enabled, the dispatch path becomes:
+        #   ALLOW  → continue
+        #   DENY   → return MCPToolResult(ok=False, error="...")
+        #   PROMPT → if approval_callback is supplied, AWAIT it;
+        #            otherwise behave like DENY ("no UI to ask").
+        try:
+            from local_ai.approval import (  # noqa: PLC0415
+                ApprovalDecision,
+                ApprovalRequest,
+                DEFAULT_POLICY,
+                refresh_default_policy,
+            )
+            # Lazy settings refresh so .env / SettingsModel updates
+            # propagate without an explicit hook.  Cheap: a tuple
+            # equality check + occasional rebuild.
+            refresh_default_policy()
+            req = ApprovalRequest(
+                tool_name=name,
+                category=getattr(tool, "category", "unclassified"),
+                arguments=arguments or {},
+                session_id=session_id,
+                actor_role=actor_role,
+            )
+            decision = DEFAULT_POLICY.decide(req)
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.warning("approval_policy_check_failed err=%s", exc)
+            decision = None
+
+        if decision == ApprovalDecision.DENY:
+            return MCPToolResult(
+                name=name, ok=False,
+                error=f"tool {name!r} denied by approval policy",
+                elapsed_ms=(time.monotonic() - started) * 1000.0,
+                metadata={"code": "approval_denied", "category": req.category},
+            )
+        if decision == ApprovalDecision.PROMPT:
+            if approval_callback is None:
+                # No UI to prompt — fail closed (deny).
+                return MCPToolResult(
+                    name=name, ok=False,
+                    error=(
+                        f"tool {name!r} requires approval but no "
+                        "approval channel was provided"
+                    ),
+                    elapsed_ms=(time.monotonic() - started) * 1000.0,
+                    metadata={
+                        "code": "approval_required",
+                        "category": req.category,
+                    },
+                )
+            try:
+                ok = bool(await approval_callback(req))
+            except Exception as exc:
+                return MCPToolResult(
+                    name=name, ok=False,
+                    error=f"approval_callback_crashed: {exc}",
+                    elapsed_ms=(time.monotonic() - started) * 1000.0,
+                    metadata={"code": "approval_callback_error"},
+                )
+            if not ok:
+                return MCPToolResult(
+                    name=name, ok=False,
+                    error=f"tool {name!r} not approved by user",
+                    elapsed_ms=(time.monotonic() - started) * 1000.0,
+                    metadata={
+                        "code": "approval_rejected",
+                        "category": req.category,
+                    },
+                )
+        # decision == ALLOW or fell through → continue to validate + execute.
+
         try:
             args = tool.validate(arguments)
         except ToolError as exc:
