@@ -1,0 +1,73 @@
+[
+  {
+    "task_id": "aider_py_001_sum_pair",
+    "language": "python",
+    "problem_statement": "Write a function `solve(a, b)` that returns the sum of two integers a and b.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [1, 2], "expected": "3"},
+      {"args": [10, -3], "expected": "7"},
+      {"args": [0, 0], "expected": "0"}
+    ]
+  },
+  {
+    "task_id": "aider_py_002_reverse_string",
+    "language": "python",
+    "problem_statement": "Write a function `solve(s)` that returns the input string reversed.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": ["hello"], "expected": "olleh"},
+      {"args": ["a"], "expected": "a"}
+    ]
+  },
+  {
+    "task_id": "aider_js_001_sum_pair",
+    "language": "javascript",
+    "problem_statement": "Write a JavaScript function `solve(a, b)` that returns a + b.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [1, 2], "expected": "3"},
+      {"args": [10, -3], "expected": "7"}
+    ]
+  },
+  {
+    "task_id": "aider_ts_001_double",
+    "language": "typescript",
+    "problem_statement": "Write a TypeScript function `solve(n: number): number` that returns n * 2.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [3], "expected": "6"},
+      {"args": [0], "expected": "0"}
+    ]
+  },
+  {
+    "task_id": "aider_go_001_sum_pair",
+    "language": "go",
+    "problem_statement": "Define a Go function `func solve(a, b int) int` that returns a + b.  The harness will call it.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [1, 2], "expected": "3"},
+      {"args": [10, -3], "expected": "7"}
+    ]
+  },
+  {
+    "task_id": "aider_rust_001_sum_pair",
+    "language": "rust",
+    "problem_statement": "Define a Rust function `fn solve(a: i32, b: i32) -> i32` that returns a + b.  The harness will call it from main().",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [1, 2], "expected": "3"},
+      {"args": [10, -3], "expected": "7"}
+    ]
+  },
+  {
+    "task_id": "aider_cpp_001_sum_pair",
+    "language": "cpp",
+    "problem_statement": "Define a C++ function `int solve(int a, int b)` that returns a + b.  The harness will call it from main() and stream the result to std::cout.",
+    "function_name": "solve",
+    "test_cases": [
+      {"args": [1, 2], "expected": "3"},
+      {"args": [10, -3], "expected": "7"}
+    ]
+  }
+]
