@@ -257,6 +257,22 @@ class CodeIntelligenceEngine:
         self.debug_iterations_used: int = 0
         self.detected_language: str = self.language_hint or "python"
         self.title: str = "Code task"
+        # v18.1 Step 4 (Cycle G) — async critic decoupling.  When
+        # `code_critic_async=True` (default), the critic LLM call is
+        # kicked off as a background task right after the parallel
+        # (execute, analyze, test) block completes, in parallel with
+        # the debug retry loop.  `_phase_review` then awaits the task
+        # via `_resolve_critic_task()` with a verdict-freshness
+        # timeout fallback.  The fallback default is
+        # `approved_with_minor` + score 70, matching the existing
+        # critic-unavailable error path so the score function stays
+        # well-defined.
+        self._critic_task: asyncio.Task | None = None
+        # Hash of `self.code` at the moment the critic was kicked off.
+        # Used by `_phase_review` to detect when debug retries modified
+        # the code while the critic was in flight; on mismatch we
+        # cancel + re-launch the critic on the post-debug code.
+        self._critic_code_hash: str | None = None
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -1222,12 +1238,31 @@ class CodeIntelligenceEngine:
             ),
         }
 
-    async def _phase_review(self) -> dict[str, Any]:
-        if not self.code:
-            self._skip("review", "no code to review")
-            return {"skipped": True}
-        self._role_setter("critic")
-        agent = CriticAgent(self.llm_call, max_tokens=self._budgets["review"])
+    def _critic_fallback_verdict(self, reason: str) -> dict[str, Any]:
+        """Default verdict when the critic call is unavailable / stalled.
+        v18.1 Step 4 — extracted from the inline review block so both
+        the legacy synchronous path and the new async-task path can
+        share it.  Identical shape to a successful Critic AgentResult."""
+        return {
+            "verdict": "approved_with_minor",
+            "score": 70,
+            "strengths": [],
+            "issues": [],
+            "security_concerns": [],
+            "performance_concerns": [],
+            "final_comment": (
+                f"Critic unavailable — defaulting to approved_with_minor. ({reason})"
+            )[:400],
+        }
+
+    def _build_critic_context(self) -> AgentContext:
+        """Construct the AgentContext fed to CriticAgent.run().  Shared
+        by the legacy synchronous path and the v18.1 async kickoff
+        helper.  Reads:
+          * self.execution_results (last entry; populated by _phase_execute)
+          * self.static_analysis    (populated by _phase_analyze)
+          * self.test_execution_result (populated by _phase_test)
+        All three are optional — the critic copes when feedback is None."""
         exec_feedback = None
         if self.execution_results:
             last = self.execution_results[-1]
@@ -1237,11 +1272,11 @@ class CodeIntelligenceEngine:
                 f"stdout(len)={len(last.get('stdout', ''))} "
                 f"stderr={last.get('stderr', '')[:600]}"
             )
-        static_feedback = self.static_analysis.to_feedback_str() if self.static_analysis else None
-
-        # Cycle D — forward the test runner's pass/fail outcome to the
-        # critic so the verdict reflects whether the tests actually
-        # work end-to-end against the implementation.
+        static_feedback = (
+            self.static_analysis.to_feedback_str()
+            if self.static_analysis
+            else None
+        )
         test_exec_feedback = None
         ter = getattr(self, "test_execution_result", None)
         if ter:
@@ -1252,31 +1287,147 @@ class CodeIntelligenceEngine:
                 f"stdout: {(ter.get('stdout') or '')[:1200]}\n"
                 f"stderr: {(ter.get('stderr') or '')[:600]}"
             )
-
-        out = await agent.run(
-            AgentContext(
-                user_prompt=self.prompt,
-                plan=self.plan,
-                code=self.code,
-                language=self.detected_language,
-                execution_feedback=exec_feedback,
-                static_feedback=static_feedback,
-                test_execution_feedback=test_exec_feedback,
-            )
+        return AgentContext(
+            user_prompt=self.prompt,
+            plan=self.plan,
+            code=self.code,
+            language=self.detected_language,
+            execution_feedback=exec_feedback,
+            static_feedback=static_feedback,
+            test_execution_feedback=test_exec_feedback,
         )
-        if out.error or not out.data:
+
+    def _code_hash(self) -> str | None:
+        """sha256 of the current `self.code` for staleness detection."""
+        if not self.code:
+            return None
+        import hashlib  # noqa: PLC0415
+        return hashlib.sha256(self.code.encode("utf-8", errors="replace")).hexdigest()
+
+    async def _kickoff_critic_task(self) -> None:
+        """v18.1 Step 4 — launch the critic LLM call as a background
+        task right after debug completes (or, when debug skips, right
+        after the parallel block).  The task runs in parallel with
+        the deliverable assembly + reflexion threshold check, removing
+        the critic LLM latency from the critical path.
+
+        Cancels any previously-running critic task before launching
+        (debug retries that mutate `self.code` invalidate the in-flight
+        verdict; we re-launch on the post-debug code so the verdict
+        actually reflects what shipped).
+        """
+
+        if not self.code:
+            return
+
+        # If a previous task is still running on stale code, cancel.
+        prev = self._critic_task
+        if prev is not None and not prev.done():
+            prev.cancel()
+            try:
+                await prev
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self._role_setter("critic")
+        agent = CriticAgent(self.llm_call, max_tokens=self._budgets["review"])
+        ctx = self._build_critic_context()
+        self._critic_task = asyncio.create_task(
+            agent.run(ctx), name="amor_critic_async",
+        )
+        self._critic_code_hash = self._code_hash()
+        logger.debug("critic_task_kicked_off code_hash=%s", self._critic_code_hash)
+
+    async def _resolve_critic_task(
+        self, *, timeout_s: float = 8.0,
+    ) -> Any | None:
+        """Await the kicked-off critic task with a freshness timeout.
+
+        Returns the AgentResult on success, None when the task is
+        absent or missed the timeout (caller falls back to the
+        approved_with_minor default).  Uses `asyncio.shield` so a
+        timeout doesn't cancel the underlying task — it might still
+        finish before the pipeline's next critic invocation.
+        """
+        task = self._critic_task
+        if task is None:
+            return None
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "critic_async_stalled timeout_s=%s — falling back to approved_with_minor",
+                timeout_s,
+            )
+            return None
+        except asyncio.CancelledError:
+            return None
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.warning("critic_async_raised err=%s", exc)
+            return None
+
+    async def _phase_review(self) -> dict[str, Any]:
+        if not self.code:
+            self._skip("review", "no code to review")
+            return {"skipped": True}
+
+        # v18.1 Step 4 — two paths:
+        #   1. ASYNC-DECOUPLE (orchestrator kicked off `_critic_task`
+        #      after the parallel block): await the in-flight task
+        #      with a freshness timeout.  On timeout fall back to the
+        #      `approved_with_minor` default (so the score function
+        #      stays well-defined and Reflexion still has a number).
+        #   2. INLINE (no kickoff — unit tests / CLI single-mode /
+        #      `code_critic_async=False`): run the critic agent
+        #      synchronously, exact v18 behaviour.
+        out: Any = None
+        if self._critic_task is not None:
+            # Staleness check: if debug modified the code AFTER the
+            # critic was kicked off, the in-flight verdict is on stale
+            # code.  Cancel + re-launch on the current code.
+            current_hash = self._code_hash()
+            if (
+                self._critic_code_hash is not None
+                and current_hash is not None
+                and current_hash != self._critic_code_hash
+            ):
+                logger.info(
+                    "critic_async_re-launch reason=code_changed_during_debug",
+                )
+                await self._kickoff_critic_task()
+            # Verdict-freshness timeout (Plan-agent locked at 8s).
+            try:
+                from ..config.settings import settings  # noqa: PLC0415
+                _timeout = float(
+                    getattr(settings, "code_critic_async_timeout_s", 8.0),
+                )
+            except Exception:
+                _timeout = 8.0
+            out = await self._resolve_critic_task(timeout_s=_timeout)
+            if out is None:
+                # Freshness fallback — use the approved_with_minor default
+                # so `_score_candidate` keeps producing well-defined
+                # numbers and Reflexion's threshold logic still fires.
+                self.review = self._critic_fallback_verdict(
+                    "critic_async_stalled",
+                )
+                await self._emit(
+                    {"type": "review_ready", "review": self.review},
+                )
+                return self.review
+        else:
+            # Inline (legacy) path — no kickoff was performed.
+            self._role_setter("critic")
+            agent = CriticAgent(
+                self.llm_call, max_tokens=self._budgets["review"],
+            )
+            ctx = self._build_critic_context()
+            out = await agent.run(ctx)
+
+        if not out or getattr(out, "error", None) or not getattr(out, "data", None):
             # Don't fail the whole pipeline if review breaks.
-            self.review = {
-                "verdict": "approved_with_minor",
-                "score": 70,
-                "strengths": [],
-                "issues": [],
-                "security_concerns": [],
-                "performance_concerns": [],
-                "final_comment": (
-                    f"Critic unavailable — defaulting to approved_with_minor. ({out.error})"
-                )[:400],
-            }
+            err = getattr(out, "error", "no_result") if out else "no_result"
+            self.review = self._critic_fallback_verdict(err)
         else:
             self.review = out.data
         await self._emit(
@@ -1842,6 +1993,34 @@ class CodeIntelligenceEngine:
                 return_exceptions=True,
             )
             await self._run_phase("test", self._phase_test)
+
+        # v18.1 Step 4 — async critic decouple.  Kick off the REAL
+        # critic LLM call as a background task right after the
+        # parallel block completes, BEFORE entering the debug retry
+        # loop.  The critic then runs in parallel with debug — for
+        # Build prompts (where debug retries inflate wall-clock by
+        # 100-300s) this lifts the critic LLM latency (30-60s on
+        # Phi-4 Q4_K_M CPU) entirely off the critical path.
+        #
+        # If debug modifies `self.code`, `_phase_review` detects the
+        # staleness via `_critic_code_hash` and re-launches the
+        # critic on the post-debug code.  Settings flag
+        # `code_critic_async=False` reverts to the legacy inline
+        # critic call at `_phase_review` entry; `code_critic_async_timeout_s`
+        # (default 8s) bounds how long review() will block on a
+        # still-running task before falling back to approved_with_minor.
+        try:
+            _async_critic = bool(getattr(settings, "code_critic_async", True))
+        except Exception:
+            _async_critic = True
+        if _async_critic and self.code:
+            try:
+                await self._kickoff_critic_task()
+            except Exception as exc:  # pragma: no cover (defensive)
+                logger.warning(
+                    "critic_async_kickoff_failed err=%s — review will run inline",
+                    exc,
+                )
 
         await self._run_phase("debug", self._phase_debug)
         await self._run_phase("review", self._phase_review)

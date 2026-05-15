@@ -136,6 +136,88 @@ def check_docker_daemon() -> CheckResult:
     )
 
 
+def _parse_docker_version(raw: str) -> tuple[int, int, int] | None:
+    """Coerce a Docker version string like ``24.0.7`` or ``25.0.3+rc1``
+    into a ``(major, minor, patch)`` tuple.  Returns ``None`` if the
+    string is unparseable — caller treats unparseable as "skip the
+    check" rather than as a hard failure.
+    """
+
+    if not raw:
+        return None
+    head = raw.strip().split()[0]            # drop any trailing space-separated tokens
+    head = head.split("+", 1)[0]             # drop pre-release suffix
+    head = head.split("-", 1)[0]             # drop -beta / -rc / -dev tags
+    parts = head.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2]) if len(parts) >= 3 else 0
+    except ValueError:
+        return None
+    return (major, minor, patch)
+
+
+def check_docker_version() -> CheckResult:
+    """v18.1 Step 1 (Cycle G) — warn (do NOT block) when the Docker
+    server is below the v24 / Docker Desktop 4.30 floor that ships
+    runc ≥ 1.2.x and addresses CVE-2025-31133 / 52565 / 52881.
+
+    Soft-fail by design: older Docker still runs AMOR; we just want
+    the operator to see the security pointer.  If the version probe
+    itself fails (network down, daemon flaky), this check passes
+    silently — `check_docker_daemon()` is the daemon-presence
+    blocker, not us.
+    """
+
+    res = util.run(
+        ["docker", "version", "--format", "{{.Server.Version}}"],
+        timeout=10,
+    )
+    if not res.ok:
+        # Probe failed — daemon already covered by check_docker_daemon().
+        return CheckResult(
+            name="Docker version",
+            ok=True,
+            blocker=False,
+            message="version probe skipped (daemon check covers this)",
+        )
+
+    parsed = _parse_docker_version(res.stdout)
+    if parsed is None:
+        return CheckResult(
+            name="Docker version",
+            ok=True,
+            blocker=False,
+            message=f"unparseable version output: {res.stdout.strip()!r}",
+        )
+
+    needed = constants.MIN_DOCKER_SERVER_VERSION
+    ok = parsed >= needed
+    have_str = ".".join(str(p) for p in parsed)
+    need_str = ".".join(str(p) for p in needed)
+    return CheckResult(
+        name="Docker version",
+        ok=ok,
+        blocker=False,     # WARN, never block — older Docker still runs AMOR
+        message=(
+            f"server {have_str} (≥ {need_str} recommended)"
+            if ok
+            else f"server {have_str} < {need_str} recommended"
+        ),
+        remediation=(
+            f"Upgrade to Docker Desktop ≥ "
+            f"{constants.MIN_DOCKER_DESKTOP_VERSION_LABEL} (CVE-2025-31133 / "
+            "runc ≥ 1.2.x).  Linux: `sudo apt install docker-ce` / pull from "
+            "https://docs.docker.com/engine/install/."
+        )
+        if not ok
+        else "",
+    )
+
+
 def check_compose_present() -> CheckResult:
     engine = compose.detect_engine(include_windows_overlay=False)
     if engine is None:
@@ -299,6 +381,7 @@ _STANDARD_CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_docker_present,
     check_docker_daemon,
+    check_docker_version,         # v18.1 Step 1 — CVE-2025-31133 soft warn
     check_compose_present,
     check_compose_files,
     check_disk_free,

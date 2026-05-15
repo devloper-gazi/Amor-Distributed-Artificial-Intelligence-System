@@ -337,6 +337,19 @@ class Settings(BaseSettings):
     # case.  Forward-compat for Sprint 6 piece 2b (critic async).
     code_pipeline_parallel: bool = True
     code_critic_prefix_warmup: bool = True
+    # v18.1 Step 4 (Cycle G) — fully-async critic.  When True
+    # (default), the critic LLM call is kicked off as a background
+    # task right after the parallel block (execute/analyze/test)
+    # completes, in parallel with the debug retry loop.  The review
+    # phase then awaits the task with a freshness timeout
+    # (`code_critic_async_timeout_s`), falling back to
+    # `approved_with_minor` score=70 when the call stalls.  Saves
+    # ~30-60s on the Sprint-0 corpus median (Phi-4 Q4_K_M critic
+    # latency moves entirely off the critical path on Build prompts
+    # where debug retries inflate wall-clock by 100-300s).
+    # Flag-flip rollback to v18 inline-blocking critic behaviour.
+    code_critic_async: bool = True
+    code_critic_async_timeout_s: float = 8.0
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.

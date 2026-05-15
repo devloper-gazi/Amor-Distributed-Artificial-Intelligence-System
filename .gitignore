@@ -85,3 +85,8 @@ document_processor/code_intelligence/extensions/__pycache__/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+
+# v18.1 — sandbox-shared/ is a runtime artifact for the
+# code_intelligence sandbox (named volume bind target on Windows
+# hosts).  Per-run subdirectories accumulate test_run/ etc.
+sandbox-shared/

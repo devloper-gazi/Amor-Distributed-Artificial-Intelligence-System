@@ -114,6 +114,68 @@ bucket with these triggers:
 3. **Hardware step-up to 16 GiB VRAM** — KV quant becomes a
    non-issue; Q8_0 fits both architect + editor resident.
 
+## v18.1 Step 5 (Cycle G) — re-eval readiness status
+
+**2026-05-15 status check:**
+
+```bash
+$ bash tools/sprint1_ab_run.sh --check-lora-mounts
+[sprint1_ab] Q4_0 re-eval readiness check (v18.1 Step 5)
+  Checking models/lora/ for production adapters...
+  ✗ models/lora/ does not exist
+    ⇒ Cycle G G5 hasn't shipped any adapters yet.
+    ⇒ Q4_0 re-eval BLOCKED on G5 — leave config.q4_0.yaml
+      LoRA mount lines commented (q4_0.yaml:83-85).
+```
+
+Trigger #1 (Sprint 3 ORPO adapter training lands) is the gating
+condition that activates Q4_0 re-evaluation in v19.  Three sub-
+steps must complete first:
+
+* **v18.1 Step 2** — MessageActions ratings flow into
+  `data/preference_pairs/build.jsonl` via the weekly cron Step 0
+  (LANDED 2026-05-15).
+* **Cycle G G5** — operator harvests ≥200 rated pairs per role +
+  runs `tools/training/orpo_role_adapter.py --role coder` +
+  `--role tester` + `--role debugger`, converts to GGUF, drops
+  the artifacts into `models/lora/{coder,tester,debugger}-r16.gguf`.
+* **Cycle G G5** — `tools/sprint1_ab_run.sh --check-lora-mounts`
+  flips to ✓, operator uncomments mount lines in
+  `compose/llama-swap/config.q4_0.yaml:83-85` and
+  `config.q8_0.yaml:73-75`, then re-runs
+  `bash tools/sprint1_ab_run.sh --only q4_0`.
+
+**v18.1 deliverable:** the readiness check + dry-run mode are
+both wired and verifiable today (`--dry-run` exits 0 immediately).
+No re-eval RUN performed; that's deliberate — Q4_0 will lose again
+on the stock editor and the trip costs ~6 hours wall.
+
+## Re-eval procedure (Cycle G G5 follow-up, NOT v18.1)
+
+```bash
+# After G5 ships ≥1 adapter, dry-run first to confirm scope:
+bash tools/sprint1_ab_run.sh --dry-run --only q4_0
+
+# Activate Q4_0 with the trained adapter mounted:
+python tools/llamaswap/select_kv_quant.py --quant q4_0
+docker compose up -d --force-recreate llama-swap
+
+# Run a single-variant Sprint-0 baseline (~6 h, Mistral judge):
+bash tools/sprint1_ab_run.sh --only q4_0
+
+# Compare against the locked Q8_0 result:
+diff <(jq .summary data/baselines/sprint1_q8_0_results.json) \
+     <(jq .summary data/baselines/sprint1_q4_0_results.json)
+
+# If Δcorrectness ≥ −0.15 with the adapter, promote Q4_0:
+python tools/llamaswap/select_kv_quant.py --quant q4_0   # already active
+docker compose restart llama-swap
+
+# Else, revert:
+python tools/llamaswap/select_kv_quant.py --quant q8_0
+docker compose up -d --force-recreate llama-swap
+```
+
 ## Sprint 1 exit criteria — status
 
 | # | criterion | status |
