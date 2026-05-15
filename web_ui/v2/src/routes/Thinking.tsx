@@ -1,9 +1,10 @@
-import { type Component, createMemo, Show } from "solid-js";
+import { type Component, createMemo, createSignal, Show } from "solid-js";
 import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Button, StatusPill, type Status } from "../components/ui";
+import { t } from "../i18n";
 import {
   getChatStream,
   SIMPLE_TEXT_REDUCER,
@@ -19,6 +20,39 @@ interface ThinkRequest {
   clarifications: Record<string, string>;
 }
 
+// Cycle D — per-mode effort persistence.  Thinking accepts the same
+// 5-tier canonical scale as Build/Research (basic/medium/deep/expert/
+// ultra) — see document_processor/thinking/models.py:80.
+const STORAGE_KEY_THINKING_EFFORT = "amor.thinking.effort";
+const THINKING_EFFORT_TIERS = [
+  { value: "basic",  label_key: "effort.basic.label",  description_key: "effort.basic.description" },
+  { value: "medium", label_key: "effort.medium.label", description_key: "effort.medium.description" },
+  { value: "deep",   label_key: "effort.deep.label",   description_key: "effort.deep.description" },
+  { value: "expert", label_key: "effort.expert.label", description_key: "effort.expert.description" },
+  { value: "ultra",  label_key: "effort.ultra.label",  description_key: "effort.ultra.description" },
+] as const;
+type ThinkingEffort = (typeof THINKING_EFFORT_TIERS)[number]["value"];
+
+function loadThinkingEffort(): ThinkingEffort {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_THINKING_EFFORT);
+    if (raw && THINKING_EFFORT_TIERS.some((t) => t.value === raw)) {
+      return raw as ThinkingEffort;
+    }
+  } catch {
+    // ignore
+  }
+  return "medium";
+}
+
+function saveThinkingEffort(value: ThinkingEffort): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_THINKING_EFFORT, value);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Thinking mode — multi-step reasoning with streaming output.
  *
@@ -28,16 +62,24 @@ interface ThinkRequest {
  * as "no answer given" and proceeds).
  */
 export const Thinking: Component = () => {
+  const [effort, setEffortRaw] = createSignal<ThinkingEffort>(loadThinkingEffort());
+  const setEffort = (next: ThinkingEffort): void => {
+    setEffortRaw(next);
+    saveThinkingEffort(next);
+  };
+
   const stream = getChatStream<ThinkRequest>({
     startPath: "/api/thinking/think",
     buildStartBody: (prompt) => ({
       prompt,
-      effort: "medium",
+      effort: effort(),
       clarifications: {},
     }),
     eventsPath: (sid) => `/api/thinking/${sid}/events`,
     cancelPath: (sid) => `/api/thinking/${sid}/cancel`,
     reduce: SIMPLE_TEXT_REDUCER,
+    // Cycle D Sessions polish — see Research.tsx for the rationale.
+    chatSessionMode: "thinking",
   });
 
   const headerStatus = createMemo<Status>(() => {
@@ -51,13 +93,13 @@ export const Thinking: Component = () => {
   return (
     <div data-mode="thinking" class="flex h-full flex-col">
       <TopBar
-        title="Thinking"
-        subtitle="multi-step reasoning"
+        title={t("thinking.title")}
+        subtitle={t("thinking.subtitle")}
         actions={
           <Show when={stream.busy()}>
             <StatusPill status={headerStatus()} size="sm" />
             <Button variant="secondary" size="sm" onClick={stream.cancel}>
-              Cancel
+              {t("common.cancel")}
             </Button>
           </Show>
         }
@@ -68,12 +110,10 @@ export const Thinking: Component = () => {
         emptyState={
           <div class="max-w-md text-center">
             <p class="text-base text-text-primary">
-              Pose a question to think through
+              {t("thinking.empty.title")}
             </p>
             <p class="mt-2 text-sm text-text-tertiary">
-              Thinking mode runs multi-step reasoning with streaming
-              output.  Best for analysis, comparisons, and design
-              decisions where you want to see the chain of thought.
+              {t("thinking.empty.body")}
             </p>
           </div>
         }
@@ -82,7 +122,10 @@ export const Thinking: Component = () => {
         onSubmit={stream.start}
         busy={stream.busy()}
         onCancel={stream.cancel}
-        placeholder="What should I think about? (e.g. 'compare CRDT vs OT for collaborative editing')"
+        placeholder={t("thinking.composer.placeholder")}
+        effortTiers={THINKING_EFFORT_TIERS}
+        effortValue={effort()}
+        onEffortChange={(v) => setEffort(v as ThinkingEffort)}
       />
     </div>
   );

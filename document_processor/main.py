@@ -46,6 +46,28 @@ from .api.chat_sessions_routes import router as chat_sessions_router
 from .api.query_record_routes import router as query_record_router  # Phase B4
 from .api.chat_folders_routes import router as chat_folders_router
 from .api.auth_routes import router as auth_router
+# Cycle C Sprint 0 Day 3 — admin baselines dashboard.
+from .api.admin_baselines_routes import router as admin_baselines_router
+# Cycle C Sprint 1 Day 4 — admin LLM dashboard (resident models,
+# swap events, cache-reuse hits).
+from .api.admin_llm_routes import router as admin_llm_router
+# Cycle C Sprint 2 Day 1 — admin Eval harness routes (HumanEval+,
+# SWE-bench-Lite, RAGAS, sprint0 corpus replay).
+from .api.admin_evals_routes import (
+    router as admin_evals_router,
+    ensure_eval_runs_schema,
+)
+# Cycle C Sprint 4 Day 2 — repo symbol discovery for @-mention picker.
+from .api.repo_routes import router as repo_router
+# Cycle C Sprint 6 Day 1 — preference-pair ingestion for ORPO trainer.
+from .api.admin_training_routes import (
+    router as admin_training_router,
+    ensure_preference_pairs_schema,
+)
+# Cycle C Sprint 7 Day 2 — Mem0 OSS memory routes.
+from .api.admin_memory_routes import router as admin_memory_router
+# Cycle C Sprint 8 Day 4 — agentic ReAct loop routes.
+from .api.agent_routes import router as agent_router
 from .auth.service import auth_service
 
 # Thinking Mode — human-in-the-loop deep reasoning pipeline
@@ -124,6 +146,14 @@ try:
 except ImportError as _mcp_exc:  # pragma: no cover
     MCP_ROUTES_AVAILABLE = False
     logger.warning("MCP routes not available: %s", _mcp_exc)
+
+# Cycle F Sprint 5 — approval flow bridge
+try:
+    from .api.approval import approval_router
+    APPROVAL_ROUTES_AVAILABLE = True
+except ImportError as _appr_exc:  # pragma: no cover
+    APPROVAL_ROUTES_AVAILABLE = False
+    logger.warning("Approval routes not available: %s", _appr_exc)
 
 # Crawling and Translation API routes
 try:
@@ -258,6 +288,18 @@ async def lifespan(app: FastAPI):
             await auth_service.bootstrap()
         except Exception as e:
             logger.warning("auth_bootstrap_failed", error=str(e))
+
+        # Sprint 2 — ensure eval_runs table exists.
+        try:
+            await ensure_eval_runs_schema()
+        except Exception as e:
+            logger.warning("eval_runs_schema_failed", error=str(e))
+
+        # Sprint 6 — ensure preference_pairs table exists.
+        try:
+            await ensure_preference_pairs_schema()
+        except Exception as e:
+            logger.warning("preference_pairs_schema_failed", error=str(e))
 
         # Initialize Local AI if available
         if LOCAL_AI_AVAILABLE:
@@ -429,6 +471,36 @@ if _v2_available:
         name="static_v2",
     )
     logger.info("v2_ui_mounted dist=%s", _v2_dist_path)
+
+    # Cycle C Sprint 12 Day 1 — PWA root-scoped artifacts.  The
+    # service worker MUST be served from ``/sw.js`` (root scope) so
+    # it can intercept fetches for every route the SPA owns.  The
+    # ``manifest.webmanifest`` + icons are also expected at the root
+    # by the browser's installable-app heuristic.  Explicitly route
+    # each before the SPA catch-all so Jinja's HTML fallback doesn't
+    # shadow them.
+    from fastapi.responses import FileResponse  # noqa: PLC0415
+
+    def _make_pwa_route(path: str, filename: str, media_type: str):
+        def _serve():
+            full = os.path.join(_v2_dist_path, filename)
+            if not os.path.isfile(full):
+                from fastapi import HTTPException as _HTTPException  # noqa: PLC0415
+                raise _HTTPException(status_code=404, detail=f"{filename} not built")
+            return FileResponse(full, media_type=media_type)
+        _serve.__name__ = f"pwa_{filename.replace('.', '_').replace('-', '_')}"
+        app.add_api_route(
+            path,
+            _serve,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+
+    _make_pwa_route("/manifest.webmanifest", "manifest.webmanifest", "application/manifest+json")
+    _make_pwa_route("/sw.js",                "sw.js",                "application/javascript")
+    _make_pwa_route("/icon-192.svg",         "icon-192.svg",         "image/svg+xml")
+    _make_pwa_route("/icon-512.svg",         "icon-512.svg",         "image/svg+xml")
+    logger.info("pwa_artifacts_mounted manifest+sw+icons")
 else:
     logger.warning(
         "v2_ui_not_built path=%s — run `cd web_ui/v2 && npm run build`",
@@ -611,6 +683,13 @@ if MCP_ROUTES_AVAILABLE:
     app.include_router(mcp_router)
     logger.info("MCP /mcp/v1 routes included")
 
+# Cycle F Sprint 5 — approval flow.  The router exposes
+# POST /api/approval/{request_id} so the browser can resolve
+# `approval_required` SSE events from the code-intelligence stream.
+if APPROVAL_ROUTES_AVAILABLE:
+    app.include_router(approval_router)
+    logger.info("Approval flow routes included")
+
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
 logger.info("Chat sessions routes included")
@@ -623,6 +702,52 @@ logger.info("Query record routes included")
 # Chat folders persistence (MongoDB)
 app.include_router(chat_folders_router)
 logger.info("Chat folders routes included")
+
+# Sprint 0 admin baselines dashboard (Cycle C)
+app.include_router(admin_baselines_router)
+logger.info("Admin baselines routes included")
+
+# Sprint 1 admin LLM dashboard (Cycle C)
+app.include_router(admin_llm_router)
+logger.info("Admin LLM routes included")
+
+# Sprint 2 admin Eval routes (Cycle C)
+app.include_router(admin_evals_router)
+logger.info("Admin Evals routes included")
+
+# Sprint 4 Day 2 repo symbol discovery (Cycle C) — backs @-mention picker.
+app.include_router(repo_router)
+logger.info("Repo symbol routes included")
+
+# Sprint 6 Day 1 admin Training routes (Cycle C) — preference pairs.
+app.include_router(admin_training_router)
+logger.info("Admin Training routes included")
+
+# Sprint 7 Day 2 admin Memory routes (Cycle C) — Mem0 OSS adapter.
+app.include_router(admin_memory_router)
+logger.info("Admin Memory routes included")
+
+# Sprint 8 Day 4 agent routes (Cycle C) — ReAct loop with MCP tool dispatch.
+app.include_router(agent_router)
+logger.info("Agent routes included")
+
+# Sprint 2 — register concrete eval runners.  Import-only side-effect:
+# each module calls ``register_eval(...)`` at import time so the
+# manifest sees them.  Failures here are logged but non-fatal —
+# the dashboard still works without runners.
+def _register_eval_runners() -> None:
+    import importlib
+    for mod in (
+        "tools.eval.humaneval_plus",
+        "tools.eval.swebench_lite",
+        "tools.eval.ragas_lancedb",
+    ):
+        try:
+            importlib.import_module(mod)
+            logger.info("registered eval runner: %s", mod)
+        except Exception as exc:
+            logger.warning("eval runner %s register failed: %s", mod, exc)
+_register_eval_runners()
 
 # Crawling API routes
 if CRAWLING_AVAILABLE:

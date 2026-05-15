@@ -1,0 +1,50 @@
+# Cycle C Sprint 12 Day 2 — Tauri 2.0 spike (NOT shipped).
+#
+# Build target: Windows MSI / NSIS bundle wrapping the AMOR PWA.
+# Run with:
+#   cd desktop/tauri && cargo tauri build --target x86_64-pc-windows-msvc
+#
+# Expected outputs (per pkgpulse 2026 benchmarks):
+#   * MSI / NSIS installer:  ~8–12 MB
+#   * Runtime memory:        ~80–120 MB resident
+# Compare vs the equivalent Electron shell (~80–200 MB installer,
+# ~250–500 MB resident).
+#
+# This file ships as scaffolding only — Sprint 12's deliverable is
+# the *spike + measurements*, not a published binary.  Operators who
+# want to build it themselves install the Rust toolchain + the
+# tauri-cli (``cargo install tauri-cli``).
+[package]
+name = "amor-desktop"
+version = "0.12.0"
+description = "AMOR desktop shell (Tauri 2.0 spike)"
+authors = ["AMOR"]
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[lib]
+name = "amor_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["protocol-asset"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+
+[features]
+# This feature is used to prevent `tauri build` from reading the
+# upstream gitignored ``app.rs``; flip via ``--features custom-protocol``.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+incremental = false
+opt-level = "z"      # optimise for size — keeps the bundle small
+strip = true

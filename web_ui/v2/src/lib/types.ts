@@ -75,14 +75,45 @@ export const MODES: ReadonlyArray<ModeMeta> = [
   },
 ];
 
+/** Cycle F Sprint 5 — approval-request payload threaded inside a
+ *  ChatTurn so it renders as an inline approval card.  The card
+ *  manages its own resolution state via the
+ *  POST /api/approval/{request_id} endpoint; the chat-stream
+ *  reducer only creates the turn on the SSE `approval_required`
+ *  event. */
+export interface ApprovalPayload {
+  request_id: string;
+  tool_name: string;
+  category: string;        // ApprovalCategory enum value
+  arguments: Record<string, unknown>;
+  actor_role?: string | null;
+  timeout_s: number;
+  /** Local UI state; transitions from "pending" via the POST. */
+  status: "pending" | "approved" | "denied" | "timeout" | "error";
+  /** Optional free-text error surfaced on POST failure. */
+  error?: string;
+}
+
 /** Conversation turn rendered in the message thread. */
 export interface ChatTurn {
   id: string;
-  role: "user" | "assistant" | "tool" | "system";
+  role: "user" | "assistant" | "tool" | "system" | "approval";
   content: string;
   /** Set when the turn is mid-stream so the UI can render a caret. */
   streaming?: boolean;
   /** Optional tag — e.g. "phase: implement" for pipeline turns. */
   tag?: string;
   ts?: number;
+  /** Cycle C Sprint 7 — when set, the turn was generated with
+   *  Mem0-injected context.  ``count`` is how many memories the
+   *  retriever surfaced.  ``snippets`` (optional) is the short
+   *  text the "Remembered" pill expands to on hover. */
+  remembered?: {
+    count: number;
+    snippets?: string[];
+  };
+  /** Cycle F Sprint 5 — populated when role === "approval".  The
+   *  MessageThread switches to ApprovalPrompt.tsx for these turns
+   *  instead of MessageBubble. */
+  approval?: ApprovalPayload;
 }

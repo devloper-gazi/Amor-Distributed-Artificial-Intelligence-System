@@ -1,0 +1,52 @@
+{
+  "_doc": "Cycle E v18 baseline judge profiles.  Selected via env var AMOR_SPRINT0_JUDGE (default: mistral).  Each profile maps to a llama-server CPU container started by select_and_start.sh.  Add a profile by extending this JSON; no code change required.",
+  "_protocol_version": "v18.0",
+  "default": "mistral",
+  "profiles": {
+    "mistral": {
+      "label": "Mistral-Small-3-24B-Instruct (Q4_K_M, CPU)",
+      "model_name": "mistral-small-3-q4km",
+      "gguf_filename": "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf",
+      "huggingface_repo": "bartowski/Mistral-Small-24B-Instruct-2501-GGUF",
+      "huggingface_pattern": "*Q4_K_M*",
+      "approx_disk_gb": 14.3,
+      "container_memory": "16g",
+      "container_cpus": "8",
+      "ctx_size": 4096,
+      "threads": 8,
+      "request_timeout_s": 600,
+      "max_tokens": 160,
+      "rationale": "Family-distinct from Qwen-derived AMOR architect (Panickssery 2024 self-correlation guard).  CPU-only run is slow (~1-2 hours per 10-prompt × position-swap × 2-rubric pass) but kalitatif olarak en bağımsız judge.  Default for the v18 baseline."
+    },
+    "phi4": {
+      "label": "Phi-4-14B-Instruct (Q4_K_M, CPU)",
+      "model_name": "phi-4-14b-q4km",
+      "gguf_filename": "Phi-4-Q4_K_M.gguf",
+      "huggingface_repo": "bartowski/phi-4-GGUF",
+      "huggingface_pattern": "*Q4_K_M*",
+      "approx_disk_gb": 9.1,
+      "container_memory": "12g",
+      "container_cpus": "8",
+      "ctx_size": 4096,
+      "threads": 8,
+      "request_timeout_s": 360,
+      "max_tokens": 160,
+      "rationale": "Lighter fallback for Mistral.  ~30 min per pass on CPU.  Use when (a) host RAM cannot host 16 GB Mistral container, OR (b) you need to ship the baseline in a single working day rather than overnight.  Less independent judge validation but adequate for triangulation."
+    },
+    "mistral_fast": {
+      "label": "Mistral-Small-3-24B-Instruct (Q3_K_M, CPU, fast-prefill)",
+      "model_name": "mistral-small-3-q3km",
+      "gguf_filename": "Mistral-Small-24B-Instruct-2501-Q3_K_M.gguf",
+      "huggingface_repo": "bartowski/Mistral-Small-24B-Instruct-2501-GGUF",
+      "huggingface_pattern": "*Q3_K_M*",
+      "approx_disk_gb": 11.5,
+      "container_memory": "12g",
+      "container_cpus": "8",
+      "ctx_size": 4096,
+      "threads": 8,
+      "request_timeout_s": 360,
+      "max_tokens": 160,
+      "rationale": "Q3_K_M trades ~1.5pp judgment fidelity for ~30% prefill speedup.  Use when the full Q4_K_M run cannot fit a single overnight window AND Phi-4's family-overlap with Qwen-derived candidates is concerning."
+    }
+  }
+}

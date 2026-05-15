@@ -8,6 +8,7 @@ import {
   type Status,
 } from "../components/ui";
 import { api } from "../lib/api";
+import { t } from "../i18n";
 
 interface Diagnostics {
   ts: string;
@@ -27,6 +28,14 @@ interface Diagnostics {
     samples: number;
     recent_failures: Array<{ ts: string; where: string; detail: string }>;
     docker_available?: boolean | null;
+    /** Cycle C Sprint 5 — sandbox hardening posture. */
+    security?: {
+      docker_host: string;
+      via_proxy: boolean;
+      flags_active: Record<string, unknown>;
+      score: number;
+      level: "baseline" | "hardened" | "max";
+    };
   };
   rag: {
     embedder: string;
@@ -66,15 +75,15 @@ export const Diagnostics: Component = () => {
   return (
     <div data-mode="system" class="flex h-full flex-col">
       <TopBar
-        title="Diagnostics"
-        subtitle="health, sandbox, ledger integrity"
+        title={t("diagnostics.title")}
+        subtitle={t("diagnostics.subtitle")}
         actions={
           <>
             <Show when={q.isFetching}>
               <Spinner size={14} />
             </Show>
             <Button variant="secondary" size="sm" onClick={refresh}>
-              Refresh
+              {t("common.refresh")}
             </Button>
           </>
         }
@@ -86,11 +95,12 @@ export const Diagnostics: Component = () => {
             <div class="flex h-full items-center justify-center text-sm text-text-tertiary">
               <Show when={q.isError} fallback={<Spinner size={20} />}>
                 <p>
-                  Failed to load diagnostics:{" "}
-                  {String(
-                    (q.error as { body?: { detail?: string } } | null)
-                      ?.body?.detail ?? q.error,
-                  )}
+                  {t("diagnostics.failed_to_load", {
+                    detail: String(
+                      (q.error as { body?: { detail?: string } } | null)
+                        ?.body?.detail ?? q.error,
+                    ),
+                  })}
                 </p>
               </Show>
             </div>
@@ -99,16 +109,16 @@ export const Diagnostics: Component = () => {
           {(d) => (
             <div class="mx-auto max-w-5xl space-y-6">
               <p class="text-xs text-text-tertiary">
-                Last refreshed:{" "}
-                {new Date(d().ts).toLocaleTimeString()} · auto-refreshes
-                every 30 s
+                {t("diagnostics.last_refreshed", {
+                  ts: new Date(d().ts).toLocaleTimeString(),
+                })}
               </p>
 
               {/* Card grid */}
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Card
                   status={d().backend_health.healthy ? "healthy" : "failed"}
-                  title="Backend"
+                  title={t("diagnostics.card.backend")}
                   primary={d().backend.kind}
                   secondary={d().backend.url}
                 />
@@ -118,38 +128,45 @@ export const Diagnostics: Component = () => {
                       ? "healthy"
                       : "warming"
                   }
-                  title="Sandbox"
+                  title={t("diagnostics.card.sandbox")}
                   primary={
                     d().sandbox.cold_start_p50_ms !== null
                       ? `${d().sandbox.cold_start_p50_ms} ms p50`
-                      : "no samples"
+                      : t("diagnostics.value.no_samples")
                   }
                   secondary={
                     d().sandbox.cold_start_p95_ms !== null
                       ? `${d().sandbox.cold_start_p95_ms} ms p95 · ${d().sandbox.samples} runs`
-                      : "run a Build session to populate"
+                      : t("diagnostics.value.run_to_populate")
                   }
                 />
                 <Card
                   status={d().ledger.intact ? "healthy" : "failed"}
-                  title="Ledger"
-                  primary={d().ledger.intact ? "intact" : "broken"}
-                  secondary={`tail ${d().ledger.tail_hash.slice(0, 12)}… · ${d().ledger.entries} entries`}
+                  title={t("diagnostics.card.ledger")}
+                  primary={d().ledger.intact ? t("diagnostics.value.intact") : "broken"}
+                  secondary={t("diagnostics.value.tail", {
+                    tail: d().ledger.tail_hash.slice(0, 12) + "…",
+                    n: d().ledger.entries,
+                  })}
                 />
                 <Card
                   status={
                     d().models.distinct_count >= 2 ? "healthy" : "warming"
                   }
-                  title="Models"
-                  primary={`${d().models.installed.length} installed`}
-                  secondary={`${d().models.distinct_count} distinct in role plan`}
+                  title={t("diagnostics.card.models")}
+                  primary={t("diagnostics.value.installed", {
+                    n: d().models.installed.length,
+                  })}
+                  secondary={t("diagnostics.value.role_plan", {
+                    n: d().models.distinct_count,
+                  })}
                 />
                 <Card
                   status={d().rag.hybrid_enabled ? "healthy" : "warming"}
-                  title="RAG"
+                  title={t("diagnostics.card.rag")}
                   primary={d().rag.embedder.split("/").pop() ?? "embedder"}
                   secondary={[
-                    d().rag.hybrid_enabled ? "hybrid" : "vector-only",
+                    d().rag.hybrid_enabled ? t("diagnostics.value.hybrid") : "vector-only",
                     d().rag.reranker_enabled ? "reranker on" : null,
                   ]
                     .filter(Boolean)
@@ -157,9 +174,11 @@ export const Diagnostics: Component = () => {
                 />
                 <Card
                   status="healthy"
-                  title="OpenAI /v1"
+                  title={t("diagnostics.card.openai")}
                   primary={
-                    d().phase16_facade.openai_compat_enabled ? "on" : "off"
+                    d().phase16_facade.openai_compat_enabled
+                      ? t("diagnostics.value.on")
+                      : t("diagnostics.value.off")
                   }
                   secondary={`backend: ${d().phase16_facade.llm_backend}`}
                 />
@@ -169,30 +188,52 @@ export const Diagnostics: Component = () => {
                       ? "healthy"
                       : "warming"
                   }
-                  title="MCP server"
+                  title={t("diagnostics.card.mcp")}
                   primary={
-                    d().phase16_facade.mcp_server_enabled ? "on" : "off"
+                    d().phase16_facade.mcp_server_enabled
+                      ? t("diagnostics.value.on")
+                      : t("diagnostics.value.off")
                   }
                   secondary={
                     d().phase16_facade.mcp_server_enabled
                       ? "tools/list, tools/call"
-                      : "set enable_mcp_server"
+                      : t("diagnostics.value.set_flag", { flag: "enable_mcp_server" })
                   }
                 />
                 <Card
                   status={
                     d().recent_failures.length > 0 ? "warning" : "healthy"
                   }
-                  title="Recent failures"
+                  title={t("diagnostics.card.failures")}
                   primary={`${d().recent_failures.length}`}
-                  secondary="last 30, ring-buffered"
+                  secondary={t("diagnostics.value.last_n", { n: 30 })}
                 />
+                <Show when={d().sandbox.security}>
+                  {(sec) => (
+                    <Card
+                      status={
+                        sec().level === "max"
+                          ? "healthy"
+                          : sec().level === "hardened"
+                            ? "healthy"
+                            : "warning"
+                      }
+                      title={t("diagnostics.card.security")}
+                      primary={`${sec().level} (${sec().score}/10)`}
+                      secondary={
+                        sec().via_proxy
+                          ? t("diagnostics.value.socket_proxy")
+                          : t("diagnostics.value.direct_socket")
+                      }
+                    />
+                  )}
+                </Show>
               </div>
 
               {/* Role assignment table */}
               <section>
                 <h2 class="mb-2 text-sm font-semibold tracking-tight">
-                  Role assignments
+                  {t("diagnostics.role_assignments")}
                 </h2>
                 <div class="overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
                   <For each={Object.entries(d().models.role_assignment)}>
@@ -210,7 +251,7 @@ export const Diagnostics: Component = () => {
               <Show when={d().recent_sessions.length > 0}>
                 <section>
                   <h2 class="mb-2 text-sm font-semibold tracking-tight">
-                    Recent sessions
+                    {t("diagnostics.recent_sessions")}
                   </h2>
                   <div class="overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
                     <For each={d().recent_sessions.slice(0, 8)}>

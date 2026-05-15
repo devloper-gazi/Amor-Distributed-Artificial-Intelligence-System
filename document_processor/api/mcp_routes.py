@@ -79,6 +79,16 @@ def _registry():
 class ToolCallRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     arguments: Optional[dict] = Field(default_factory=dict)
+    # Cycle F Sprint 5 — when present, PROMPT decisions from the
+    # ApprovalPolicy route through `request_user_approval` and
+    # publish on the session's SSE channel.  When absent, PROMPT
+    # decisions fail-closed (caller has no UI to ask).
+    session_id: Optional[str] = Field(
+        default=None, min_length=1, max_length=64,
+    )
+    actor_role: Optional[str] = Field(
+        default=None, min_length=1, max_length=32,
+    )
 
 
 # ─── Endpoints ──────────────────────────────────────────────────────
@@ -107,7 +117,36 @@ async def call_tool(
             status_code=404,
             detail=f"unknown tool: {body.name!r}",
         )
-    result = await registry.dispatch(body.name, body.arguments or {})
+    # Cycle F Sprint 5 — bind the approval bridge as the dispatch
+    # callback when session_id is present.  When ApprovalPolicy
+    # decides PROMPT, the registry awaits `request_user_approval`
+    # which publishes an `approval_required` SSE event on the
+    # session channel + waits for the matching
+    # POST /api/approval/{request_id}.  Without session_id, PROMPT
+    # decisions fail closed (no place to surface the prompt).
+    approval_callback = None
+    if body.session_id:
+        try:
+            from .approval import request_user_approval  # noqa: PLC0415
+
+            async def _callback(req):
+                return await request_user_approval(
+                    session_id=body.session_id,
+                    tool_name=req.tool_name,
+                    category=req.category,
+                    arguments=req.arguments,
+                    actor_role=req.actor_role,
+                )
+            approval_callback = _callback
+        except ImportError:
+            approval_callback = None
+
+    result = await registry.dispatch(
+        body.name, body.arguments or {},
+        session_id=body.session_id,
+        actor_role=body.actor_role,
+        approval_callback=approval_callback,
+    )
     return JSONResponse({
         "content": result.to_mcp_content(),
         "isError": not result.ok,

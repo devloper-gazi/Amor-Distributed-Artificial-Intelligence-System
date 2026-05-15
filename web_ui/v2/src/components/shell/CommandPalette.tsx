@@ -12,6 +12,7 @@ import { useNavigate } from "@solidjs/router";
 import { MODES } from "../../lib/types";
 import { auth } from "../../lib/auth";
 import { Kbd } from "../ui";
+import { modeLabel, modeSubtitle, t } from "../../i18n";
 
 interface PaletteItem {
   id: string;
@@ -58,63 +59,121 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   };
 
   const items = createMemo<PaletteItem[]>(() => {
+    // ``t()`` reads the locale signal — invoking it inside this memo
+    // means the palette re-renders on every locale flip without any
+    // per-item bookkeeping.
+    const cat = {
+      mode: t("palette.category.mode"),
+      system: t("palette.category.system"),
+      theme: t("palette.category.theme"),
+      account: t("palette.category.account"),
+    };
     const out: PaletteItem[] = [];
     for (const mode of MODES) {
       out.push({
         id: `mode-${mode.key}`,
-        label: mode.label,
-        hint: mode.subtitle,
-        category: "Mode",
+        label: modeLabel(mode),
+        hint: modeSubtitle(mode),
+        category: cat.mode,
         run: () => nav(mode.href),
       });
     }
     out.push(
       {
         id: "sys-diagnostics",
-        label: "Diagnostics",
-        hint: "health, sandbox, ledger",
-        category: "System",
+        label: t("palette.item.diagnostics.label"),
+        hint: t("palette.item.diagnostics.hint"),
+        category: cat.system,
         run: () => nav("/system"),
       },
       {
         id: "sys-settings",
-        label: "Settings",
-        hint: "theme, account",
-        category: "System",
+        label: t("palette.item.settings.label"),
+        hint: t("palette.item.settings.hint"),
+        category: cat.system,
         run: () => nav("/settings"),
       },
       {
+        id: "sys-baselines",
+        label: t("palette.item.baselines.label"),
+        hint: t("palette.item.baselines.hint"),
+        category: cat.system,
+        run: () => nav("/admin/baselines"),
+      },
+      {
+        id: "sys-llm",
+        label: t("palette.item.llm.label"),
+        hint: t("palette.item.llm.hint"),
+        category: cat.system,
+        run: () => nav("/admin/llm"),
+      },
+      {
+        id: "sys-evals",
+        label: t("palette.item.evals.label"),
+        hint: t("palette.item.evals.hint"),
+        category: cat.system,
+        run: () => nav("/admin/evals"),
+      },
+      {
+        id: "sys-training",
+        label: t("palette.item.training.label"),
+        hint: t("palette.item.training.hint"),
+        category: cat.system,
+        run: () => nav("/admin/training"),
+      },
+      {
+        id: "sys-memory",
+        label: t("palette.item.memory.label"),
+        hint: t("palette.item.memory.hint"),
+        category: cat.system,
+        run: () => nav("/admin/memory"),
+      },
+      {
+        id: "mode-agent",
+        label: t("palette.item.agent.label"),
+        hint: t("palette.item.agent.hint"),
+        category: cat.mode,
+        run: () => nav("/agent"),
+      },
+      {
+        id: "mode-chat",
+        label: t("palette.item.chat.label"),
+        hint: t("palette.item.chat.hint"),
+        category: cat.mode,
+        run: () => nav("/chat"),
+      },
+      {
         id: "sys-showcase",
-        label: "Component showcase",
-        hint: "atoms + theme tokens",
-        category: "System",
+        label: t("palette.item.showcase.label"),
+        hint: t("palette.item.showcase.hint"),
+        category: cat.system,
         run: () => nav("/showcase"),
       },
       {
         id: "theme-light",
-        label: "Theme: Light",
-        category: "Theme",
+        label: t("palette.item.theme_light.label"),
+        category: cat.theme,
         run: () => setTheme("light"),
       },
       {
         id: "theme-dark",
-        label: "Theme: Dark",
-        category: "Theme",
+        label: t("palette.item.theme_dark.label"),
+        category: cat.theme,
         run: () => setTheme("dark"),
       },
       {
         id: "theme-system",
-        label: "Theme: System",
-        category: "Theme",
+        label: t("palette.item.theme_system.label"),
+        category: cat.theme,
         run: () => setTheme("system"),
       },
     );
     if (auth.user()) {
       out.push({
         id: "account-logout",
-        label: "Sign out",
+        label: t("palette.item.signout.label"),
         hint: auth.user()?.username ?? "",
-        category: "Account",
+        category: cat.account,
         run: async () => {
           await auth.logout();
           nav("/login", { replace: true });
@@ -222,7 +281,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={t("palette.dialog_label")}
         class="fixed inset-0 z-[var(--z-modal)] flex items-start justify-center bg-black/40 px-4 pt-[12vh]"
         onClick={(e) => {
           if (e.target === e.currentTarget) props.onClose();
@@ -240,7 +299,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
               setQuery(e.currentTarget.value);
               setSelected(0);
             }}
-            placeholder="Type a command…"
+            placeholder={t("palette.placeholder")}
             aria-controls={listboxId}
             aria-activedescendant={
               filtered()[selected()]
@@ -258,7 +317,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
               when={filtered().length > 0}
               fallback={
                 <p class="px-4 py-6 text-center text-sm text-text-tertiary">
-                  No matches.
+                  {t("palette.empty")}
                 </p>
               }
             >
@@ -301,13 +360,13 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
             <span class="flex items-center gap-2">
               <Kbd>ArrowUp</Kbd>
               <Kbd>ArrowDown</Kbd>
-              navigate
+              {t("palette.kbd.navigate")}
             </span>
             <span class="flex items-center gap-2">
               <Kbd>Enter</Kbd>
-              select
+              {t("palette.kbd.select")}
               <Kbd>Esc</Kbd>
-              close
+              {t("palette.kbd.close")}
             </span>
           </div>
         </div>

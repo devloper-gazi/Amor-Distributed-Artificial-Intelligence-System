@@ -109,6 +109,13 @@ class Tool(ABC):
     description: ClassVar[str] = ""
     InputModel: ClassVar[Optional[Type[BaseModel]]] = None
     is_async: ClassVar[bool] = False
+    # Cycle F Sprint 5 — approval-policy category.  Default
+    # ``unclassified`` falls through to the policy's default_action.
+    # Tool subclasses override to one of `ApprovalCategory` values
+    # (read / write / delete / exec / network / git / db / docker /
+    # llm / secret / package) so the operator's allow_silent / deny
+    # / prompt lists can match by category.
+    category: ClassVar[str] = "unclassified"
 
     def validate(self, raw: dict | None) -> BaseModel:
         """Coerce ``raw`` into ``InputModel`` instance, or raise

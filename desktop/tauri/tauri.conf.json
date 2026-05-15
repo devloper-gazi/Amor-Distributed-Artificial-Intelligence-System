@@ -1,0 +1,55 @@
+{
+  "$schema": "../../schemas/tauri.conf.schema.json",
+  "productName": "AMOR",
+  "version": "0.12.0",
+  "identifier": "ai.amor.desktop",
+  "build": {
+    "frontendDist": "../../web_ui/v2/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cd ../../web_ui/v2 && npm run build",
+    "beforeDevCommand":   "cd ../../web_ui/v2 && npm run dev"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AMOR",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "url": "https://app.amor.local"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:8000 https://app.amor.local; frame-src 'none'; object-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": [
+      "../../web_ui/v2/public/icon-192.svg",
+      "../../web_ui/v2/public/icon-512.svg"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "AMOR — local-first distributed AI desktop.",
+    "longDescription": "AMOR (Autonomous Multi-modal Orchestrator + Researcher) — a local-first AI desktop that runs Build / Research / Thinking pipelines, an MCP agentic loop, sandboxed code execution, ORPO preference-pair training, and Mem0 OSS memory entirely on the user's hardware.",
+    "publisher": "AMOR",
+    "homepage": "https://github.com/amor-ai/amor",
+    "windows": {
+      "wix": {
+        "language": ["en-US", "tr-TR"]
+      },
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerIcon": "../../web_ui/v2/public/icon-512.svg"
+      }
+    }
+  }
+}

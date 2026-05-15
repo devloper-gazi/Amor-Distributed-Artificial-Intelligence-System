@@ -1,0 +1,9 @@
+# Tauri build artefacts — never commit these.
+target/
+gen/
+WixTools/
+
+# Operator-generated signing keys.
+*.pfx
+*.key
+*.crt

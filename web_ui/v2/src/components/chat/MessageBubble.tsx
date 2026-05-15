@@ -2,9 +2,18 @@ import { type Component, Show } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
 import { renderMarkdown, escapeText } from "../../lib/sanitise";
 import { Avatar } from "../ui";
+import { MessageActions } from "./MessageActions";
+import { t } from "../../i18n";
 
 interface MessageBubbleProps {
   turn: ChatTurn;
+  /** Optional action handlers — see MessageActions.tsx.  When all
+   *  handlers are undefined, the action bar still renders the copy
+   *  button (always available) so users can still grab the text. */
+  onEdit?: (turn: ChatTurn) => void;
+  onRegenerate?: (turn: ChatTurn) => void;
+  onBranch?: (turn: ChatTurn) => void;
+  onRate?: (turn: ChatTurn, value: 0 | 1 | -1) => void;
 }
 
 const ROLE_LABEL: Record<ChatTurn["role"], string> = {
@@ -32,14 +41,20 @@ const ROLE_INITIALS: Record<ChatTurn["role"], string> = {
  * One conversation turn.  User turns render as plain escaped text;
  * assistant + tool turns go through marked + DOMPurify so code
  * fences + lists + emphasis render safely.
+ *
+ * The wrapper ``<div class="group">`` enables the
+ * ``opacity-0 group-hover:opacity-100`` pattern that ``MessageActions``
+ * uses to reveal its toolbar on hover/focus.
  */
 export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const isUser = () => props.turn.role === "user";
+  const showActions = () =>
+    props.turn.role === "user" || props.turn.role === "assistant";
 
   return (
     <div
       class={[
-        "flex gap-3 px-5 py-4",
+        "group flex gap-3 px-5 py-4",
         isUser() ? "bg-bg-primary" : "bg-bg-secondary",
       ].join(" ")}
       data-role={props.turn.role}
@@ -64,6 +79,29 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
               streaming…
             </span>
           </Show>
+          <Show
+            when={
+              props.turn.remembered && props.turn.remembered.count > 0
+                ? props.turn.remembered
+                : null
+            }
+          >
+            {(remembered) => (
+              <span
+                class="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-bg-elevated px-1.5 py-px text-[0.6rem] text-text-secondary"
+                title={
+                  remembered().snippets && remembered().snippets!.length > 0
+                    ? `${t("message.remembered.short", { count: remembered().count })}: ${remembered().snippets!.slice(0, 3).join(" · ")}`
+                    : t("message.remembered.short", { count: remembered().count })
+                }
+                data-amor-remembered=""
+                aria-label={t("message.remembered.aria", { count: remembered().count })}
+              >
+                <span aria-hidden="true">●</span>
+                {t("message.remembered.short", { count: remembered().count })}
+              </span>
+            )}
+          </Show>
         </div>
         <div
           class={[
@@ -78,6 +116,15 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
               : renderMarkdown(props.turn.content)
           }
         />
+        <Show when={showActions() && !props.turn.streaming}>
+          <MessageActions
+            turn={props.turn}
+            onEdit={props.onEdit}
+            onRegenerate={props.onRegenerate}
+            onBranch={props.onBranch}
+            onRate={props.onRate}
+          />
+        </Show>
       </div>
     </div>
   );

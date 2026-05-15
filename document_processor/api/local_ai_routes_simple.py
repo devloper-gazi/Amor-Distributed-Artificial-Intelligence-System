@@ -1334,13 +1334,47 @@ async def _call_ollama_uncached_with(
     if backend is not None and getattr(backend, "name", "") != "ollama":
         merged_opts = _merge_profile_options(max_tokens)
         effective_system = system or _resolve_system_prompt() or ""
+        extra_payload: dict[str, Any] = {
+            k: v for k, v in merged_opts.items()
+            if k not in ("temperature", "num_predict")
+        }
+        # Cycle F Sprint 3 — per-request LoRA adapter routing
+        # (llama.cpp PR #10994).  Attached only when the master gate
+        # is on AND the active role maps to an adapter ID.  When
+        # either condition fails the `lora` body field is omitted
+        # entirely (zero behaviour change for Sprint 2 deployments).
+        try:
+            from ..config.settings import settings as _settings  # noqa: PLC0415
+            from tools.lora_runtime import (  # noqa: PLC0415
+                lora_payload_for_role,
+                parse_role_adapter_map,
+            )
+            _lora_enabled = bool(getattr(_settings, "code_lora_enabled", False))
+            if _lora_enabled:
+                _adapters = parse_role_adapter_map(
+                    getattr(_settings, "code_lora_role_adapters", "{}")
+                )
+                _role = _ACTIVE_ROLE.get()
+                _scale = float(
+                    getattr(_settings, "code_lora_default_scale", 1.0)
+                )
+                _lora_payload = lora_payload_for_role(
+                    _role,
+                    enabled=True,
+                    adapters=_adapters,
+                    default_scale=_scale,
+                )
+                if _lora_payload:
+                    extra_payload["lora"] = _lora_payload
+                    logger.debug(
+                        "lora_attached role=%s payload=%s", _role, _lora_payload,
+                    )
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.warning("lora_attach_failed err=%s", exc)
         opts = ChatOptions(
             temperature=float(merged_opts.get("temperature", _OLLAMA_TEMPERATURE)),
             max_tokens=int(merged_opts.get("num_predict", max_tokens)),
-            extra={
-                k: v for k, v in merged_opts.items()
-                if k not in ("temperature", "num_predict")
-            },
+            extra=extra_payload,
         )
         try:
             return await backend.complete(
@@ -2411,6 +2445,31 @@ async def execute_advanced_research(
     ]
 
     await _persist_session(session_id, session)
+
+    # Cycle C polish (post-close-out) — belt-and-suspenders
+    # ``research_complete`` event carrying the final markdown.  The
+    # canonical render path is the earlier ``report_ready`` event
+    # (emitted by AdvancedResearcher.run); this duplicate emission
+    # guards against future event-shape drift and matches what
+    # SIMPLE_TEXT_REDUCER's legacy code path expected.  Frontends
+    # that already read ``report_ready`` ignore this; frontends that
+    # only know ``research_complete`` (older v1 clients) get the
+    # markdown here.
+    final_markdown = (
+        session.get("report_markdown")
+        or session.get("report")
+        or result.get("markdown")
+        or ""
+    )
+    if final_markdown:
+        await _publish(
+            session_id,
+            {
+                "type": "research_complete",
+                "markdown": final_markdown,
+                "session_id": session_id,
+            },
+        )
     await _publish(session_id, {"type": "done", "session_id": session_id})
 
     # ── Phase C — server-side persistence + query_record completion ──

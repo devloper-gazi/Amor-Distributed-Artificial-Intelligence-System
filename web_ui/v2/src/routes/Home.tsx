@@ -3,6 +3,7 @@ import { A } from "@solidjs/router";
 import { MODES } from "../lib/types";
 import { TopBar } from "../components/shell/TopBar";
 import { Badge } from "../components/ui";
+import { t, modeLabel, modeSubtitle } from "../i18n";
 
 const GLYPH: Record<string, string> = {
   compass: "◎",
@@ -15,14 +16,15 @@ const GLYPH: Record<string, string> = {
 
 /**
  * Welcome / mode picker.  Renders the 6 modes as cards; each card
- * gets the mode accent colour as a top rule.
+ * gets the mode accent colour as a top rule.  Cycle D — fully
+ * localised via the i18n primitive (no more hardcoded English).
  */
 export const Home: Component = () => {
   return (
     <div data-mode="system" class="flex h-full flex-col">
       <TopBar
-        title="Welcome to AMOR"
-        subtitle="Pick a mode to start, or jump in via ⌘+K"
+        title={t("home.title")}
+        subtitle={t("home.subtitle")}
       />
       <div class="flex-1 overflow-y-auto px-6 py-8">
         <div class="mx-auto grid max-w-4xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -51,15 +53,15 @@ export const Home: Component = () => {
                     {GLYPH[mode.glyph] ?? "•"}
                   </span>
                   {mode.wired ? null : (
-                    <Badge size="sm">soon</Badge>
+                    <Badge size="sm">{t("home.soon")}</Badge>
                   )}
                 </div>
                 <h2 class="text-base font-semibold tracking-tight">
-                  {mode.label}
+                  {modeLabel(mode)}
                 </h2>
-                <p class="text-xs text-text-secondary">{mode.subtitle}</p>
+                <p class="text-xs text-text-secondary">{modeSubtitle(mode)}</p>
                 <span class="mt-2 text-xs text-text-tertiary group-hover:text-text-secondary">
-                  Open →
+                  {t("home.open")}
                 </span>
               </A>
             )}
@@ -67,14 +69,22 @@ export const Home: Component = () => {
         </div>
 
         <div class="mx-auto mt-10 max-w-4xl rounded-lg border border-border-subtle bg-bg-secondary p-5 text-sm">
-          <p class="font-medium">Tip</p>
+          <p class="font-medium">{t("home.tip.title")}</p>
           <p class="mt-1 text-text-secondary">
-            Press{" "}
-            <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">⌘K</kbd>
-            {" "}/{" "}
-            <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">Ctrl K</kbd>
-            {" "}anywhere to switch modes, change theme, jump to
-            diagnostics, or sign out — without leaving the keyboard.
+            {t("home.tip.body", {
+              cmdK: "⌘K",
+              ctrlK: "Ctrl K",
+            })
+              .split(/(⌘K|Ctrl K)/)
+              .map((part) =>
+                part === "⌘K" || part === "Ctrl K" ? (
+                  <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">
+                    {part}
+                  </kbd>
+                ) : (
+                  part
+                ),
+              )}
           </p>
         </div>
       </div>

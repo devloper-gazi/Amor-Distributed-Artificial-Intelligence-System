@@ -244,6 +244,99 @@ class Settings(BaseSettings):
     code_debug_diff_mode_enabled: bool = True
     # Maximum debug→fix→reexecute loops per session.
     code_max_debug_iterations: int = 3
+    # Cycle D — quality-improvement Reflexion loop.  Distinct from
+    # ``code_max_debug_iterations`` (which only fires on FAILED
+    # execution).  After the pipeline reaches "review" the engine
+    # scores the deliverable; if the score is below
+    # ``code_reflexion_quality_threshold`` AND we still have
+    # iterations available, the coder is re-invoked with a
+    # feedback-rich prompt (sandbox stdout/stderr + critic issues +
+    # test execution failures) to produce an improved version.  The
+    # better-scored version wins.  Default 1 iteration is a balance
+    # between cost (extra LLM call + extra sandbox run = ~30-60s) and
+    # quality lift; production deployments can set 0 to disable.
+    code_max_reflexion_iterations: int = 1
+    code_reflexion_quality_threshold: int = 80
+    # Cycle F Sprint 2 — Hypothesis property-based testing + branch
+    # coverage Reflexion signal.  Both are FEEDBACK SIGNALS that
+    # surface in the reflexion-retry prompt; they do NOT change the
+    # quality-score weighting (35+25+15+25=100 from Cycle D is kept).
+    #
+    #   code_property_tests_enabled: when True, the Tester agent's
+    #     prompt is augmented (Python only) to require @given
+    #     invariants in addition to example-based tests.  Set False
+    #     for a flag-flip rollback to Cycle-D-style tester output.
+    #
+    #   code_branch_coverage_threshold: 0.0-1.0 fraction; when
+    #     pytest-cov reports below this, the Reflexion loop bundles
+    #     a MISSED_BRANCHES block into the coder-retry prompt.
+    #     Threshold is "feedback hint" not "hard gate".
+    code_property_tests_enabled: bool = True
+    code_branch_coverage_threshold: float = 0.80
+    # Cycle F Sprint 3 — LoRA hot-swap via llama.cpp PR #10994
+    # `"lora": [{"id": <int>, "scale": <float>}, ...]` per-request
+    # body field.  ``code_lora_enabled`` is the master gate; when
+    # False, the runtime never attaches a `lora` field to the
+    # OpenAI-compat body (zero behaviour change from Sprint 2).
+    #
+    # ``code_lora_role_adapters`` maps role -> adapter ID as a JSON
+    # string (parsed lazily so a bad value doesn't crash startup).
+    # Examples:
+    #   '{"coder":0,"tester":1,"debugger":2}'
+    #   '{"coder":0}'              # only coder gets a LoRA
+    #   '{}'                       # explicit empty (= disabled per-role)
+    # The adapter IDs MUST match the order llama-swap mounts them
+    # via the --lora flags in compose/llama-swap/config.yaml.
+    code_lora_enabled: bool = False
+    code_lora_role_adapters: str = "{}"
+    code_lora_default_scale: float = 1.0
+    # Cycle F Sprint 4 — Anthropic Agent Skills loader.
+    #   code_skills_enabled: master gate.  When False, the planner
+    #     system prompt is unchanged from Sprint 3.
+    #   code_skills_root: filesystem directory containing
+    #     {skill_name}/SKILL.md.  Repo-relative by default.
+    #   code_skills_token_budget: max token cost (estimated at
+    #     ~4 chars/token) for the rendered SKILLS AVAILABLE: block.
+    #     When the library outgrows the budget, render_skill_index
+    #     drops the most-expensive skills first.
+    code_skills_enabled: bool = False
+    code_skills_root: str = "skills"
+    code_skills_token_budget: int = 2000
+    # Cycle F Sprint 5 — ApprovalPolicy gate for MCP tool dispatch.
+    # When `code_approval_enabled=False` (default), every tool call
+    # runs as in Sprints 1-4.  When True, dispatch passes through
+    # `ApprovalPolicy.decide()` first; tools in `code_approval_deny`
+    # are blocked outright, `code_approval_allow_silent` runs without
+    # prompt, and everything else routes through the SSE bridge for
+    # human approval.
+    #
+    # CSV-string for lists: "name1,name2,name3" (whitespace tolerated).
+    # JSON-string for category_actions: {"delete": "deny", "exec": "prompt"}
+    # Cost circuit-breaker: per-session token budget; tripped session
+    # blocks all subsequent tool calls until reset.
+    code_approval_enabled: bool = False
+    code_approval_allow_silent: str = ""   # CSV of tool names
+    code_approval_deny: str = ""           # CSV of tool names
+    code_approval_prompt: str = ""         # CSV of tool names
+    code_approval_default_action: str = "prompt"  # allow | prompt | deny
+    code_approval_category_actions: str = ""  # JSON dict
+    code_approval_cost_budget_tokens: int = 50_000
+    # Cycle F Sprint 6 — async pipeline parallelism.
+    # When True, _phase_test runs concurrently with _phase_execute +
+    # _phase_analyze after _phase_implement completes (currently
+    # execute + analyze are already concurrent via asyncio.gather;
+    # this adds test to the same group).  Cuts pipeline wall by
+    # ~25-30s on the Sprint-0 corpus median case.  Rollback: flip
+    # to False — pipeline reverts to Cycle D's sequential test
+    # phase.
+    #
+    # `code_critic_prefix_warmup` fires a non-blocking critic
+    # prefix-cache warmup as soon as `self.code` is available so
+    # the review phase's first LLM call lands on a hot KV cache.
+    # Best-effort: failures silently degrade to the cold-prefix
+    # case.  Forward-compat for Sprint 6 piece 2b (critic async).
+    code_pipeline_parallel: bool = True
+    code_critic_prefix_warmup: bool = True
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.
@@ -462,12 +555,15 @@ class Settings(BaseSettings):
     # ── Phase 16 — Adapter Foundations (pluggable LLM backend) ───────
     # Selects which inference backend ``local_ai.llm_backend`` returns
     # from ``get_backend()``.  Allowed values:
-    #   "ollama"        — default, today's behaviour (no migration)
+    #   ""              — empty: fall through to AMOR_LLM_BACKEND env
+    #                     (Cycle C Sprint 1 — env-driven rollback flag).
+    #                     Resolves to "ollama" if env is also unset.
+    #   "ollama"        — today's behaviour (forced)
     #   "llama-swap"    — llama-swap proxy (OpenAI /v1)
     #   "llama-cpp"     — direct llama-server (OpenAI /v1)
     #   "openai-compat" — generic /v1 (vLLM / ExLlamaV2 / LM Studio)
     #   "stub"          — deterministic test backend (used in CI)
-    llm_backend: str = "ollama"
+    llm_backend: str = ""
     # Override URL for the active backend.  Empty string falls back
     # to ``OLLAMA_BASE_URL`` env var / per-backend default.
     llm_backend_url: str = ""

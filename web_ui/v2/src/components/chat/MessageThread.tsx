@@ -1,10 +1,19 @@
 import { type Component, For, Show, createEffect } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
+import { ApprovalPrompt } from "./ApprovalPrompt";
 import { MessageBubble } from "./MessageBubble";
 
 interface MessageThreadProps {
   turns: ChatTurn[];
   emptyState?: import("solid-js").JSX.Element;
+  /** Optional message-action handlers forwarded to every bubble.
+   *  Day 3 introduces the hover-actions bar (copy / edit /
+   *  regenerate / branch / rate); each handler is independent and
+   *  any can be omitted — the bubble omits the corresponding button. */
+  onEdit?: (turn: ChatTurn) => void;
+  onRegenerate?: (turn: ChatTurn) => void;
+  onBranch?: (turn: ChatTurn) => void;
+  onRate?: (turn: ChatTurn, value: 0 | 1 | -1) => void;
 }
 
 /**
@@ -62,7 +71,26 @@ export const MessageThread: Component<MessageThreadProps> = (props) => {
         }
       >
         <For each={props.turns}>
-          {(turn) => <MessageBubble turn={turn} />}
+          {(turn) => (
+            <Show
+              when={turn.role === "approval" && turn.approval}
+              fallback={
+                <MessageBubble
+                  turn={turn}
+                  onEdit={props.onEdit}
+                  onRegenerate={props.onRegenerate}
+                  onBranch={props.onBranch}
+                  onRate={props.onRate}
+                />
+              }
+            >
+              {/* Cycle F Sprint 5 — inline approval card.  The
+                  card manages its own resolution state via POST
+                  /api/approval/{request_id}; MessageThread
+                  doesn't need to mutate the turn afterward. */}
+              <ApprovalPrompt payload={turn.approval!} />
+            </Show>
+          )}
         </For>
         <div class="h-2" aria-hidden="true" />
       </Show>

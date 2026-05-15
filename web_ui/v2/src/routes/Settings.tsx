@@ -3,12 +3,19 @@ import { useNavigate } from "@solidjs/router";
 import { TopBar } from "../components/shell/TopBar";
 import { Button } from "../components/ui";
 import { auth } from "../lib/auth";
+import {
+  type Locale,
+  getSupportedLocales,
+  locale,
+  setLocale,
+  t,
+} from "../i18n";
 
 type Theme = "light" | "dark" | "system";
-const THEMES: ReadonlyArray<{ key: Theme; label: string; subtitle: string }> = [
-  { key: "light", label: "Light", subtitle: "always light, ignores OS" },
-  { key: "dark", label: "Dark", subtitle: "always dark, ignores OS" },
-  { key: "system", label: "System", subtitle: "follow OS preference" },
+const THEMES: ReadonlyArray<{ key: Theme; label_key: string; subtitle_key: string }> = [
+  { key: "light",  label_key: "settings.theme.light",  subtitle_key: "settings.theme.light_subtitle"  },
+  { key: "dark",   label_key: "settings.theme.dark",   subtitle_key: "settings.theme.dark_subtitle"   },
+  { key: "system", label_key: "settings.theme.system", subtitle_key: "settings.theme.system_subtitle" },
 ];
 
 export const Settings: Component = () => {
@@ -41,32 +48,75 @@ export const Settings: Component = () => {
 
   return (
     <div data-mode="system" class="flex h-full flex-col">
-      <TopBar title="Settings" subtitle="theme, account" />
+      <TopBar
+        title={t("settings.title")}
+        subtitle={t("settings.subtitle")}
+      />
       <div class="flex-1 overflow-y-auto px-6 py-8">
         <div class="mx-auto max-w-2xl space-y-8">
           {/* Theme */}
           <section>
-            <h2 class="text-base font-semibold tracking-tight">Theme</h2>
+            <h2 class="text-base font-semibold tracking-tight">
+              {t("settings.theme.heading")}
+            </h2>
             <p class="mt-1 text-sm text-text-secondary">
-              Persists in <code>localStorage</code>.  System mode follows
-              your OS preference automatically.
+              {t("settings.theme.description")}
             </p>
             <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <For each={THEMES}>
-                {(t) => (
+                {(opt) => (
                   <button
                     type="button"
-                    onClick={() => applyTheme(t.key)}
+                    onClick={() => applyTheme(opt.key)}
                     class={[
                       "rounded-md border px-4 py-3 text-left transition-colors",
-                      theme() === t.key
+                      theme() === opt.key
                         ? "border-text-primary bg-bg-hover"
                         : "border-border-subtle bg-bg-elevated hover:bg-bg-hover",
                     ].join(" ")}
-                    aria-pressed={theme() === t.key}
+                    aria-pressed={theme() === opt.key}
                   >
-                    <div class="text-sm font-medium">{t.label}</div>
-                    <div class="text-xs text-text-tertiary">{t.subtitle}</div>
+                    <div class="text-sm font-medium">
+                      {t(opt.label_key)}
+                    </div>
+                    <div class="text-xs text-text-tertiary">
+                      {t(opt.subtitle_key)}
+                    </div>
+                  </button>
+                )}
+              </For>
+            </div>
+          </section>
+
+          {/* Language — Sprint 10 Day 1 */}
+          <section>
+            <h2 class="text-base font-semibold tracking-tight">
+              {t("settings.language.heading")}
+            </h2>
+            <p class="mt-1 text-sm text-text-secondary">
+              {t("settings.language.description")}
+            </p>
+            <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <For each={getSupportedLocales()}>
+                {(loc: Locale) => (
+                  <button
+                    type="button"
+                    onClick={() => setLocale(loc)}
+                    class={[
+                      "rounded-md border px-4 py-3 text-left transition-colors",
+                      locale() === loc
+                        ? "border-text-primary bg-bg-hover"
+                        : "border-border-subtle bg-bg-elevated hover:bg-bg-hover",
+                    ].join(" ")}
+                    aria-pressed={locale() === loc}
+                    data-amor-locale={loc}
+                  >
+                    <div class="text-sm font-medium">
+                      {t(`settings.language.${loc}`)}
+                    </div>
+                    <div class="text-xs text-text-tertiary">
+                      {t(`settings.language.${loc}_subtitle`)}
+                    </div>
                   </button>
                 )}
               </For>
@@ -75,10 +125,12 @@ export const Settings: Component = () => {
 
           {/* Account */}
           <section>
-            <h2 class="text-base font-semibold tracking-tight">Account</h2>
+            <h2 class="text-base font-semibold tracking-tight">
+              {t("settings.account.heading")}
+            </h2>
             <div class="mt-3 rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm">
               <p class="text-text-secondary">
-                Signed in as{" "}
+                {t("settings.account.signed_in_as")}{" "}
                 <span class="font-medium text-text-primary">
                   {auth.user()?.username ?? "—"}
                 </span>
@@ -88,7 +140,7 @@ export const Settings: Component = () => {
               </p>
               <div class="mt-4 flex gap-2">
                 <Button variant="secondary" size="sm" onClick={onLogout}>
-                  Sign out
+                  {t("settings.account.sign_out")}
                 </Button>
               </div>
             </div>
@@ -96,16 +148,18 @@ export const Settings: Component = () => {
 
           {/* Component showcase */}
           <section>
-            <h2 class="text-base font-semibold tracking-tight">Developer</h2>
+            <h2 class="text-base font-semibold tracking-tight">
+              {t("settings.developer.heading")}
+            </h2>
             <div class="mt-3 rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm">
               <p class="text-text-secondary">
-                Inspect every atom + theme token in one place.
+                {t("settings.developer.description")}
               </p>
               <a
                 href="/showcase"
                 class="mt-3 inline-flex h-8 items-center rounded-md border border-border-default bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
               >
-                Open component showcase
+                {t("settings.developer.cta")}
               </a>
             </div>
           </section>

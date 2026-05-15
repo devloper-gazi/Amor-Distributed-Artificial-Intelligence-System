@@ -446,16 +446,16 @@ class CacheManager:
 
     # ─── P1.1: Pub/Sub for cross-replica event broadcasting ─────────────
     #
-    # The app runs with `replicas: 2` in docker-compose. Browser requests
-    # are round-robined across them by nginx. Background tasks (research
-    # / thinking) only emit events to a per-process asyncio.Queue, so an
-    # SSE client connected to the wrong replica receives nothing.
-    #
-    # publish_event() fans out to a Redis channel; any replica can
-    # subscribe via subscribe_events() and forward to its local SSE
-    # streams. Each event carries an event_id so SSE clients can
-    # de-duplicate when both the local Queue and the Redis subscription
-    # deliver the same event.
+    # Cycle F Sprint 1 reduced the default to single-replica (Wrong #1
+    # fix) — the llama-swap prefix cache lives in the llama-server
+    # process so cross-FastAPI-replica routing can no longer help.
+    # This Pub/Sub layer is RETAINED forward-compatibly: re-enabling
+    # `replicas: 2` later is zero-change because every emit already
+    # fans out to Redis.  Each event carries an event_id so SSE
+    # clients de-duplicate when the local Queue and Redis subscription
+    # deliver the same event.  In single-replica mode the Redis hop
+    # is effectively no-op for cross-replica delivery but still
+    # provides durable replay on reconnect.
 
     async def publish_event(self, channel: str, event: Any) -> None:
         """
