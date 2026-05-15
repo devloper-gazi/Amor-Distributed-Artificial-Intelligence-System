@@ -178,6 +178,102 @@ def test_select_model_falls_back_when_nothing_installed():
     assert spec.ollama_tag  # something was chosen
 
 
+# ─── v18.1 Step 3: Phi-4 out-of-family critic catalogue entry ──────
+
+
+def test_phi4_in_code_model_catalogue():
+    """Phi-4 14B Q4_K_M (Sprint 0 fallback judge) must appear in
+    CODE_MODEL_CATALOGUE so the role scorer can route critic to it
+    when installed.  Closes v18.1 Step 3 (Cycle G) caveat."""
+    tags = {spec.ollama_tag for spec in CODE_MODEL_CATALOGUE}
+    assert "phi4:14b" in tags, (
+        "v18.1 Step 3 — Phi-4 missing from CODE_MODEL_CATALOGUE; "
+        "the registry cannot route critic role to Phi-4 without an "
+        "entry that lists matching strengths."
+    )
+
+
+def test_phi4_strengths_match_critic_role_map():
+    """Phi-4's strengths must overlap with ROLE_STRENGTH_MAP['critic']
+    enough that the scorer picks it for critic when both Phi-4 and
+    a generic model (qwen2.5:7b) are installed at effort >= medium."""
+    phi4 = next(
+        s for s in CODE_MODEL_CATALOGUE if s.ollama_tag == "phi4:14b"
+    )
+    critic_strengths = set(ROLE_STRENGTH_MAP["critic"])
+    phi4_strengths = set(phi4.strengths)
+    overlap = critic_strengths & phi4_strengths
+    # ROLE_STRENGTH_MAP["critic"] has 5 items.  Require at least 4
+    # matches so Phi-4 wins decisively over the general qwen2.5:7b
+    # (which has 4 matching strengths today).
+    assert len(overlap) >= 4, (
+        f"Phi-4 critic-role overlap {overlap} too small; "
+        f"need ≥ 4 of {critic_strengths}"
+    )
+
+
+def test_phi4_license_is_mit():
+    """Phi-4 ships under MIT license per Microsoft tech report.
+    Catalogue must reflect this — operators audit license fields
+    when picking models for derivative training."""
+    phi4 = next(
+        s for s in CODE_MODEL_CATALOGUE if s.ollama_tag == "phi4:14b"
+    )
+    assert phi4.license == "MIT"
+
+
+def test_phi4_in_balanced_tier_for_8gb_vram_budget():
+    """Phi-4 14B Q4_K_M sits in the balanced tier (8-15 GB VRAM).
+    Wrong tier would mis-rank for effort=medium / deep on a 4060
+    8 GB host."""
+    phi4 = next(
+        s for s in CODE_MODEL_CATALOGUE if s.ollama_tag == "phi4:14b"
+    )
+    assert phi4.tier == "balanced"
+    assert 8 <= phi4.vram_gb <= 15
+
+
+def test_select_critic_prefers_phi4_when_installed_at_deep_effort():
+    """Wire-test: with both qwen2.5:7b (general) and phi4:14b
+    installed, the critic role at effort=deep should pick Phi-4
+    (out-of-family critic — the whole point of adding it)."""
+    reg = CodeModelRegistry("http://localhost:11434")
+    reg._available = ["qwen2.5:7b", "qwen2.5-coder:7b", "phi4:14b"]
+    reg._probed = True
+    spec, installed = reg.select_model(
+        "critic", effort="deep", installed_only=True,
+    )
+    assert installed is True
+    assert spec.ollama_tag == "phi4:14b", (
+        f"critic@deep with phi4:14b installed picked {spec.ollama_tag} "
+        "— Phi-4 strengths or tier are mistuned for the role"
+    )
+
+
+def test_select_critic_no_regression_without_phi4():
+    """When Phi-4 is NOT installed, critic still routes to
+    qwen2.5:7b (the prior winner) — no regression vs Phase 16.5."""
+    reg = CodeModelRegistry("http://localhost:11434")
+    reg._available = ["qwen2.5:7b", "qwen2.5-coder:7b"]
+    reg._probed = True
+    spec, installed = reg.select_model(
+        "critic", effort="medium", installed_only=True,
+    )
+    assert installed is True
+    assert spec.ollama_tag == "qwen2.5:7b"
+
+
+def test_select_coder_unaffected_by_phi4_presence():
+    """Phi-4 strengths do NOT include code-gen/python so coder
+    selection must stay on qwen2.5-coder:7b even when Phi-4 is
+    installed.  Guard against accidental cross-role bleed."""
+    reg = CodeModelRegistry("http://localhost:11434")
+    reg._available = ["qwen2.5:7b", "qwen2.5-coder:7b", "phi4:14b"]
+    reg._probed = True
+    spec, _ = reg.select_model("coder", effort="medium")
+    assert spec.ollama_tag == "qwen2.5-coder:7b"
+
+
 # ─── select_models_for_session — the real diversity smoke test ────
 
 

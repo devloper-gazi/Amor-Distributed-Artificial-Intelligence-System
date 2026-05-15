@@ -173,6 +173,30 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         tier="balanced",
         license="Apache-2.0",
     ),
+    # v18.1 Step 3 (Cycle G) — Phi-4 14B Q4_K_M out-of-family critic.
+    # Microsoft's Phi-4 is a different post-training corpus than the
+    # Qwen / DeepSeek family AMOR uses for coder / planner roles, so
+    # using it for `critic` role gives low self-correlation (Panickssery
+    # 2024 / Liu 2024).  GGUF already on disk (Sprint 0 fallback judge);
+    # operators on Ollama path can pull `phi4:14b` to populate the
+    # registry's installed-set.  Strengths chosen to match
+    # ROLE_STRENGTH_MAP["critic"] so the scorer prefers Phi-4 for
+    # critic-role at effort tiers deep/expert/ultra.  License: MIT.
+    ModelSpec(
+        ollama_tag="phi4:14b",
+        display_name="Phi-4 14B (Q4_K_M)",
+        params_b=14,
+        vram_gb=9,
+        swebench_pct=0,           # no published 8B-class Phi-4 SWE-bench
+        humaneval_pct=82.6,       # Phi-4 tech report
+        context_k=16,
+        strengths=[
+            "review", "reasoning", "step-by-step",
+            "explanation", "agentic loops",
+        ],
+        tier="balanced",
+        license="MIT",
+    ),
     # ── Lightweight tier (< 8 GB VRAM or CPU) ───────────────────────────────
     ModelSpec(
         ollama_tag="qwen2.5-coder:3b",

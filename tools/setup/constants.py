@@ -41,6 +41,19 @@ RECOMMENDED_VRAM_GB: float = 8.0  # RTX 4060 reference
 # Python version floor (the orchestrator itself).
 MIN_PYTHON: tuple[int, int] = (3, 9)
 
+# v18.1 Step 1 (Cycle G) — Docker Desktop ≥ 4.30 is the operator-
+# facing release that bundles Docker Engine ≥ 24.0, which in turn
+# ships runc ≥ 1.2.x with the CVE-2025-31133 / 52565 / 52881 patches
+# (SUSE / Aleksa Sarai disclosure, Nov 2025).  AMOR doesn't bundle
+# its own runc; the sandbox container relies on whatever runc the
+# Docker daemon hands it.  Operators on Docker Desktop < 4.30 (or
+# Docker Engine < 24.0 on Linux) are vulnerable to the AppArmor /
+# SELinux bypass exploitable from a malicious image alone.  The
+# preflight surfaces a soft warning (non-blocker — older Docker
+# still works, just less secure) with a remediation pointer.
+MIN_DOCKER_SERVER_VERSION: tuple[int, int, int] = (24, 0, 0)
+MIN_DOCKER_DESKTOP_VERSION_LABEL: str = "4.30"  # operator-facing
+
 # ─── Service definitions ────────────────────────────────────────────
 
 

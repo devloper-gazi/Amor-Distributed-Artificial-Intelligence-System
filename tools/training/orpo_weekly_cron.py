@@ -33,7 +33,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -54,6 +54,16 @@ PAIRS_ROOT = REPO_ROOT / "data" / "preference_pairs"
 CANDIDATE_ROOT = REPO_ROOT / "models" / "lora" / "candidate"
 DIFF_ROOT = REPO_ROOT / "data" / "training"
 TRAINER = REPO_ROOT / "tools" / "training" / "orpo_role_adapter.py"
+EXPORTER = REPO_ROOT / "tools" / "training" / "export_pairs_jsonl.py"
+
+# v18.1 Step 2 — Postgres → JSONL bridge.  Until the preference_pairs
+# table gains a `role` column (Cycle G G5 sub-agent attribution), all
+# 3 role-level trainings read the same source JSONL.  The cron emits
+# `data/preference_pairs/build.jsonl` and `train_one_role()` falls
+# back to it when the per-role file (`coder.jsonl` etc) is missing.
+SHARED_SOURCE_FILE = PAIRS_ROOT / "build.jsonl"
+EXPORT_TIMESTAMP_FILE = PAIRS_ROOT / ".last_export"
+EXPORT_IDEMPOTENCY_HOURS = 24
 
 ROLES = ("coder", "tester", "debugger")
 
@@ -82,19 +92,140 @@ class RoleTrainingResult:
 @dataclass
 class WeeklyRunReport:
     timestamp_utc: str
+    export: "ExportResult | None" = None
     results: list[RoleTrainingResult] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "timestamp_utc": self.timestamp_utc,
+            "export": (
+                {
+                    "status": self.export.status,
+                    "rows_written": self.export.rows_written,
+                    "error": self.export.error,
+                    "path": str(self.export.path) if self.export.path else None,
+                }
+                if self.export
+                else None
+            ),
             "results": [r.to_dict() for r in self.results],
         }
 
     @property
     def overall_exit_code(self) -> int:
-        # 0 unless at least one role failed.
+        # 0 unless at least one role failed OR the export hard-failed.
         any_failed = any(r.status == "failed" for r in self.results)
-        return 1 if any_failed else 0
+        export_failed = self.export is not None and self.export.status == "failed"
+        return 1 if (any_failed or export_failed) else 0
+
+
+# ─── Step 0: Postgres → JSONL bridge (v18.1 Step 2) ────────────────
+
+
+@dataclass
+class ExportResult:
+    """Result of the Postgres-to-JSONL export step."""
+
+    status: str               # "exported" | "skipped_fresh" | "failed" | "skipped_no_db"
+    rows_written: int = 0
+    error: str = ""
+    path: Path | None = None
+
+
+def _export_needs_refresh(now: datetime, hours: int) -> bool:
+    """True when the timestamp sidecar is missing or older than `hours`."""
+    if not EXPORT_TIMESTAMP_FILE.is_file():
+        return True
+    try:
+        last_iso = EXPORT_TIMESTAMP_FILE.read_text(encoding="utf-8").strip()
+        last = datetime.fromisoformat(last_iso)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+    except (OSError, ValueError):
+        return True
+    return (now - last) >= timedelta(hours=hours)
+
+
+def export_preference_pairs(
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+    since: str = "30d",
+    mode: str = "build",
+    max_rows: int = 10_000,
+    idempotency_hours: int = EXPORT_IDEMPOTENCY_HOURS,
+) -> ExportResult:
+    """Step 0 of the weekly cron — invoke export_pairs_jsonl.py to
+    refresh `SHARED_SOURCE_FILE` from Postgres.
+
+    Idempotent: when the `.last_export` sidecar is fresher than
+    `idempotency_hours`, the export is skipped (`status="skipped_fresh"`)
+    so re-running the cron within the day doesn't re-hit the DB.
+    Pass `force=True` to bypass the freshness check.
+    """
+
+    now = datetime.now(timezone.utc)
+    if not force and not _export_needs_refresh(now, idempotency_hours):
+        return ExportResult(
+            status="skipped_fresh",
+            error=(
+                f"last export <{idempotency_hours}h old "
+                f"({EXPORT_TIMESTAMP_FILE}); pass --force-export to bypass"
+            ),
+            path=SHARED_SOURCE_FILE if SHARED_SOURCE_FILE.is_file() else None,
+        )
+
+    if not EXPORTER.is_file():
+        return ExportResult(
+            status="failed",
+            error=f"exporter missing at {EXPORTER}",
+        )
+
+    PAIRS_ROOT.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable, str(EXPORTER),
+        "--out", str(SHARED_SOURCE_FILE),
+        "--since", since,
+        "--mode", mode,
+        "--max-rows", str(max_rows),
+    ]
+
+    if dry_run:
+        logger.info("[export] would run: %s", " ".join(cmd))
+        return ExportResult(
+            status="skipped_fresh",
+            error="dry-run",
+            path=SHARED_SOURCE_FILE,
+        )
+
+    logger.info("[export] launching: %s", " ".join(cmd))
+    try:
+        rc = subprocess.call(cmd, cwd=str(REPO_ROOT))
+    except FileNotFoundError as exc:
+        return ExportResult(status="failed", error=f"exec failed: {exc}")
+
+    if rc != 0:
+        # rc == 2 = Postgres unavailable.  Treat as soft-fail so the
+        # training pass can still use any existing JSONL on disk.
+        return ExportResult(
+            status="skipped_no_db" if rc == 2 else "failed",
+            error=f"exporter exited {rc}",
+            path=SHARED_SOURCE_FILE if SHARED_SOURCE_FILE.is_file() else None,
+        )
+
+    rows = _pair_count(SHARED_SOURCE_FILE)
+    EXPORT_TIMESTAMP_FILE.write_text(
+        now.isoformat(), encoding="utf-8",
+    )
+    logger.info(
+        "[export] %d rows written to %s",
+        rows, SHARED_SOURCE_FILE,
+    )
+    return ExportResult(
+        status="exported",
+        rows_written=rows,
+        path=SHARED_SOURCE_FILE,
+    )
 
 
 # ─── One role ──────────────────────────────────────────────────────
@@ -106,6 +237,21 @@ def _pair_count(path: Path) -> int:
     return sum(1 for line in path.open(encoding="utf-8") if line.strip())
 
 
+def _resolve_pairs_file(role: str) -> Path:
+    """Return the JSONL file `train_one_role` should consume.
+
+    v18.1: per-role files (`coder.jsonl` / `tester.jsonl` / `debugger.jsonl`)
+    take precedence if present, otherwise fall back to the shared
+    `build.jsonl` produced by Step 0.  When the schema gains a `role`
+    column (Cycle G G5), per-role files come back as the canonical
+    source and this fallback can be removed.
+    """
+    per_role = PAIRS_ROOT / f"{role}.jsonl"
+    if per_role.is_file():
+        return per_role
+    return SHARED_SOURCE_FILE
+
+
 def train_one_role(
     role: str,
     *,
@@ -115,7 +261,7 @@ def train_one_role(
 ) -> RoleTrainingResult:
     """Train a single role.  Result populates the WeeklyRunReport."""
 
-    pairs_file = PAIRS_ROOT / f"{role}.jsonl"
+    pairs_file = _resolve_pairs_file(role)
     pair_n = _pair_count(pairs_file)
 
     if pair_n == 0:
@@ -208,6 +354,16 @@ def write_diff_report(
     lines: list[str] = []
     lines.append(f"# ORPO weekly cron — {report.timestamp_utc}")
     lines.append("")
+    if report.export is not None:
+        lines.append("## Step 0: Postgres → JSONL export")
+        lines.append("")
+        lines.append(f"- status: **{report.export.status}**")
+        lines.append(f"- rows: {report.export.rows_written}")
+        if report.export.path:
+            lines.append(f"- output: `{report.export.path}`")
+        if report.export.error:
+            lines.append(f"- note: {report.export.error}")
+        lines.append("")
     lines.append("## Summary")
     lines.append("")
     lines.append("| role | status | pair count | adapter | error |")
@@ -284,6 +440,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true",
         help="Emit run report as JSON to stdout in addition to diff_*.md.",
     )
+    # v18.1 Step 2 — export step controls
+    p.add_argument(
+        "--force-export", action="store_true",
+        help="Bypass the 24h export idempotency check; re-hit Postgres.",
+    )
+    p.add_argument(
+        "--skip-export", action="store_true",
+        help=(
+            "Skip the Step 0 Postgres → JSONL export entirely.  Use when "
+            "operator has dropped a JSONL into preference_pairs/ by hand."
+        ),
+    )
+    p.add_argument(
+        "--export-mode", default="build",
+        help="--mode forwarded to export_pairs_jsonl.py (default 'build').",
+    )
+    p.add_argument(
+        "--export-since", default="30d",
+        help="--since forwarded to export_pairs_jsonl.py (default '30d').",
+    )
     return p
 
 
@@ -304,6 +480,19 @@ def run(args: argparse.Namespace) -> int:
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     report = WeeklyRunReport(timestamp_utc=timestamp)
+
+    # v18.1 Step 2 — Step 0: Postgres → JSONL bridge.
+    if not args.skip_export:
+        report.export = export_preference_pairs(
+            dry_run=args.dry_run,
+            force=args.force_export,
+            since=args.export_since,
+            mode=args.export_mode,
+        )
+        if report.export.status == "failed":
+            logger.error("export step failed: %s", report.export.error)
+            # Continue to training anyway — operator may have hand-dropped
+            # JSONL that's still usable.
 
     selected_roles = args.role if args.role else list(ROLES)
 

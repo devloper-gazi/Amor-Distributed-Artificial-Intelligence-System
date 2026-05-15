@@ -15,6 +15,10 @@
 #     bash tools/sprint1_ab_run.sh --only q8_0     # one variant only
 #     bash tools/sprint1_ab_run.sh --only q4_0
 #
+#     # v18.1 Step 5 (Cycle G readiness checks):
+#     bash tools/sprint1_ab_run.sh --dry-run             # plan-only, no compose
+#     bash tools/sprint1_ab_run.sh --check-lora-mounts   # LoRA readiness probe
+#
 # Each pass:
 #   1. select_kv_quant.py points config.yaml at the variant
 #   2. compose recreates llama-swap with the new config
@@ -22,8 +26,15 @@
 #   4. tools/run_sprint0_v18.sh runs the Mistral-judged 10-prompt corpus
 #   5. result tagged + persisted as data/baselines/sprint1_<variant>_results.json
 #
+# Re-eval triggers (Cycle G G5 work):
+#   The Q4_0 KV verdict is shelved post-Cycle F because Q4_0 catastrophi-
+#   cally broke Research mode (−1.23 correctness, bimodal collapse).  We
+#   only re-run this harness after Cycle G G5 ships ≥1 production LoRA
+#   adapter — adapter specialisation may absorb the KV quant noise.
+#   `--check-lora-mounts` reports whether the trigger is satisfied.
+#
 # Exit codes:
-#   0  both passes succeeded
+#   0  both passes succeeded (or dry-run / check-lora-mounts informational)
 #   1  one or more passes failed
 #   2  fatal init (compose missing, env missing, GGUF missing)
 
@@ -35,14 +46,24 @@ cd "$REPO_ROOT"
 # ─── Arg parsing ────────────────────────────────────────────────────
 
 ONLY=""
+DRY_RUN=0
+CHECK_LORA=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --only)
             ONLY="${2:-}"
             shift 2
             ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --check-lora-mounts)
+            CHECK_LORA=1
+            shift
+            ;;
         -h|--help)
-            sed -n '2,30p' "$0"
+            sed -n '2,40p' "$0"
             exit 0
             ;;
         *)
@@ -59,6 +80,58 @@ case "$ONLY" in
         exit 2
         ;;
 esac
+
+# ─── v18.1 Step 5 (Cycle G) — readiness probe modes ────────────────
+
+if [[ "$CHECK_LORA" -eq 1 ]]; then
+    REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
+    cd "$REPO_ROOT"
+    echo "[sprint1_ab] Q4_0 re-eval readiness check (v18.1 Step 5)"
+    echo "  Checking models/lora/ for production adapters..."
+    LORA_DIR="$REPO_ROOT/models/lora"
+    if [[ ! -d "$LORA_DIR" ]]; then
+        echo "  ✗ $LORA_DIR does not exist"
+        echo "    ⇒ Cycle G G5 hasn't shipped any adapters yet."
+        echo "    ⇒ Q4_0 re-eval BLOCKED on G5 — leave config.q4_0.yaml"
+        echo "      LoRA mount lines commented (q4_0.yaml:83-85)."
+        exit 0
+    fi
+    COUNT=$(find "$LORA_DIR" -maxdepth 1 -name "*.gguf" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$COUNT" -eq 0 ]]; then
+        echo "  ✗ models/lora/ exists but contains 0 GGUF adapters."
+        echo "    ⇒ Q4_0 re-eval BLOCKED until G5 trains + promotes ≥1."
+    else
+        echo "  ✓ models/lora/ has $COUNT GGUF adapter(s) — Q4_0 re-eval IS READY:"
+        find "$LORA_DIR" -maxdepth 1 -name "*.gguf" -printf "    %f  (%s bytes)\n" 2>/dev/null || \
+            find "$LORA_DIR" -maxdepth 1 -name "*.gguf" -exec ls -la {} +
+        echo ""
+        echo "    Next step: uncomment --lora mount lines in"
+        echo "    compose/llama-swap/config.q4_0.yaml:83-85 (and q8_0.yaml:73-75),"
+        echo "    then run: bash tools/sprint1_ab_run.sh --only q4_0"
+    fi
+    exit 0
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+    REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
+    cd "$REPO_ROOT"
+    echo "[sprint1_ab] DRY-RUN — would run:"
+    if [[ -z "$ONLY" || "$ONLY" == "q8_0" ]]; then
+        echo "  variant=q8_0  config=compose/llama-swap/config.q8_0.yaml"
+        echo "    output=data/baselines/sprint1_q8_0_results.json"
+    fi
+    if [[ -z "$ONLY" || "$ONLY" == "q4_0" ]]; then
+        echo "  variant=q4_0  config=compose/llama-swap/config.q4_0.yaml"
+        echo "    output=data/baselines/sprint1_q4_0_results.json"
+    fi
+    echo ""
+    echo "  Per variant: ~6 hours wall (Mistral judge on CPU)."
+    echo "  Total wall when running both: ~12 hours."
+    echo ""
+    echo "  v18.1 readiness probe (does models/lora/ have adapters?):"
+    echo "    bash $0 --check-lora-mounts"
+    exit 0
+fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_ROOT="data/baselines"
