@@ -109,23 +109,35 @@ def _percentile(values: List[float], pct: float) -> Optional[float]:
     return s[k]
 
 
+def _env_or_default(key: str, default: str) -> str:
+    """v18.1 bug-pattern fix — ``os.environ.get(key, default)`` returns
+    ``""`` (not ``default``) when ``key`` exists but is empty, which is
+    the docker-compose case for ``AMOR_LLM_BACKEND=``.  This helper
+    falsy-skips so an empty env var falls through to the explicit
+    default.  Matches the same fix applied in
+    ``tools/eval/humaneval_plus.py:_llm_base_url`` and
+    ``tools/eval/swebench_lite.py:_llm_base_url``."""
+    value = (os.environ.get(key) or "").strip()
+    return value if value else default
+
+
 def _resolve_active_backend() -> str:
     """Mirror local_ai.llm_backend._resolve_kind without the
     side-effect of constructing a backend instance."""
     kind = (getattr(settings, "llm_backend", None) or "").strip().lower()
     if kind:
         return kind
-    return os.environ.get("AMOR_LLM_BACKEND", "ollama").strip().lower()
+    return _env_or_default("AMOR_LLM_BACKEND", "ollama").lower()
 
 
 def _llamaswap_base_url() -> str:
     """Where the llama-swap proxy lives.  Inside docker-compose the app
     talks to the service by name on the shared network."""
-    fallback = os.environ.get(
+    fallback = _env_or_default(
         "AMOR_LLAMASWAP_URL",
         "http://amor-llama-swap:9100",
     )
-    return getattr(settings, "llm_backend_url", "").strip() or fallback
+    return (getattr(settings, "llm_backend_url", "") or "").strip() or fallback
 
 
 # ─── llama-swap probe ──────────────────────────────────────────────
@@ -181,7 +193,7 @@ async def _probe_llamaswap() -> Dict[str, Any]:
 
 
 async def _probe_ollama() -> Dict[str, Any]:
-    base = os.environ.get("OLLAMA_BASE_URL", "http://amor-ollama:11434")
+    base = _env_or_default("OLLAMA_BASE_URL", "http://amor-ollama:11434")
     out: Dict[str, Any] = {
         "base_url": base,
         "healthy": False,
