@@ -68,6 +68,8 @@ OUT_ROOT = Path(
 GATE_NAME_MAP: dict[str, str] = {
     "humaneval_plus_50": "humaneval_plus",
     "swebench_lite_25": "swebench_lite",
+    # Cycle G G1 — Aider polyglot per_language pass rate
+    "aider_polyglot_50": "aider_polyglot",
 }
 
 
@@ -112,6 +114,24 @@ def _normalise_summary(eval_name: str, raw: dict) -> dict:
         return {
             "resolved_rate_percent": float(resolved or 0.0),
             "total": int(total),
+            "raw": raw,
+        }
+
+    if eval_name == "aider_polyglot_50":
+        # Cycle G G1 — runner stores pass_rate as fraction +
+        # pass_rate_percent.  v19 launch gate reads percent.
+        pct = raw.get("pass_rate_percent")
+        if pct is None:
+            frac = raw.get("pass_rate")
+            if isinstance(frac, (int, float)):
+                pct = frac * 100.0
+            elif raw.get("total"):
+                pct = 100.0 * raw["passed"] / raw["total"]
+        total = raw.get("total") or 0
+        return {
+            "pass_rate_percent": float(pct or 0.0),
+            "total": int(total),
+            "per_language": raw.get("per_language") or {},
             "raw": raw,
         }
 
