@@ -741,6 +741,7 @@ def _register_eval_runners() -> None:
         "tools.eval.humaneval_plus",
         "tools.eval.swebench_lite",
         "tools.eval.ragas_lancedb",
+        "tools.eval.aider_polyglot",   # Cycle G G1 — 2026-05-16
     ):
         try:
             importlib.import_module(mod)
