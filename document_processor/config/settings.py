@@ -368,6 +368,17 @@ class Settings(BaseSettings):
     # with severity="security" so they feed `_score_candidate`'s
     # 15-pt static-analysis slot.
     code_codeql_enabled: bool = False
+    # Cycle G G4 — continuous mutation testing in-loop.  Default OFF
+    # because mutmut's wall-clock is 5-30× pytest baseline.  When
+    # enabled, the test phase runs `mutmut run` after pytest + cov
+    # complete and exposes the mutation score on the engine state.
+    # The Reflexion loop reads it via `format_mutant_survived_block`
+    # and re-prompts the coder with surviving-mutant diffs when the
+    # score is below threshold.  Default threshold 0.35 (mid-range
+    # for in-loop mutation testing per Plan-agent's G4 acceptance
+    # criterion ≥35%).
+    code_mutation_testing_enabled: bool = False
+    code_mutation_score_threshold: float = 0.35
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.

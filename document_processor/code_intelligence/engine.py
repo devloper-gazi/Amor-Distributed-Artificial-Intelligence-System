@@ -252,6 +252,11 @@ class CodeIntelligenceEngine:
         # Always None outside `_phase_test`; populated when pytest-cov
         # produced a parseable .coverage.json.
         self.coverage_report: Any = None
+        # Cycle G G4 — mutation score from mutation_runner.  None when
+        # the gate is off or mutation didn't run; populated as a
+        # MutationResult dict when `code_mutation_testing_enabled=True`
+        # and the runner completes against the test phase output.
+        self.mutation_result: dict[str, Any] | None = None
         self.review: dict[str, Any] = {}
         self.deliverable_markdown: str = ""
         self.debug_iterations_used: int = 0
@@ -1064,6 +1069,38 @@ class CodeIntelligenceEngine:
                             "result": test_result.to_dict(),
                         }
                     )
+                    # Cycle G G4 — mutation testing in-loop.  Runs
+                    # AFTER pytest + coverage so the score reflects
+                    # the actual ship-able test suite.  Best-effort:
+                    # disabled by default + tolerant of missing
+                    # mutmut binary.
+                    try:
+                        from ..config.settings import settings as _settings  # noqa: PLC0415
+                        _mut_enabled = bool(getattr(
+                            _settings, "code_mutation_testing_enabled", False,
+                        ))
+                    except Exception:
+                        _mut_enabled = False
+                    if (
+                        _mut_enabled
+                        and self.detected_language == "python"
+                        and self.tests
+                    ):
+                        try:
+                            from .mutation_runner import (  # noqa: PLC0415
+                                run_mutation_testing,
+                            )
+                            mr = await run_mutation_testing(
+                                self.code or "", self.tests or "",
+                                timeout_s=60.0,
+                            )
+                            self.mutation_result = mr.to_dict()
+                            await self._emit({
+                                "type": "mutation_result",
+                                "result": self.mutation_result,
+                            })
+                        except Exception as exc:  # pragma: no cover (defensive)
+                            logger.debug("mutation_run_failed: %s", exc)
                 else:
                     await self._emit(
                         {
