@@ -145,6 +145,10 @@ _ALLOWED_MODES = {"build", "research", "thinking", "consortium", "sentinel", "sy
 class PairIn(BaseModel):
     """Body for ``POST /api/admin/training/pairs``."""
 
+    # v18.1.3 — ``model_tag`` collides with Pydantic v2's protected
+    # ``model_`` namespace; opt out so import doesn't spam UserWarning.
+    model_config = {"protected_namespaces": ()}
+
     chosen_turn_id: Optional[str] = Field(default=None, max_length=128)
     rejected_turn_id: Optional[str] = Field(default=None, max_length=128)
     mode: Literal["build", "research", "thinking", "consortium", "sentinel", "system"] = "build"
@@ -160,6 +164,9 @@ class PairIn(BaseModel):
 
 
 class PairOut(BaseModel):
+    # v18.1.3 — same protected-namespace opt-out as PairIn (see above).
+    model_config = {"protected_namespaces": ()}
+
     id: str
     chosen_turn_id: Optional[str]
     rejected_turn_id: Optional[str]

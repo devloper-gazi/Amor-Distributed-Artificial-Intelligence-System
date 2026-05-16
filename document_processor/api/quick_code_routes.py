@@ -186,6 +186,12 @@ class QuickCodeStartRequest(BaseModel):
 
 
 class QuickCodeStartResponse(BaseModel):
+    # v18.1.3 — opt out of Pydantic v2's protected ``model_`` namespace
+    # so ``model_used`` doesn't spam UserWarning on every import.  The
+    # field is read-only response data, not state — no risk of clash
+    # with Pydantic's own model_* methods.
+    model_config = {"protected_namespaces": ()}
+
     success: bool
     session_id: str
     model_used: str = ""
