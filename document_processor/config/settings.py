@@ -376,6 +376,22 @@ class Settings(BaseSettings):
     code_bitnet_planner_timeout_s: float = 8.0
     code_bitnet_fallback_to_main: bool = True
     code_bitnet_model_tag: str = "bitnet-b1.58-2b4t"
+    # Cycle H Phase A.2 — LazyGraphRAG knowledge layer.  Microsoft's
+    # lazy-eval GraphRAG variant — defers LLM use behind a per-query
+    # relevance budget, 10-90% cheaper than full GraphRAG indexing
+    # while outperforming on global queries at a 500-budget.  Default
+    # OFF; when enabled, sits ALONGSIDE existing LanceDB hybrid search
+    # (not a replacement) and re-uses the existing sentence-
+    # transformers embedder to keep VRAM flat.  Plan-agent locked
+    # caveats:
+    #   * indexing O(N·log N) on entity extraction — 50K LOC = 20-40 min
+    #     first pass.  Cached to LanceDB metadata table.
+    #   * relevance budget bounds LLM-call cost per query.
+    rag_graphrag_enabled: bool = False
+    rag_graphrag_hierarchy_depth: int = 2
+    rag_graphrag_relevance_budget: int = 500
+    rag_graphrag_entity_min_length: int = 3
+    rag_graphrag_community_min_size: int = 3
     # Cycle G G3 — CodeQL hot-path integration.  Default OFF because
     # the CodeQL CLI (~600 MB bundle) is NOT shipped with
     # python:3.11-slim; operator installs it host-side and flips
