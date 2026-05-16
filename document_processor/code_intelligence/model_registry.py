@@ -173,6 +173,30 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         tier="balanced",
         license="Apache-2.0",
     ),
+    # Cycle H Phase A.1 — BitNet b1.58 2B4T native-ternary CPU planner.
+    # Microsoft's first natively-trained 1.58-bit (ternary) 2B model
+    # at 4T tokens (arXiv 2504.12285).  ~0.4 GB weight footprint;
+    # CPU inference via bitnet.cpp at 6-10 tok/s on RTX 4060 laptop
+    # class.  Measured 12× lower energy per inference vs Qwen2.5-2B.
+    # Strengths chosen to auto-route via ROLE_STRENGTH_MAP for
+    # "bitnet_shadow_planner" role; tier=lightweight + vram_gb=0
+    # means scorer never picks it for coder/critic roles unless
+    # operator explicitly opts in.  License: MIT.
+    ModelSpec(
+        ollama_tag="bitnet:b1.58-2b4t",
+        display_name="BitNet b1.58 2B4T",
+        params_b=2.0,
+        vram_gb=0,               # CPU-only
+        swebench_pct=0,          # not benchmarked on code
+        humaneval_pct=0,         # ditto
+        context_k=4,             # 4K context per official model card
+        strengths=[
+            "fast inference", "planning", "triage", "general",
+            "explanation",
+        ],
+        tier="lightweight",
+        license="MIT",
+    ),
     # v18.1 Step 3 (Cycle G) — Phi-4 14B Q4_K_M out-of-family critic.
     # Microsoft's Phi-4 is a different post-training corpus than the
     # Qwen / DeepSeek family AMOR uses for coder / planner roles, so

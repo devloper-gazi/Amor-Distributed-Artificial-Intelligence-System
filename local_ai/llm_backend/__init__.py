@@ -108,6 +108,13 @@ def make_backend(kind: str, *, url: Optional[str] = None) -> LLMBackend:
     if k in {"llama-cpp", "llama_cpp", "llamacpp", "llama.cpp"}:
         from .llama_cpp import LlamaCppBackend  # noqa: PLC0415
         return LlamaCppBackend(base_url=base_url)
+    if k in {"bitnet-cpu", "bitnet_cpu", "bitnet", "bitnetcpu"}:
+        # Cycle H Phase A.1 — BitNet b1.58 2B4T ternary CPU planner.
+        # `url=None` lets the backend pick its own default port (8081)
+        # so the operator running BOTH llama-cpp (:8080) AND bitnet-cpu
+        # side-by-side doesn't get a bind conflict.
+        from .bitnet_cpu import BitNetCpuBackend  # noqa: PLC0415
+        return BitNetCpuBackend(base_url=url)
     if k in {"openai-compat", "openai_compat", "openai-compatible"}:
         from .openai_compat import OpenAICompatibleBackend  # noqa: PLC0415
         return OpenAICompatibleBackend(base_url=base_url)
