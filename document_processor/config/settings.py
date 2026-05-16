@@ -350,6 +350,15 @@ class Settings(BaseSettings):
     # Flag-flip rollback to v18 inline-blocking critic behaviour.
     code_critic_async: bool = True
     code_critic_async_timeout_s: float = 8.0
+    # v18.1.2 (Cycle G) — sandbox tmpfs ceiling.  HumanEval+ 50 runs
+    # circa 2026-05-05 hit ENOSPC during `pip install --target=
+    # /tmp/pip-prefix numpy` because the previous 384m default was
+    # just barely large enough for numpy alone (~75 MB installed +
+    # transient wheel staging).  Doubling to 768m absorbs scipy /
+    # sympy combos and pip's tempdir overhead on the same /tmp
+    # without going to gigabyte territory.  Operators on tight RAM
+    # budgets can override via env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`.
+    code_sandbox_tmpfs_size_mb: int = 768
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.
