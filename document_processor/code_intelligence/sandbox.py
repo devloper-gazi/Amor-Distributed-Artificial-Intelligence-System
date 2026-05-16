@@ -30,6 +30,37 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# v18.1.2 (Cycle G) — tmpfs sizing helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _tmpfs_size_mb() -> int:
+    """Resolve the per-run /tmp tmpfs cap in MB.
+
+    Reads ``settings.code_sandbox_tmpfs_size_mb`` (default 768) with
+    env override ``AMOR_CODE_SANDBOX_TMPFS_SIZE_MB``.  Hard floor 128
+    (below which even minimal Python imports OOM); hard ceiling 4096
+    (above which a misconfig would chew real RAM the host doesn't
+    have).  Failures fall through to the safe default so a settings
+    import hiccup never bricks the sandbox.
+
+    Used by the runtime ``--tmpfs`` arg and by ``security_posture()``
+    so the reported flag value matches what's actually running.
+    """
+    raw_env = (os.environ.get("AMOR_CODE_SANDBOX_TMPFS_SIZE_MB") or "").strip()
+    if raw_env:
+        try:
+            return max(128, min(4096, int(raw_env)))
+        except ValueError:
+            pass
+    try:
+        from ..config.settings import settings  # noqa: PLC0415
+        return max(128, min(4096, int(getattr(settings, "code_sandbox_tmpfs_size_mb", 768))))
+    except Exception:
+        return 768
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Language → image + run command
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -554,7 +585,7 @@ class ExecutionSandbox:
             "memory_limit": self._memory_limit,
             "cpu_quota": self._cpu_quota,
             "default_network": "none",
-            "tmpfs": "/tmp:size=384m,exec",
+            "tmpfs": f"/tmp:size={_tmpfs_size_mb()}m,exec",
             # Cycle C Sprint 5 Day 3 — flipped on for every sandbox run.
             "cap_drop_all": True,
             "pids_limit": 128,
@@ -957,13 +988,15 @@ class ExecutionSandbox:
                 "--tmpfs",
                 # Cycle C Sprint 2 Day 2 — bumped 64m → 384m so
                 # ``pip install --target=/tmp/pip-prefix numpy`` has
-                # room (numpy installed-on-disk is ~75 MB and pip's
-                # build cache adds another ~50 MB).  Without the bump
-                # HumanEval+ tests that import numpy fail at install
-                # with "No space left on device".  256m would also
-                # work; 384m gives headroom for {numpy, scipy, sympy}
-                # combos without going to gigabyte territory.
-                "/tmp:size=384m,exec",
+                # room.  v18.1.2 (Cycle G) further bumped to 768m
+                # default after HumanEval+ historical runs (5/5/2026
+                # 00:59-01:07) failed at install with [Errno 28]
+                # No space left on device — numpy's transient wheel
+                # staging in pip's TMPDIR (also /tmp) was hitting
+                # the 384m ceiling on concurrent / cold-cache cases.
+                # Tunable via `code_sandbox_tmpfs_size_mb` setting
+                # (env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`).
+                f"/tmp:size={_tmpfs_size_mb()}m,exec",
                 *extra_tmpfs,
                 *volume_args,
                 "--workdir",
