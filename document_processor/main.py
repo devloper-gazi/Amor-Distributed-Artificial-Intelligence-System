@@ -3,6 +3,39 @@ Main application entry point with FastAPI.
 Provides REST API for document processing and monitoring.
 """
 
+# v18.1.3 — LanceDB / lance uses Rust internals (DataFusion, Arrow
+# buffers, file-descriptor handles) that are NOT fork-safe.  On Linux
+# multiprocessing defaults to ``fork`` which inherits those handles
+# and can deadlock the child.  Switch to ``spawn`` BEFORE any module
+# imports lancedb so the warning ``lance is not fork-safe`` from
+# ``lancedb/__init__.py:294`` is suppressed AND any future use of
+# multiprocessing.Pool / Process inside the app gets a safe start
+# method.  Idempotent: if another module already set the method, the
+# subsequent call would raise RuntimeError — catch + log debug.
+import multiprocessing as _mp
+try:
+    _mp.set_start_method("spawn", force=False)
+except RuntimeError:
+    # Already set elsewhere (test runner, parent process, etc.) — fine.
+    pass
+
+# v18.1.3 — silence Pydantic v2 ``protected_namespaces`` UserWarning
+# emitted by THIRD-PARTY library models we can't patch (lancedb's
+# ``LanceModel`` ships ``model_name`` / ``model_link`` fields).  Our
+# own Pydantic models already opt out via
+# ``model_config = {"protected_namespaces": ()}``; this filter is
+# narrow enough that a regression in our OWN code (forgetting the
+# opt-out) is still caught by the test in
+# ``tests/api/test_pydantic_protected_namespaces.py`` which runs in
+# isolation without this filter.
+import warnings as _warnings
+_warnings.filterwarnings(
+    "ignore",
+    message=r'Field "model_.*" has conflict with protected namespace',
+    category=UserWarning,
+    module=r"pydantic\._internal\._fields",
+)
+
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
