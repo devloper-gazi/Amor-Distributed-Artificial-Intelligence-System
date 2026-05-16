@@ -359,6 +359,23 @@ class Settings(BaseSettings):
     # without going to gigabyte territory.  Operators on tight RAM
     # budgets can override via env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`.
     code_sandbox_tmpfs_size_mb: int = 768
+    # Cycle H Phase A.1 — BitNet b1.58 2B4T shadow planner.
+    # Default OFF — operator opts in once bitnet.cpp llama-server is
+    # running on `code_bitnet_planner_url` (default port 8081).  When
+    # enabled, `code_bitnet_shadow_traffic_pct` percent of planning
+    # requests fork in parallel to BitNet; the result is logged for
+    # agreement-rate measurement but the MAIN planner's output is what
+    # the user sees (shadow mode never blocks).  After 14-day shadow
+    # window with ≥85% agreement + p95 ≤6s, operator can promote to
+    # active routing.  Plan-agent locked 8s p99 timeout (`code_bitnet_planner_timeout_s`)
+    # because BitNet CPU throughput is realistic 6-10 tok/s — fallback
+    # to main planner is silent when timeout fires.
+    code_bitnet_planner_enabled: bool = False
+    code_bitnet_planner_url: str = "http://localhost:8081"
+    code_bitnet_shadow_traffic_pct: float = 10.0
+    code_bitnet_planner_timeout_s: float = 8.0
+    code_bitnet_fallback_to_main: bool = True
+    code_bitnet_model_tag: str = "bitnet-b1.58-2b4t"
     # Cycle G G3 — CodeQL hot-path integration.  Default OFF because
     # the CodeQL CLI (~600 MB bundle) is NOT shipped with
     # python:3.11-slim; operator installs it host-side and flips
