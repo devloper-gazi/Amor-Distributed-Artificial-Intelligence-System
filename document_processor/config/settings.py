@@ -359,6 +359,15 @@ class Settings(BaseSettings):
     # without going to gigabyte territory.  Operators on tight RAM
     # budgets can override via env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`.
     code_sandbox_tmpfs_size_mb: int = 768
+    # Cycle G G3 — CodeQL hot-path integration.  Default OFF because
+    # the CodeQL CLI (~600 MB bundle) is NOT shipped with
+    # python:3.11-slim; operator installs it host-side and flips
+    # this flag on.  When enabled, the StaticAnalysisHarness'
+    # gather block calls `_run_codeql()` against every Python
+    # snippet >200 LOC, mapping SARIF findings to AnalysisIssue
+    # with severity="security" so they feed `_score_candidate`'s
+    # 15-pt static-analysis slot.
+    code_codeql_enabled: bool = False
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.

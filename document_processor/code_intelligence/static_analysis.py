@@ -173,6 +173,7 @@ class StaticAnalysisHarness:
                 self._run_mypy(tmp_path, result),
                 self._run_bandit(tmp_path, result),
                 self._run_radon(tmp_path, result),
+                self._run_codeql(code, result),
                 return_exceptions=True,
             )
         finally:
@@ -231,6 +232,47 @@ class StaticAnalysisHarness:
             return getattr(node, "id", node.__class__.__name__)
 
     # ── Pylint ────────────────────────────────────────────────────────────
+
+    async def _run_codeql(
+        self,
+        code: str,
+        result: StaticAnalysisResult,
+    ) -> None:
+        """Cycle G G3 — CodeQL hot-path integration.
+
+        Best-effort wrapper around the CodeQL CLI.  Skips silently when:
+          * `code_codeql_enabled=False` (default — operator opts in
+            once they've installed the CLI bundle on the host)
+          * `codeql` binary missing from PATH
+          * subprocess returns non-zero / times out
+          * snippet too small to be worth the ~30-60s analysis cost
+
+        Findings land as `severity="security"` (or error/warning/info)
+        with `source="codeql"`.  Reaches `_score_candidate`'s static
+        slot at engine.py:1334 via the existing `result.issues` list.
+        """
+        # Settings gate — default OFF so the harness doesn't try to
+        # invoke a CLI that isn't installed on the bare slim image.
+        try:
+            from ..config.settings import settings  # noqa: PLC0415
+            if not bool(getattr(settings, "code_codeql_enabled", False)):
+                return
+        except Exception:
+            return
+        # Skip micro-snippets — CodeQL's 30-60s cost isn't justified
+        # for <30 LOC where bandit + pylint already cover the surface.
+        if len(code) < 200:
+            return
+        try:
+            from .codeql_runner import (  # noqa: PLC0415
+                findings_to_analysis_issues,
+                run_codeql_python,
+            )
+            findings = await run_codeql_python(code, timeout_s=90.0)
+            for issue_dict in findings_to_analysis_issues(findings):
+                result.issues.append(AnalysisIssue(**issue_dict))
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.debug("codeql run failed silently: %s", exc)
 
     async def _run_pylint(
         self,
