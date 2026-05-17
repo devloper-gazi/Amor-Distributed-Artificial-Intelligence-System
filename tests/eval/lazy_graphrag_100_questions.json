@@ -1,0 +1,196 @@
+{
+  "$schema": "./lazy_graphrag_schema.json",
+  "version": "1.0",
+  "created_utc": "2026-05-16T00:00:00Z",
+  "description": "Multi-hop retrieval bench for Cycle H.2 LazyGraphRAG vs LanceDB-only.  Queries are crafted from AMOR's own repository to exercise community-aware retrieval: each one references 2+ entities that should belong to the same community in the graph (so the LazyGraphRAG pre-filter narrows the candidate set meaningfully) while the LanceDB-only path receives only a dense vector match.\n\nGround-truth labels (`relevant_source_ids`) are file paths inside the repo whose chunks should appear in the top-K result list.  Operator can extend this seed (currently ~20 queries) toward the v20 gate's 100-query target as the corpus stabilises.\n\nv20 gate condition #5: nDCG@10 uplift LazyGraphRAG vs LanceDB-only ≥ 15%.",
+  "queries": [
+    {
+      "id": "approval-flow-tool-registry",
+      "query": "How does ApprovalPolicy gate ToolRegistry dispatch calls?",
+      "relevant_source_ids": [
+        "local_ai/approval/policy.py",
+        "local_ai/tools/registry.py",
+        "document_processor/api/approval_routes.py"
+      ],
+      "communities": ["approval", "tool_dispatch"]
+    },
+    {
+      "id": "sandbox-docker-proxy-default",
+      "query": "Which compose changes promoted docker-socket-proxy from opt-in to default?",
+      "relevant_source_ids": [
+        "docker-compose.yml",
+        "document_processor/code_intelligence/sandbox.py"
+      ],
+      "communities": ["sandbox", "compose"]
+    },
+    {
+      "id": "bitnet-shadow-planner-call-site",
+      "query": "Where does the engine fire the BitNet shadow planner call and how is it timed out?",
+      "relevant_source_ids": [
+        "document_processor/code_intelligence/engine.py",
+        "document_processor/code_intelligence/bitnet_shadow.py",
+        "local_ai/llm_backend/bitnet_cpu.py"
+      ],
+      "communities": ["bitnet_shadow", "engine_phases"]
+    },
+    {
+      "id": "lazygraphrag-prefilter-lancedb",
+      "query": "How does the LazyGraphRAG pre-filter narrow LanceDB candidate source_ids?",
+      "relevant_source_ids": [
+        "local_ai/vector_store/lancedb_store.py",
+        "document_processor/rag/lazy_graphrag.py"
+      ],
+      "communities": ["graphrag", "vector_store"]
+    },
+    {
+      "id": "grpo-verifier-rewards-cron",
+      "query": "How is the verifier_rewards annotation step wired into the weekly ORPO cron?",
+      "relevant_source_ids": [
+        "tools/training/orpo_weekly_cron.py",
+        "tools/training/verifier_rewards.py",
+        "tools/training/orpo_qwen_coder.py"
+      ],
+      "communities": ["training_cron", "grpo"]
+    },
+    {
+      "id": "v20-launch-gate-conditions",
+      "query": "What are the six v20.0.0 launch gate conditions and their thresholds?",
+      "relevant_source_ids": [
+        "tools/run_v20_launch_gate.py",
+        "tests/baselines/test_v20_launch_gate.py"
+      ],
+      "communities": ["v20_gate", "launch_thresholds"]
+    },
+    {
+      "id": "mutation-runner-engine-hook",
+      "query": "Where does the engine invoke the mutation runner and emit results?",
+      "relevant_source_ids": [
+        "document_processor/code_intelligence/engine.py",
+        "document_processor/code_intelligence/mutation_runner.py"
+      ],
+      "communities": ["mutation_testing", "engine_phases"]
+    },
+    {
+      "id": "humaneval-plus-runner",
+      "query": "How does HumanEval+ generate predictions against the local llm-swap endpoint?",
+      "relevant_source_ids": [
+        "tools/eval/humaneval_plus.py"
+      ],
+      "communities": ["eval_harnesses"]
+    },
+    {
+      "id": "swebench-simplified-vs-full",
+      "query": "How does the SWE-bench runner switch between simplified mode and the full harness?",
+      "relevant_source_ids": [
+        "tools/eval/swebench_lite.py"
+      ],
+      "communities": ["eval_harnesses", "swebench"]
+    },
+    {
+      "id": "thinking-phase-timeout-guard",
+      "query": "How does the ThinkingEngine apply per-phase wall-clock timeouts and fall back?",
+      "relevant_source_ids": [
+        "document_processor/thinking/engine.py",
+        "document_processor/config/settings.py"
+      ],
+      "communities": ["thinking_engine"]
+    },
+    {
+      "id": "phi4-async-critic-decouple",
+      "query": "How does the engine kick off the Phi-4 critic asynchronously and reconcile freshness?",
+      "relevant_source_ids": [
+        "document_processor/code_intelligence/engine.py",
+        "document_processor/code_intelligence/agents.py"
+      ],
+      "communities": ["critic_async", "engine_phases"]
+    },
+    {
+      "id": "lora-adapter-hotswap-llamaswap",
+      "query": "How does AMOR hot-swap LoRA adapters via the llama-swap config without restart?",
+      "relevant_source_ids": [
+        "compose/llama-swap/config.yaml",
+        "tools/lora/promote.py",
+        "tools/training/convert_lora_gguf.py"
+      ],
+      "communities": ["lora_runtime", "llamaswap"]
+    },
+    {
+      "id": "memory-default-persistence",
+      "query": "Where does an agent's default memory get persisted and why was the tempfile fallback removed?",
+      "relevant_source_ids": [
+        "local_ai/memory/store.py",
+        "document_processor/sentinel/agents.py"
+      ],
+      "communities": ["memory_persistence"]
+    },
+    {
+      "id": "sticky-cookie-sse-failover",
+      "query": "How does the SSE pipeline handle a replica swap without losing the in-progress stream?",
+      "relevant_source_ids": [
+        "nginx/gateway.conf",
+        "document_processor/api/code_intelligence_routes.py",
+        "document_processor/infrastructure/cache.py"
+      ],
+      "communities": ["sse_pipeline", "replica_failover"]
+    },
+    {
+      "id": "v18-launch-gate-conditions",
+      "query": "What were the six v18 launch acceptance conditions and which failed first?",
+      "relevant_source_ids": [
+        "tools/run_v18_launch_gate.py",
+        "docs/v18_release_notes.md"
+      ],
+      "communities": ["v18_gate"]
+    },
+    {
+      "id": "code-pipeline-parallel-flag",
+      "query": "What does the code_pipeline_parallel flag control and what's the rollback recipe?",
+      "relevant_source_ids": [
+        "document_processor/config/settings.py",
+        "document_processor/code_intelligence/engine.py"
+      ],
+      "communities": ["engine_phases", "pipeline_parallel"]
+    },
+    {
+      "id": "fastapi-approval-prompt-ui",
+      "query": "How does the ApprovalPrompt React/SolidJS card resolve a pending tool dispatch?",
+      "relevant_source_ids": [
+        "web_ui/v2/src/components/chat/ApprovalPrompt.tsx",
+        "document_processor/api/approval/routes.py"
+      ],
+      "communities": ["approval", "ui_layer"]
+    },
+    {
+      "id": "domain-templates-routing",
+      "query": "How does the domain template inject must-have features into the coder prompt?",
+      "relevant_source_ids": [
+        "document_processor/code_intelligence/domain_templates.py",
+        "document_processor/code_intelligence/prompts.py"
+      ],
+      "communities": ["domain_templates", "prompt_routing"]
+    },
+    {
+      "id": "skills-loader-frontmatter",
+      "query": "How does the SKILL.md frontmatter loader parse + validate skill definitions?",
+      "relevant_source_ids": [
+        "local_ai/skills/loader.py",
+        "local_ai/skills/schema.py"
+      ],
+      "communities": ["skills_loader"]
+    },
+    {
+      "id": "preference-pairs-export-jsonl",
+      "query": "How does the cron export Postgres preference pairs to per-role JSONL files?",
+      "relevant_source_ids": [
+        "tools/training/export_pairs_jsonl.py",
+        "tools/training/orpo_weekly_cron.py"
+      ],
+      "communities": ["training_cron", "preference_pairs"]
+    }
+  ],
+  "operator_notes": [
+    "Each query lists `relevant_source_ids` as path-strings.  The bench tool computes nDCG@10 using these as the gold ranking; the LanceDB embedder's source-id metadata must match.",
+    "Communities are diagnostic — the bench tool can use them to verify the LazyGraphRAG entity-graph clustering picks up the same groupings.",
+    "Expand to 100 queries by adding each round of new cross-module work (Cycle I+ should add Titans / LFM2 / KAT queries; Cycle J adds Saten / SB / JEPA queries)."
+  ]
+}

@@ -447,6 +447,14 @@ services:
       # land in one canonical place.  Sprint 1 GGUFs sit under
       # /data/custom_models/llamaswap/.
       - custom-models-data:/models:ro
+      # Cycle H.1 — BitNet GGUFs live host-side (./models/bitnet/).
+      # Mounted at /bitnet-models to avoid the overlay-mountpoint
+      # conflict with the read-only `/models` named volume above
+      # (Docker rootfs can't create sub-paths in a ro mount).  The
+      # llama-swap config references /bitnet-models/ggml-model-i2_s.gguf.
+      - ./models/bitnet:/bitnet-models:ro
+      # Cycle I.1 — LFM2 cortex GGUF, same mount-pattern as bitnet.
+      - ./models/lfm2:/lfm2-models:ro
     command:
       - --config
       - /etc/llama-swap/config.yaml
@@ -470,6 +478,17 @@ services:
       start_period: 90s
     networks:
       - docprocessor-network
+
+  # Cycle H.1 — BitNet shadow planner is served via the existing
+  # llama-swap proxy (model entry `amor-bitnet-shadow` in
+  # compose/llama-swap/config.yaml).  The separate bitnet-server
+  # Dockerfile under compose/bitnet/ is RETAINED as documented
+  # fallback for operators who need Microsoft's optimised
+  # bitnet.cpp kernels (currently blocked upstream by
+  # setup_env.py NotImplementedError on the 2B-4T model shape).
+  # Activate it via:
+  #     docker compose --profile bitnet up -d --build
+  # Otherwise the default deploy uses llama-swap and the 3B GGUF.
 
   # Prometheus
   prometheus:
