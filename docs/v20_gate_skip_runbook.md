@@ -175,11 +175,25 @@ guard in lancedb_store keeps schemas separate).  Expected cost
 ~3-5 min host first-load + 1-2 s/file thereafter:
 
 ```bash
-# inside docker container (mem_limit must allow ≥6 GB first-load):
-docker exec -e PYTHONPATH=/app amor-app-2 python /app/tools/index_focused_corpus.py \
-    --queries /app/tests/eval/lazy_graphrag_100_questions.json \
-    --root /app \
-    --db-path /data/vectors_minilm \
+# Prerequisites (one-time):
+# 1.  Bump app service mem_limit ≥ 16 GB in docker-compose.yml
+#     (4 G default OOMs at model-load; 8 G OOMs at first
+#     `add_document()` — verified 2026-05-17, exit 137).
+# 2.  Add `./:/host_repo:ro` bind-mount so the indexer can resolve
+#     `relevant_source_ids` paths NOT under the four /app/* bind-
+#     mounts (compose/, docs/, tests/, nginx/, docker-compose.yml).
+# 3.  Stage the bench seed inside a writable bind-mount, e.g.:
+#       cp tests/eval/lazy_graphrag_100_questions.json data/eval/
+
+# Recreate the app container so the new mounts take effect:
+docker compose up -d --no-deps app
+
+# Run the indexer inside the container (38 files, ~3-5 min):
+docker exec -e PYTHONPATH=/app amor-app-2 python -u \
+    /app/tools/index_focused_corpus.py \
+    --queries /data/documents/eval/lazy_graphrag_100_questions.json \
+    --root /host_repo \
+    --db-path /data/documents/vectors_focused \
     --embedding-model sentence-transformers/all-MiniLM-L6-v2
 ```
 
@@ -191,12 +205,18 @@ without polluting the production `documents_*` table.
 **Windows-host caveat — verified 2026-05-17.**  Both
 `nomic-embed-text-v1.5` AND `all-MiniLM-L6-v2` reproducibly bloat
 to 15-20 GB resident on a Windows + Python 3.13 host during
-first-load and stall before the first row is written (LanceDB
-``pre`` printed at chunk_count=0, then process killed).  Same
-indexer + same flag works fine inside Linux/WSL2 or the
-`amor-app-2` container if `mem_limit` is bumped above 6 GB.  This
-runbook recommends Docker container with raised mem_limit OR a
-WSL2/Linux host as the operator path.
+first-load and stall before the first row is written.  Run the
+indexer INSIDE the container per the recipe above.
+
+**Docker Desktop API instability — verified 2026-05-17.**
+Running the indexer + a polling `docker stats` loop + a tailing
+`docker exec` simultaneously can put Docker Desktop's Windows
+named-pipe daemon into a 500-error state that doesn't self-
+recover (forces a Docker Desktop restart).  Mitigation: run the
+indexer in a single `docker exec` foreground invocation with
+output redirected to a file; observe progress by `tail`-ing the
+log on the host instead of via additional `docker exec`/`docker
+stats` calls.
 
 **Path C — Overnight CPU batch (current default, no code change).**
 

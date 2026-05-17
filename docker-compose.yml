@@ -168,7 +168,15 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 4G
+          # Bumped 4G → 16G on 2026-05-17 for LazyGraphRAG corpus
+          # indexing.  Hit a SECOND OOM at 8G (exit 137) after the
+          # model loaded (~5 GB resident) and the first
+          # `add_document()` call pushed past the ceiling — torch +
+          # sentence-transformers + lancedb together need ~10 GB
+          # peak.  Host has 32 GB so 16 GB cap is comfortable.
+          # Revert to 4G when corpus indexing is no longer a
+          # foreground concern.
+          memory: 16G
         reservations:
           cpus: '1'
           memory: 2G
@@ -208,6 +216,14 @@ services:
       # conditions #2 + #3 become measurable.
       - ./tools:/app/tools
       - ./requirements.txt:/app/requirements.txt:ro
+      # 2026-05-17 — read-only mount of the whole repo so LazyGraphRAG
+      # focused indexer can resolve paths NOT under the four bind-
+      # mounts above (compose/, docs/, tests/, nginx/, docker-
+      # compose.yml).  Used by tools/index_focused_corpus.py with
+      # --root /host_repo against the bench seed's
+      # `relevant_source_ids`.  Read-only so a stray subprocess
+      # can't corrupt the host source tree.
+      - ./:/host_repo:ro
       # Code Intelligence sandbox — gives the app container access to
       # the host Docker daemon so it can spin up ephemeral runner
       # containers (python:3.11-slim, node:20-slim, etc.) for the
