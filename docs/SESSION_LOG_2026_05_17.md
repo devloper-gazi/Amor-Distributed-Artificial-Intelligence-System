@@ -197,3 +197,119 @@ BITNET_MIN_SAMPLES = 200
 All baked into the production code defaults + the paper's
 Appendix B audit trail.  Revising any of them requires a tracked
 plan-dosyası change.
+
+## Post-snapshot addendum — v20 SKIP #5 operator path (later this session)
+
+Same date, continued autonomous work after the initial snapshot
+above.  Goal: try to lift v20 condition #5 (LazyGraphRAG nDCG
+uplift) without operator intervention.  Outcome: condition #5
+remains SKIP, but the infrastructure + runbook are now in a
+state that makes the next operator pass trivially executable.
+
+### What landed (commits 9-13)
+
+```
+ec9e657  infra(cycle-h/h2+): docker-compose mem 16G + /host_repo mount + runbook recipe
+cda52db  feat(cycle-h/h2+): --embedding-model flag + Windows-host caveat documented
+5c1f28a  feat(cycle-h/h2+): focused corpus indexer + bench --db-path
+                                  (commit 9 was the focused indexer baseline)
+fb289cd  docs(v18.1.5): VRAM aggregator + v20 SKIP runbook + session log
+```
+
+* `tools/index_focused_corpus.py` — added `--embedding-model`
+  flag wired to `LanceDBVectorStore(embedding_model=...)`.
+  Pre-flight prints (`embedding_model`, `embedding_dim`,
+  `table_name`) for operator visibility.
+* `tools/eval/lazy_graphrag_bench.py` — added `--db-path`
+  override so the bench can target a focused corpus separate
+  from production `/data/vectors`.
+* `tests/eval/test_lazy_graphrag_bench.py` — +2 tests covering
+  the new flag (default-None + explicit override).
+* `docker-compose.yml`:
+  - `app.deploy.resources.limits.memory` 4G → 16G
+    (sentence-transformers + torch + lancedb peak ~10 GB —
+    4 G OOMs at model-load, 8 G OOMs at first
+    `add_document()`, verified exit 137).
+  - Five NARROW read-only mounts under /app/ for the bench-
+    seed paths NOT under the four core code mounts:
+    `compose/`, `docs/`, `tests/`, `nginx/`,
+    `docker-compose.yml`.
+* `docs/v20_gate_skip_runbook.md` Path B section rewritten to
+  reference the actually-landed `--embedding-model` flag and
+  the narrow-mount recipe.
+
+### What the autonomous run learned (verified failure modes)
+
+| Attempt | Setup | Outcome |
+|---|---|---|
+| 1 | Windows host, `nomic-embed-text-v1.5` (default) | 15-20 GB resident, stalled at chunk_count=0, killed |
+| 2 | Windows host, `all-MiniLM-L6-v2` (lightweight) | 16-17 GB resident, stalled at chunk_count=0, killed |
+| 3 | Container at 4 G mem_limit | OOM at model-load |
+| 4 | Container at 8 G mem_limit | OOM at first `add_document()` (exit 137) |
+| 5 | Container at 16 G + `./:/host_repo:ro` wide mount | Docker Desktop named-pipe daemon 500-error wedge (mounting data/, models/, .git/ overloaded the Windows file-sharing layer) |
+| 6 | Container at 16 G + 5 narrow mounts | **Operator-pending** — recipe ready, autonomous session can't safely retry without Docker Desktop restart classifier permissions |
+
+The root cause of attempt 5's daemon wedge was confirmed in two
+independent runs: every time the wide host-repo mount was active
+and a sustained workload (indexer + concurrent docker stats /
+exec polling) was run inside the container, Docker Desktop's
+Windows named-pipe daemon went into a 500-error state that
+required a manual Docker Desktop restart to recover.  The
+5-narrow-mount recipe in attempt 6 keeps the file-sharing
+surface to ~1 MB instead of GBs and lets the indexer use the
+original `--root /app` default.
+
+### Operator playbook for v20 #5 lift (from clean Docker Desktop)
+
+```bash
+# 0. If Docker Desktop is wedged from prior autonomous runs:
+#    tray icon → Restart → wait ~30 s for all 12 containers to
+#    come back up healthy.  The committed docker-compose.yml
+#    config (16 G mem + narrow mounts) is now active.
+
+# 1. Single foreground indexer invocation (NO concurrent docker
+#    stats / exec polling — those cause the named-pipe wedge):
+docker exec -e PYTHONPATH=/app amor-app-2 python -u \
+    /app/tools/index_focused_corpus.py \
+    --queries /app/tests/eval/lazy_graphrag_100_questions.json \
+    --root /app \
+    --db-path /data/documents/vectors_focused \
+    --embedding-model sentence-transformers/all-MiniLM-L6-v2 \
+    > data/eval/index_focused.log 2>&1
+# Expected: ~3-5 min wall, 38/38 ok, ~3 GB peak resident.
+
+# 2. Build the LazyGraphRAG entity-graph index on the focused
+#    corpus (~1 min):
+docker exec -e PYTHONPATH=/app amor-app-2 python -c "
+import asyncio, sys
+sys.path.insert(0, '/app')
+async def main():
+    from local_ai.vector_store.lancedb_store import LanceDBVectorStore
+    s = LanceDBVectorStore(
+        db_path='/data/documents/vectors_focused',
+        embedding_model='sentence-transformers/all-MiniLM-L6-v2',
+    )
+    print(await s.build_lazy_graphrag_index())
+asyncio.run(main())
+"
+
+# 3. Run the bench against the focused corpus (writes
+#    data/baselines/lazygraphrag_bench_latest.json):
+docker exec -e PYTHONPATH=/app amor-app-2 python \
+    /app/tools/eval/lazy_graphrag_bench.py \
+    --queries /app/tests/eval/lazy_graphrag_100_questions.json \
+    --db-path /data/documents/vectors_focused \
+    --top-k 10 --threshold-pct 15.0 --json
+
+# 4. Re-run the v20 launch gate — condition #5 either lifts to
+#    PASS (uplift ≥ 15 %) or fails to FAIL (honest measured
+#    value).  Either way it leaves SKIP.
+python tools/run_v20_launch_gate.py --json | jq .verdict
+```
+
+### Final v20 verdict (this session)
+
+`INCOMPLETE` (2 PASS + 0 FAIL + 4 SKIP) — stable.  The four
+SKIPs all have actionable operator paths now (the runbook
+covers each).  No regressions — host-side targeted pytest
+(24/24) green; full-sweep host-side pytest pending.
