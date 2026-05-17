@@ -168,21 +168,35 @@ back on next request).  After indexing, the embedder unloads and
 the planner reclaims VRAM.
 
 **Path B — Lightweight CPU embedder (`all-MiniLM-L6-v2`, ~5×
-faster than nomic-embed).**
+faster than nomic-embed on a healthy host).**
 
 Different model → different LanceDB table (the per-model-table
-guard in lancedb_store keeps schemas separate).  Costs ~3-5 min
-host first-load + 1-2 s/file thereafter:
+guard in lancedb_store keeps schemas separate).  Expected cost
+~3-5 min host first-load + 1-2 s/file thereafter:
 
 ```bash
-docker exec -e PYTHONPATH=/app -e AMOR_RAG_EMBEDDER=sentence-transformers/all-MiniLM-L6-v2 \
-    amor-app-2 python /app/tools/index_focused_corpus.py \
+# inside docker container (mem_limit must allow ≥6 GB first-load):
+docker exec -e PYTHONPATH=/app amor-app-2 python /app/tools/index_focused_corpus.py \
     --queries /app/tests/eval/lazy_graphrag_100_questions.json \
-    --root /app
+    --root /app \
+    --db-path /data/vectors_minilm \
+    --embedding-model sentence-transformers/all-MiniLM-L6-v2
 ```
 
-(Requires reading `AMOR_RAG_EMBEDDER` env var in
-`LanceDBVectorStore.__init__` — a small wire change.)
+The `--embedding-model` flag is wired through to
+`LanceDBVectorStore(embedding_model=...)`; the per-model-table
+guard slots the corpus into `documents_all_minilm_l6_v2_384`
+without polluting the production `documents_*` table.
+
+**Windows-host caveat — verified 2026-05-17.**  Both
+`nomic-embed-text-v1.5` AND `all-MiniLM-L6-v2` reproducibly bloat
+to 15-20 GB resident on a Windows + Python 3.13 host during
+first-load and stall before the first row is written (LanceDB
+``pre`` printed at chunk_count=0, then process killed).  Same
+indexer + same flag works fine inside Linux/WSL2 or the
+`amor-app-2` container if `mem_limit` is bumped above 6 GB.  This
+runbook recommends Docker container with raised mem_limit OR a
+WSL2/Linux host as the operator path.
 
 **Path C — Overnight CPU batch (current default, no code change).**
 

@@ -52,6 +52,7 @@ async def main_async(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     queries_path = Path(args.queries).resolve()
     _print(f"root={root}, queries={queries_path}")
+    _print(f"embedding_model={args.embedding_model}")
     if not queries_path.is_file():
         _print(f"FATAL: queries file missing: {queries_path}")
         return 1
@@ -64,7 +65,11 @@ async def main_async(args: argparse.Namespace) -> int:
                 paths.add(sid)
     _print(f"unique paths from bench seed: {len(paths)}")
 
-    store = LanceDBVectorStore(db_path=args.db_path)
+    store_kwargs = {"db_path": args.db_path}
+    if args.embedding_model:
+        store_kwargs["embedding_model"] = args.embedding_model
+    store = LanceDBVectorStore(**store_kwargs)
+    _print(f"embedding_dim={store.embedding_dim}, table={store.table_name}")
     pre = await store.get_stats()
     _print(f"LanceDB pre: {pre}")
 
@@ -113,6 +118,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="repo root to resolve relative paths against")
     p.add_argument("--db-path", default="/data/vectors",
                    help="LanceDB db_path (default /data/vectors)")
+    p.add_argument("--embedding-model", default=None,
+                   help="override sentence-transformers model id; e.g. "
+                        "'sentence-transformers/all-MiniLM-L6-v2' for the "
+                        "lightweight ~80MB / 384-dim embedder (5× faster "
+                        "than the default nomic-embed-text-v1.5 on CPU)")
     p.add_argument("--chunk-size", type=int, default=1500)
     p.add_argument("--chunk-overlap", type=int, default=200)
     return p
