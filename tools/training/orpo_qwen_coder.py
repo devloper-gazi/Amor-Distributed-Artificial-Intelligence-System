@@ -83,6 +83,22 @@ def build_parser() -> argparse.ArgumentParser:
             "Lets CI exercise this script without a GPU."
         ),
     )
+    # Cycle H.0.3 — opt-in GRPO trainer.  Default stays "orpo" so all
+    # existing operator scripts/cron entries keep their current
+    # behaviour.  When "grpo" is selected, the runner expects
+    # `reward_chosen` + `reward_rejected` columns on the dataset
+    # (produced by `tools/training/verifier_rewards.py:annotate_jsonl_file`).
+    p.add_argument(
+        "--trainer-type",
+        choices=("orpo", "grpo"),
+        default="orpo",
+        help=(
+            "training algorithm.  ORPO (default, backward-compat) uses "
+            "TRL ORPOTrainer.  GRPO opts into TRL >=0.18 GRPOTrainer and "
+            "reads scalar reward columns produced by the verifier_rewards "
+            "annotation step.  Plan-agent pin: trl==0.18.* required."
+        ),
+    )
     return p
 
 
@@ -126,10 +142,9 @@ def build_trainer_args(args: argparse.Namespace) -> dict:
     }
 
 
-def main() -> int:
-    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-    args = build_parser().parse_args()
-
+def run(args: argparse.Namespace) -> int:
+    """Body of main() — separated so tests can drive the runner with
+    pre-parsed args without re-invoking the CLI."""
     rows = load_jsonl(Path(args.jsonl))
     n = len(rows)
     if n < args.min_pairs and not args.allow_tiny:
@@ -171,7 +186,16 @@ def main() -> int:
         )
         print(
             json.dumps(
-                {"dry_run": True, "pairs": n, "out": str(out_path), "config": cfg},
+                {
+                    "dry_run": True,
+                    "pairs": n,
+                    "out": str(out_path),
+                    "config": cfg,
+                    # Cycle H.0.3 — surface trainer choice in the
+                    # dry-run payload so the cron's verbose log
+                    # records which factory branch would fire.
+                    "trainer_type": getattr(args, "trainer_type", "orpo"),
+                },
                 indent=2,
             ),
         )
@@ -179,19 +203,46 @@ def main() -> int:
 
     # ── Real training path — heavy imports live here. ───────────────
     logger.info("loading unsloth + transformers (this can take ~30 s) ...")
+    trainer_type = getattr(args, "trainer_type", "orpo").lower()
     try:
-        from unsloth import FastLanguageModel, PatchORPOTrainer  # noqa: PLC0415
-        PatchORPOTrainer()
+        from unsloth import FastLanguageModel  # noqa: PLC0415
         import torch  # noqa: PLC0415
         from datasets import Dataset  # noqa: PLC0415
-        from trl import ORPOConfig, ORPOTrainer  # noqa: PLC0415
+        if trainer_type == "grpo":
+            # Cycle H.0.3 — Plan-agent pin: trl>=0.18 added GRPOTrainer
+            # with `beta`/`reward_chosen`/`reward_rejected` semantics.
+            # Earlier TRL versions don't ship the class; fail fast with
+            # a clear remediation pointer.
+            try:
+                from unsloth import PatchGRPOTrainer  # noqa: PLC0415
+                PatchGRPOTrainer()
+            except ImportError:
+                # Older Unsloth versions don't patch GRPO yet — the
+                # base TRL trainer is still usable, just slower.
+                logger.warning(
+                    "unsloth.PatchGRPOTrainer unavailable — using "
+                    "stock trl.GRPOTrainer (training will be slower)",
+                )
+            from trl import GRPOConfig, GRPOTrainer  # noqa: PLC0415
+        else:
+            from unsloth import PatchORPOTrainer  # noqa: PLC0415
+            PatchORPOTrainer()
+            from trl import ORPOConfig, ORPOTrainer  # noqa: PLC0415
     except ImportError as exc:
-        logger.error(
-            "unsloth/trl not installed.  Install with `pip install "
-            "\"unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git\" "
-            "trl peft accelerate bitsandbytes`. (%s)",
-            exc,
-        )
+        if trainer_type == "grpo":
+            logger.error(
+                "trainer-type=grpo requires trl>=0.18 (GRPOTrainer was "
+                "added in 0.18; the API drifted hard between 0.14 and "
+                "0.18).  Pin requirements.txt: trl==0.18.*.  Original "
+                "import error: %s", exc,
+            )
+        else:
+            logger.error(
+                "unsloth/trl not installed.  Install with `pip install "
+                "\"unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git\" "
+                "trl peft accelerate bitsandbytes`. (%s)",
+                exc,
+            )
         return 3
 
     logger.info("loading model %s @ max_seq_length=%d", args.model_name, args.max_seq_length)
@@ -216,26 +267,66 @@ def main() -> int:
         max_seq_length=args.max_seq_length,
     )
 
-    ds = Dataset.from_list([
-        {"prompt": r["prompt"], "chosen": r["chosen"], "rejected": r["rejected"]}
-        for r in rows
-    ])
+    # Cycle H.0.3 — when GRPO is selected, the dataset MUST carry
+    # ``reward_chosen`` + ``reward_rejected`` scalar columns produced
+    # by ``tools/training/verifier_rewards.py:annotate_jsonl_file``.
+    # ORPO mode silently ignores extras (backward-compat).
+    def _build_row(r: dict) -> dict:
+        row = {
+            "prompt": r["prompt"],
+            "chosen": r["chosen"],
+            "rejected": r["rejected"],
+        }
+        if trainer_type == "grpo":
+            rc = r.get("reward_chosen")
+            rr = r.get("reward_rejected")
+            if rc is None or rr is None:
+                raise ValueError(
+                    "trainer-type=grpo requires every row to carry "
+                    "`reward_chosen` + `reward_rejected` scalars; run "
+                    "`tools/training/verifier_rewards.py annotate-jsonl` "
+                    "first."
+                )
+            row["reward_chosen"] = float(rc)
+            row["reward_rejected"] = float(rr)
+        return row
+
+    ds = Dataset.from_list([_build_row(r) for r in rows])
 
     cfg["fp16"] = not torch.cuda.is_bf16_supported()
     cfg["bf16"] = torch.cuda.is_bf16_supported()
-    trainer = ORPOTrainer(
-        model=model,
-        ref_model=None,
-        tokenizer=tokenizer,
-        args=ORPOConfig(**cfg),
-        train_dataset=ds,
-    )
-    logger.info("training on %d pairs ...", n)
+    if trainer_type == "grpo":
+        # GRPO uses scalar rewards rather than the ORPO odds-ratio
+        # — `beta` keeps the same role (KL-ish weight).  Pass the
+        # same cfg dict; GRPOConfig accepts the common fields.
+        trainer = GRPOTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            args=GRPOConfig(**{**cfg, "beta": getattr(args, "beta", 0.1)}),
+            train_dataset=ds,
+        )
+    else:
+        trainer = ORPOTrainer(
+            model=model,
+            ref_model=None,
+            tokenizer=tokenizer,
+            args=ORPOConfig(**cfg),
+            train_dataset=ds,
+        )
+    logger.info("training (%s) on %d pairs ...", trainer_type, n)
     trainer.train()
     logger.info("saving adapter to %s", out_path)
     trainer.save_model(str(out_path))
-    print(json.dumps({"trained": True, "pairs": n, "out": str(out_path)}, indent=2))
+    print(json.dumps(
+        {"trained": True, "trainer": trainer_type, "pairs": n, "out": str(out_path)},
+        indent=2,
+    ))
     return 0
+
+
+def main() -> int:
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+    return run(build_parser().parse_args())
 
 
 if __name__ == "__main__":

@@ -225,6 +225,90 @@ def test_v20_scorecard_persist_writes_json(monkeypatch, tmp_path):
     assert len(data["conditions"]) == 6
 
 
+def test_v20_telemetry_vram_envelope_metric_included(monkeypatch):
+    """Cycle H.0.4 — render_metrics output must include
+    `amor_gpu_vram_envelope_mb` and `amor_gpu_vram_envelope_current_mb`
+    gauges so the v20 gate's continuous monitoring path can read them.
+    """
+    from monitoring.nvidia_smi_exporter import (
+        GPUSample, render_metrics, reset_envelope_state,
+    )
+    reset_envelope_state()
+    samples = [
+        GPUSample(
+            index=0, name="RTX 4060 Laptop",
+            memory_used_mb=4096.0, memory_free_mb=4096.0, memory_total_mb=8192.0,
+            utilization_gpu_pct=70, utilization_memory_pct=50,
+            temperature_c=68, power_draw_w=40.0,
+        ),
+    ]
+    out = render_metrics(samples, poll_failures=0, poll_duration_s=0.05)
+    assert "amor_gpu_vram_envelope_mb" in out
+    assert "amor_gpu_vram_envelope_current_mb" in out
+    # Rolling peak after one sample == that sample's used.
+    assert "amor_gpu_vram_envelope_mb 4096.0" in out
+    assert "amor_gpu_vram_envelope_current_mb 4096.0" in out
+
+
+def test_v20_telemetry_vram_envelope_persists_peak_across_polls(monkeypatch):
+    """The rolling peak survives a poll where memory dropped — the
+    envelope reflects the WORST case since exporter boot, not the
+    last sample.  That's what gate condition #5 (≤7.2 GB) measures."""
+    from monitoring.nvidia_smi_exporter import (
+        GPUSample, render_metrics, reset_envelope_state,
+    )
+    reset_envelope_state()
+    high = [GPUSample(
+        index=0, name="GPU",
+        memory_used_mb=7500.0, memory_free_mb=692.0, memory_total_mb=8192.0,
+        utilization_gpu_pct=99, utilization_memory_pct=70,
+        temperature_c=80, power_draw_w=80.0,
+    )]
+    low = [GPUSample(
+        index=0, name="GPU",
+        memory_used_mb=2000.0, memory_free_mb=6192.0, memory_total_mb=8192.0,
+        utilization_gpu_pct=20, utilization_memory_pct=10,
+        temperature_c=60, power_draw_w=20.0,
+    )]
+    render_metrics(high, poll_failures=0, poll_duration_s=0.05)
+    out = render_metrics(low, poll_failures=0, poll_duration_s=0.05)
+    # Peak should remain 7500 even though current dropped to 2000.
+    assert "amor_gpu_vram_envelope_mb 7500.0" in out
+    assert "amor_gpu_vram_envelope_current_mb 2000.0" in out
+    # reset clears the peak.
+    reset_envelope_state()
+    out = render_metrics(low, poll_failures=0, poll_duration_s=0.05)
+    assert "amor_gpu_vram_envelope_mb 2000.0" in out
+
+
+def test_v20_telemetry_shadow_stats_endpoint_returns_bitnet_payload():
+    """Cycle H.0.4 — `GET /api/admin/llm/bitnet/shadow_stats` must surface
+    the same payload `bitnet_shadow.get_shadow_stats()` returns to the
+    v20 gate runner.  Operator probes it via curl during the 14-day
+    shadow window."""
+    from document_processor.api import admin_llm_routes
+    from document_processor.code_intelligence import bitnet_shadow
+    import asyncio
+
+    bitnet_shadow.reset_stats()
+    for i in range(10):
+        bitnet_shadow.record_shadow_outcome(
+            f"req-{i}", {"p": "a"}, {"p": "a"}, latency_ms=3500,
+        )
+
+    # The endpoint is wrapped with Depends(get_current_user); call it
+    # bare to verify the underlying logic.  In production, FastAPI's
+    # router resolves the dep injection.
+    payload = asyncio.run(admin_llm_routes.get_bitnet_shadow_stats(_user=None))
+    assert payload["samples"] == 10
+    # bitnet_shadow returns `agreement_rate` (0-1 fraction) + `p95_ms`
+    # rather than the percent/latency-suffixed names the gate runner
+    # synthesises.  Verify the raw payload still carries them.
+    assert "agreement_rate" in payload
+    assert "p95_ms" in payload
+    bitnet_shadow.reset_stats()
+
+
 def test_v20_substrate_count_fallback_detects_substrates(monkeypatch, tmp_path):
     """When the telemetry snapshot is missing, fallback infers from
     presence of `compose/llama-swap/config.yaml` + `models/bitnet/`

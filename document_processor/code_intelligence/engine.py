@@ -278,8 +278,35 @@ class CodeIntelligenceEngine:
         # the code while the critic was in flight; on mismatch we
         # cancel + re-launch the critic on the post-debug code.
         self._critic_code_hash: str | None = None
+        # Cycle H Phase A.1 — BitNet shadow planner fire-and-forget
+        # task handle.  Kept for cleanup (cancel on shutdown) only;
+        # the shadow path records its own outcome via
+        # `bitnet_shadow.record_shadow_outcome` so we don't need to
+        # await this task — fire-and-forget is by design.  When
+        # `code_bitnet_planner_enabled=False` (default) this stays
+        # None forever and zero overhead is added.
+        self._bitnet_shadow_task: asyncio.Task | None = None
+        # Stable session identifier used by the BitNet hash-based
+        # traffic split.  We derive from prompt + a per-engine uuid
+        # so retries of the same prompt land on the same shadow
+        # decision (auditable + reproducible).
+        import uuid as _uuid  # noqa: PLC0415
+        self._session_id: str = str(_uuid.uuid4())
+        # Cycle I.2 — Titans predictive-memory recall handle.  Set
+        # via ``attach_titans_memory(mem)`` by the route layer (which
+        # owns the global TitansPredictiveMemory singleton + embedder).
+        # When None, the _phase_plan recall hook is a no-op.
+        self._titans_memory: Any = None
 
     # ── helpers ───────────────────────────────────────────────────────────
+
+    def attach_titans_memory(self, memory: Any) -> None:
+        """Cycle I.2 — wire a TitansPredictiveMemory instance so the
+        plan phase can recall past sessions.  Route layer constructs
+        the singleton once per FastAPI worker and reuses it across
+        engine instances.  None is the same as "no-op" — calling this
+        with a falsy value clears the handle."""
+        self._titans_memory = memory
 
     async def _emit(self, event: dict[str, Any]) -> None:
         try:
@@ -463,7 +490,72 @@ class CodeIntelligenceEngine:
         # reasoning-tuned model (DeepSeek-R1-Distill when installed,
         # else qwen2.5:7b).  ``planner`` is preserved as a registry
         # alias for back-compat with quick_code + older callers.
-        self._role_setter("architect")
+        #
+        # Cycle I.2 — Titans test-time predictive memory recall.
+        # When ``settings.code_titans_enabled=True`` AND the engine
+        # was constructed with a ``titans_memory`` instance, recall
+        # the top-K most similar past sessions and prepend them to
+        # the planner prompt context.  Falls through silently when
+        # disabled / no embedder available.  Plan-agent locked: NEVER
+        # raise — recall is best-effort context augmentation.
+        try:
+            from ..config.settings import settings as _s_titans  # noqa: PLC0415
+            if (
+                getattr(_s_titans, "code_titans_enabled", False)
+                and getattr(self, "_titans_memory", None) is not None
+            ):
+                titans_md = await self._titans_memory.recall_as_markdown(
+                    self.prompt or "",
+                )
+                if titans_md:
+                    # Prepend to code_context so the planner agent
+                    # sees it as part of the context block (rather
+                    # than mangling the user-typed prompt).
+                    self.code_context = (
+                        titans_md + "\n---\n" + (self.code_context or "")
+                    )
+                    await self._emit({
+                        "type": "titans_recall_engaged",
+                        "lines": len(titans_md.splitlines()),
+                    })
+                    logger.info(
+                        "titans_recall_engaged: %d markdown lines injected",
+                        len(titans_md.splitlines()),
+                    )
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.debug("titans_recall_failed: %s", exc)
+
+        # Cycle I.1 — long-context "associative cortex" override.  When
+        # ``settings.code_lfm2_cortex_enabled=True`` AND the prompt +
+        # code_context tokens exceed ``code_cortex_threshold_tokens``,
+        # route this phase to the LFM2-2.6B cortex track instead of
+        # architect.  LFM2's strengths=["long context", "associative",
+        # "fast prefill"] auto-routes via ROLE_STRENGTH_MAP["cortex"].
+        # Falls through to architect on any resolution failure so the
+        # phase NEVER fails closed.  Plan-agent locked: 2-week
+        # SWE-bench-Lite shadow before promote; default OFF.
+        chosen_role = "architect"
+        try:
+            from ..config.settings import settings as _s  # noqa: PLC0415
+            if getattr(_s, "code_lfm2_cortex_enabled", False):
+                # Rough character-to-token heuristic (English: ~4 chars/token).
+                ctx_chars = len(self.prompt or "") + len(self.code_context or "")
+                est_tokens = ctx_chars // 4
+                threshold = int(getattr(_s, "code_cortex_threshold_tokens", 16384))
+                if est_tokens >= threshold:
+                    chosen_role = "cortex"
+                    await self._emit({
+                        "type": "cortex_routing_engaged",
+                        "estimated_input_tokens": est_tokens,
+                        "threshold_tokens": threshold,
+                    })
+                    logger.info(
+                        "cortex_routing_engaged: input ~%d tokens >= %d threshold",
+                        est_tokens, threshold,
+                    )
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.debug("cortex_routing_decision_failed: %s", exc)
+        self._role_setter(chosen_role)
         agent = PlannerAgent(self.llm_call, max_tokens=self._budgets["plan"])
         out = await agent.run(
             AgentContext(
@@ -1099,6 +1191,30 @@ class CodeIntelligenceEngine:
                                 "type": "mutation_result",
                                 "result": self.mutation_result,
                             })
+                            # v18.1.5 (Cycle H gate-gap fix) — persist
+                            # mutation_result to a baselines JSONL so the
+                            # aggregator (tools/aggregate_mutation_scores.py)
+                            # can read it without DB round-trip.  v19 gate
+                            # condition #6 reads the aggregator's snapshot.
+                            try:
+                                import json as _json  # noqa: PLC0415
+                                from pathlib import Path as _Path  # noqa: PLC0415
+                                _root = _Path("/app/data/baselines")
+                                if not _root.is_dir():
+                                    # Fallback for non-container runs.
+                                    _root = _Path(__file__).resolve().parents[2] / "data" / "baselines"
+                                _root.mkdir(parents=True, exist_ok=True)
+                                _line = {
+                                    "session_id": getattr(self, "_session_id", None),
+                                    "request_id": self.request_id,
+                                    "mutation_result": self.mutation_result,
+                                    "language": self.detected_language,
+                                    "recorded_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                                }
+                                with (_root / "mutation_runs.jsonl").open("a", encoding="utf-8") as _f:
+                                    _f.write(_json.dumps(_line) + "\n")
+                            except Exception as _exc:  # pragma: no cover (defensive)
+                                logger.debug("mutation_result_persist_failed: %s", _exc)
                         except Exception as exc:  # pragma: no cover (defensive)
                             logger.debug("mutation_run_failed: %s", exc)
                 else:
@@ -1966,10 +2082,137 @@ class CodeIntelligenceEngine:
 
     # ── run ───────────────────────────────────────────────────────────────
 
+    async def _bitnet_shadow_planner_call(self) -> None:
+        """Cycle H Phase A.1 — BitNet shadow planner fire-and-forget
+        worker.  Runs IN PARALLEL with the rest of the pipeline; its
+        ONLY job is to call the BitNet llama-server with the same
+        planner prompt, then record (main_plan, shadow_plan) for
+        agreement-rate measurement.  Never blocks user-visible
+        wall-clock; hard 8s deadline + silent fallback.
+
+        Pre-conditions checked at call site:
+          * `settings.code_bitnet_planner_enabled = True`
+          * `bitnet_shadow.should_shadow_to_bitnet(self._session_id)`
+            returned True for this session
+
+        Outcomes (recorded via bitnet_shadow.record_shadow_outcome):
+          * success: agreement = hash(main_plan) == hash(shadow_plan)
+          * timeout: timed_out=True, fell_back=True
+          * error:   shadow_plan=None, fell_back=True
+        """
+        import time as _time  # noqa: PLC0415
+
+        # Import shadow helpers lazily so the engine module stays
+        # importable even when bitnet_shadow.py is removed for
+        # rollback.
+        try:
+            from .bitnet_shadow import record_shadow_outcome  # noqa: PLC0415
+            from ..config.settings import settings  # noqa: PLC0415
+            from ...local_ai.llm_backend import make_backend  # noqa: PLC0415
+        except Exception as exc:
+            logger.debug("bitnet_shadow_imports_failed: %s", exc)
+            return
+
+        started = _time.perf_counter()
+        timed_out = False
+        shadow_plan: Any = None
+
+        try:
+            base_url = str(getattr(settings, "code_bitnet_planner_url", "http://localhost:8081"))
+            timeout_s = float(getattr(settings, "code_bitnet_planner_timeout_s", 8.0))
+            model_tag = str(getattr(settings, "code_bitnet_model_tag", "bitnet-b1.58-2b4t"))
+
+            backend = make_backend("bitnet-cpu", url=base_url)
+            # Build the same planner prompt the main path used.  The
+            # prompt is reproducible from (self.prompt, self.code_context,
+            # self.triage) — we ask the LLMBackend to render via a
+            # short user-message that mirrors PlannerAgent.run's
+            # context shape.
+            from . import prompts as _P  # noqa: PLC0415
+            planner_system = getattr(_P, "PLANNER_SYSTEM_PROMPT", "You are a planner.")
+            planner_user = (
+                f"User prompt:\n{self.prompt}\n\n"
+                f"Code context (truncated):\n{(self.code_context or '')[:2000]}\n\n"
+                "Produce a plan as JSON matching the planner schema."
+            )
+
+            # Hard deadline via asyncio.wait_for.  Falls back silently
+            # to (timed_out=True, shadow_plan=None) — the user-visible
+            # main planner output is unaffected.
+            async def _call() -> str:
+                # OpenAI-compat backend exposes `.complete(prompt,
+                # system, options)`.  Use a small max_tokens cap so the
+                # shadow doesn't burn its 8s budget on a long response.
+                from local_ai.llm_backend.base import ChatOptions  # noqa: PLC0415
+                opts = ChatOptions(temperature=0.0, max_tokens=1024)
+                return await backend.complete(
+                    planner_user, model=model_tag, system=planner_system, options=opts,
+                )
+            try:
+                raw = await asyncio.wait_for(_call(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                timed_out = True
+                raw = ""
+
+            if raw:
+                # Best-effort JSON parse — shadow plan is content for
+                # hash comparison only, not for execution.
+                try:
+                    import json  # noqa: PLC0415
+                    # Strip code fences if present
+                    text = raw.strip()
+                    if "```" in text:
+                        start = text.find("```")
+                        end = text.find("```", start + 3)
+                        if end > 0:
+                            inner = text[start + 3:end].lstrip("\n")
+                            if inner.startswith("json"):
+                                inner = inner[4:].lstrip("\n")
+                            text = inner
+                    shadow_plan = json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    # Non-JSON output — store raw text wrapped in a
+                    # dict so the hash function can still process it.
+                    shadow_plan = {"_raw_text": raw[:2000]}
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.debug("bitnet_shadow_call_failed: %s", exc)
+            shadow_plan = None
+
+        latency_ms = (_time.perf_counter() - started) * 1000.0
+        try:
+            record_shadow_outcome(
+                self._session_id,
+                main_plan=self.plan if isinstance(self.plan, dict) else {},
+                shadow_plan=shadow_plan,
+                latency_ms=latency_ms,
+                timed_out=timed_out,
+                fell_back=(shadow_plan is None),
+            )
+        except Exception:
+            pass
+
     async def run(self) -> dict[str, Any]:
         await self._run_phase("triage", self._phase_triage)
         await self._run_phase("model_prep", self._phase_model_prep)
         await self._run_phase("plan", self._phase_plan)
+
+        # Cycle H Phase A.1 — BitNet shadow planner fire-and-forget.
+        # Master gate `code_bitnet_planner_enabled` default OFF means
+        # this is a no-op until operator opts in AND bitnet.cpp
+        # llama-server is running on the configured URL.  Hash-based
+        # deterministic traffic split (default 10%) drops the call
+        # for sessions outside the shadow set.  Plan-agent locked:
+        # shadow mode MUST NEVER block — `asyncio.create_task` is
+        # fire-and-forget; the worker enforces its own 8s deadline.
+        try:
+            from .bitnet_shadow import should_shadow_to_bitnet  # noqa: PLC0415
+            if should_shadow_to_bitnet(self._session_id):
+                self._bitnet_shadow_task = asyncio.create_task(
+                    self._bitnet_shadow_planner_call(),
+                    name="amor_bitnet_shadow",
+                )
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.debug("bitnet_shadow_kickoff_failed: %s", exc)
 
         # If planning failed, we cannot meaningfully continue.
         if self._phase_index["plan"].status != "completed":

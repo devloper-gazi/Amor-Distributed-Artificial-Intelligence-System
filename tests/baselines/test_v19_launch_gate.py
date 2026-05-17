@@ -117,6 +117,95 @@ def test_v19_gate_fail_when_one_threshold_missed(monkeypatch, tmp_path):
     assert latency.measured == 140.0
 
 
+def test_v19_gate_latency_excludes_timeout_rows(monkeypatch, tmp_path):
+    """v18.1.5 Cycle H gate-gap fix — when Sprint-0 has rows that
+    timed-out at the runner's session cap (600s, 0 tokens emitted),
+    those degenerate measurements must be excluded from the median.
+    The note must document the exclusion count so the operator sees
+    why the measured median diverges from a raw row-walk."""
+    import tools.run_v19_launch_gate as gate
+    baselines = tmp_path / "baselines"
+    monkeypatch.setattr(gate, "BASELINES_ROOT", baselines)
+    baselines.mkdir()
+    (baselines / "sprint0_latest.json").write_text(json.dumps({
+        "rows": [
+            {"status": "completed", "metrics": {"wall_clock_ms": 30_000}},
+            {"status": "completed", "metrics": {"wall_clock_ms": 60_000}},
+            {"status": "completed", "metrics": {"wall_clock_ms": 90_000}},
+            # Three degenerate timeouts — must be excluded from median.
+            {"status": "timeout",   "metrics": {"wall_clock_ms": 600_000}},
+            {"status": "timeout",   "metrics": {"wall_clock_ms": 600_000}},
+            {"status": "failed",    "metrics": {"wall_clock_ms": 600_000}},
+        ],
+    }), encoding="utf-8")
+
+    cond = gate._condition_pipeline_latency()
+    # Median over the 3 completed rows (30/60/90) = 60s.  Without the
+    # fix, including all 6 rows would yield median ~(90+600)/2 = 345s.
+    assert cond.measured == 60.0
+    assert "excluded 3" in (cond.note or "").lower()
+    # 60 ≤ 95 → PASS.
+    assert cond.status == "pass"
+
+
+def test_v19_gate_swebench_simplified_mode_marks_skipped(monkeypatch, tmp_path):
+    """v18.1.5 Cycle H gate-gap fix — simplified-mode SWE-bench runs
+    ALWAYS report resolved_rate=0.0% because they never execute patches.
+    Conflating that with a genuine FAIL pollutes the scorecard.  The
+    gate must mark the condition SKIPPED with the operator-action note
+    when the runner explicitly tagged the result as simplified."""
+    import tools.run_v19_launch_gate as gate
+    eval_runs = tmp_path / "eval_runs"
+    monkeypatch.setattr(gate, "EVAL_RUNS_ROOT", eval_runs)
+    monkeypatch.setattr(gate, "BASELINES_ROOT", tmp_path / "baselines")
+    (eval_runs / "swebench_lite").mkdir(parents=True)
+    (eval_runs / "swebench_lite" / "latest.json").write_text(json.dumps({
+        "name": "swebench_lite_25",
+        "summary": {
+            "resolved_rate_percent": 0.0,
+            "total": 5,
+            "raw": {"mode": "simplified", "resolved": 0, "total": 5},
+        },
+    }), encoding="utf-8")
+
+    cond = gate._condition_swebench_lite()
+    assert cond.status == "skipped"
+    assert "simplified" in (cond.note or "").lower()
+    assert "AMOR_SWEBENCH_FULL_HARNESS" in (cond.note or "")
+
+
+def test_v19_gate_swebench_full_harness_still_evaluates_threshold(monkeypatch, tmp_path):
+    """Full-harness mode produces a real resolved-rate; gate must apply
+    the ≥16% threshold normally (PASS at 18%, FAIL at 10%)."""
+    import tools.run_v19_launch_gate as gate
+    eval_runs = tmp_path / "eval_runs"
+    monkeypatch.setattr(gate, "EVAL_RUNS_ROOT", eval_runs)
+    monkeypatch.setattr(gate, "BASELINES_ROOT", tmp_path / "baselines")
+    (eval_runs / "swebench_lite").mkdir(parents=True)
+
+    # PASS path — full_harness mode, resolved=18%
+    (eval_runs / "swebench_lite" / "latest.json").write_text(json.dumps({
+        "summary": {
+            "resolved_rate_percent": 18.0,
+            "raw": {"mode": "full_harness"},
+        },
+    }), encoding="utf-8")
+    cond = gate._condition_swebench_lite()
+    assert cond.status == "pass"
+    assert cond.measured == 18.0
+
+    # FAIL path — full_harness mode, resolved=10%
+    (eval_runs / "swebench_lite" / "latest.json").write_text(json.dumps({
+        "summary": {
+            "resolved_rate_percent": 10.0,
+            "raw": {"mode": "full_harness"},
+        },
+    }), encoding="utf-8")
+    cond = gate._condition_swebench_lite()
+    assert cond.status == "fail"
+    assert cond.measured == 10.0
+
+
 def test_v19_gate_falls_back_to_fraction_when_percent_absent(monkeypatch, tmp_path):
     """HumanEval+ snapshot stores pass_at_1 as a fraction (0.78); the
     gate must scale to percent for threshold comparison."""

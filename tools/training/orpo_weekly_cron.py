@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Dict, Optional
 
 if sys.platform == "win32":
     for _s in (sys.stdout, sys.stderr):
@@ -258,10 +259,12 @@ def train_one_role(
     timestamp: str,
     dry_run: bool = False,
     min_pairs: int = 50,
+    trainer_type: str = "orpo",
+    pairs_file_override: Optional[Path] = None,
 ) -> RoleTrainingResult:
     """Train a single role.  Result populates the WeeklyRunReport."""
 
-    pairs_file = _resolve_pairs_file(role)
+    pairs_file = pairs_file_override or _resolve_pairs_file(role)
     pair_n = _pair_count(pairs_file)
 
     if pair_n == 0:
@@ -303,6 +306,10 @@ def train_one_role(
         "--out", str(candidate_dir),
         "--convert-gguf",
     ]
+    # Cycle H.0.3 — forward trainer-type to the launcher.  ORPO mode
+    # keeps the legacy command shape identical (no flag added).
+    if trainer_type and trainer_type.lower() != "orpo":
+        cmd.extend(["--trainer-type", trainer_type.lower()])
     logger.info("[%s] launching training: %s", role, " ".join(cmd))
     started = time.monotonic()
     try:
@@ -460,6 +467,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--export-since", default="30d",
         help="--since forwarded to export_pairs_jsonl.py (default '30d').",
     )
+    # Cycle H.0.3 — verifier-reward annotation + GRPO mode.
+    p.add_argument(
+        "--trainer-type",
+        choices=("orpo", "grpo"),
+        default="orpo",
+        help=(
+            "Forwarded to orpo_qwen_coder.py.  Default 'orpo' keeps "
+            "Cycle F semantics; 'grpo' opts into TRL>=0.18 GRPOTrainer "
+            "with verifier-derived scalar rewards."
+        ),
+    )
+    p.add_argument(
+        "--skip-reward-annotation", action="store_true",
+        help=(
+            "Skip Step 0a verifier_rewards annotation even when "
+            "--trainer-type=grpo.  Use when the JSONL was hand-annotated "
+            "or recorded reward fields upstream."
+        ),
+    )
     return p
 
 
@@ -494,6 +520,47 @@ def run(args: argparse.Namespace) -> int:
             # Continue to training anyway — operator may have hand-dropped
             # JSONL that's still usable.
 
+    # Cycle H.0.3 — Step 0a: verifier-reward annotation.  Only fires
+    # when GRPO mode is selected; ORPO ignores reward columns so the
+    # extra disk/CPU pass would be wasted.  Per-role JSONL is rewritten
+    # in-place with `.rewards.jsonl` suffix and the next train_one_role
+    # call points at the annotated path.
+    trainer_type = getattr(args, "trainer_type", "orpo").lower()
+    annotated_paths: Dict[str, Path] = {}
+    if (
+        trainer_type == "grpo"
+        and not getattr(args, "skip_reward_annotation", False)
+        and not args.dry_run
+    ):
+        try:
+            from tools.training.verifier_rewards import (  # noqa: PLC0415
+                annotate_jsonl_file,
+            )
+        except ImportError as exc:
+            logger.warning(
+                "verifier_rewards module unavailable — GRPO will need "
+                "pre-annotated JSONL (%s)", exc,
+            )
+            annotate_jsonl_file = None
+        if annotate_jsonl_file is not None:
+            for role in args.role or list(ROLES):
+                src = _resolve_pairs_file(role)
+                if not src.is_file():
+                    continue
+                dst = src.with_suffix(".rewards.jsonl")
+                try:
+                    stats = annotate_jsonl_file(src, dst)
+                    annotated_paths[role] = dst
+                    logger.info(
+                        "[%s] verifier_rewards annotated %d rows -> %s",
+                        role, stats.get("rows_in", 0), dst,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[%s] verifier_rewards annotation failed: %s",
+                        role, exc,
+                    )
+
     selected_roles = args.role if args.role else list(ROLES)
 
     for role in selected_roles:
@@ -502,6 +569,8 @@ def run(args: argparse.Namespace) -> int:
             timestamp=timestamp.replace(":", "").replace("-", ""),
             dry_run=args.dry_run,
             min_pairs=args.min_pairs,
+            trainer_type=trainer_type,
+            pairs_file_override=annotated_paths.get(role),
         )
         report.results.append(result)
 

@@ -106,12 +106,56 @@ def _parse_since(spec: str) -> Optional[datetime]:
 
 
 def _walk_sprint0_snapshot(snapshot: dict) -> List[float]:
-    """Sprint-0 v18 baseline writes per-task results under
-    ``tasks[i].mutation_result`` when the engine enabled mutation
-    testing during the run.  Returns a list of per-task scores."""
+    """Sprint-0 v18 baseline writes per-task results — the modern v18
+    shape uses ``rows[i]``; older runs used ``tasks[i]`` or ``results[i]``.
+    ``mutation_result`` may appear either at the row root OR nested
+    inside ``extra``/``metrics`` depending on the runner version.
+    Returns a list of per-task scores."""
     scores: List[float] = []
-    for task in snapshot.get("tasks") or snapshot.get("results") or []:
+    for task in (
+        snapshot.get("rows")
+        or snapshot.get("tasks")
+        or snapshot.get("results")
+        or []
+    ):
+        # Direct ``mutation_result`` key (legacy + JSONL-line shape).
         mr = task.get("mutation_result")
+        if not isinstance(mr, dict):
+            extra = task.get("extra") or {}
+            if isinstance(extra, dict):
+                mr = extra.get("mutation_result")
+        if isinstance(mr, dict) and mr.get("ran"):
+            score = mr.get("score")
+            if isinstance(score, (int, float)):
+                scores.append(float(score))
+    return scores
+
+
+def _scores_from_mutation_runs_jsonl() -> List[float]:
+    """v18.1.5 (Cycle H gate-gap fix) — the engine appends each session's
+    mutation_result to ``data/baselines/mutation_runs.jsonl`` so the
+    aggregator can pick it up without a DB round-trip.  Reads the most
+    recent lines (up to 500) and returns per-session scores where
+    ``mutation_result.ran`` is True."""
+    jsonl_path = BASELINES_ROOT / "mutation_runs.jsonl"
+    if not jsonl_path.is_file():
+        return []
+    scores: List[float] = []
+    try:
+        # Bound memory in case the file grew huge — keep last 500 entries.
+        lines = jsonl_path.read_text(encoding="utf-8").splitlines()[-500:]
+    except OSError as exc:
+        logger.warning("mutation_runs.jsonl unreadable: %s", exc)
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        mr = rec.get("mutation_result")
         if isinstance(mr, dict) and mr.get("ran"):
             score = mr.get("score")
             if isinstance(score, (int, float)):
@@ -220,6 +264,7 @@ async def _run(args: argparse.Namespace) -> int:
     since = _parse_since(args.since)
     scores: List[float] = []
     scores.extend(_scores_from_sprint0_latest())
+    scores.extend(_scores_from_mutation_runs_jsonl())
     db_scores = await _scores_from_eval_runs(since=since)
     scores.extend(db_scores)
 

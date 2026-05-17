@@ -222,6 +222,32 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         license="MIT",
     ),
     # ── Lightweight tier (< 8 GB VRAM or CPU) ───────────────────────────────
+    # Cycle I.1 — LFM2-2.6B "associative cortex" (Liquid AI).
+    # Strengths chosen to auto-route the new `cortex` role here when
+    # the prompt+context window exceeds 16K tokens.  Liquid AI's
+    # benchmarks claim near-Qwen quality at <2× the params, with
+    # higher token throughput on the same hardware (vendor-reported;
+    # AMOR's own SWE-bench-Lite shadow gate in Sprint I.1 measures
+    # real performance before any production routing flip).
+    # Plan-agent locked: 2-week shadow before promote; ≥2pp
+    # SWE-bench-Lite drop = revert.  Currently OFF-by-default; opt
+    # in via settings.code_lfm2_cortex_enabled=True after the gate
+    # passes.
+    ModelSpec(
+        ollama_tag="lfm2:2.6b-q4",
+        display_name="LFM2 2.6B (cortex)",
+        params_b=2.6,
+        vram_gb=2,
+        swebench_pct=0,
+        humaneval_pct=0,
+        context_k=32,
+        strengths=[
+            "on-device", "long context", "fast prefill",
+            "associative", "general",
+        ],
+        tier="lightweight",
+        license="Apache-2.0",
+    ),
     ModelSpec(
         ollama_tag="qwen2.5-coder:3b",
         display_name="Qwen2.5-Coder 3B",
@@ -429,6 +455,21 @@ ROLE_STRENGTH_MAP: dict[str, list[str]] = {
         "step-by-step",
     ],
     "triage": ["fast generation", "explanation", "general"],
+    # Cycle I.1 — long-context "associative" track for prompts where
+    # the user-supplied context exceeds 16K tokens.  LFM2-2.6B picks
+    # itself up via strengths=["long context", "associative",
+    # "fast prefill"]; Qwen2.5-Coder-7B falls back when LFM2 isn't
+    # installed (qwen has context_k=128 + "long context" implicit).
+    "cortex": [
+        "long context", "associative", "fast prefill", "on-device",
+        "general",
+    ],
+    # Cycle H.1 — BitNet b1.58 ternary planner for the energy-
+    # efficiency comparator.  Routed via the shadow path (see
+    # bitnet_shadow.should_shadow_to_bitnet); never user-facing.
+    "bitnet_shadow_planner": [
+        "fast inference", "planning", "triage", "general",
+    ],
 }
 
 

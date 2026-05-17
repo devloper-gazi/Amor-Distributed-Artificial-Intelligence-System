@@ -241,7 +241,40 @@ def render_metrics(samples: List[GPUSample], *, poll_failures: int, poll_duratio
     lines.append("# TYPE amor_gpu_poll_duration_seconds gauge")
     lines.append(f"amor_gpu_poll_duration_seconds {poll_duration_s}")
 
+    # Cycle H.0.4 — VRAM envelope = max(memory_used_mb) across all GPUs
+    # this poll cycle, persisted across calls in module state so the
+    # rolling peak survives recovery from a poll hiccup.  v20 gate
+    # condition #5 reads this gauge (≤7.2 GB on the RTX 4060 laptop).
+    if samples:
+        envelope_mb = max(s.memory_used_mb for s in samples)
+    else:
+        envelope_mb = 0.0
+    _ENVELOPE_STATE["peak_mb"] = max(_ENVELOPE_STATE.get("peak_mb", 0.0), envelope_mb)
+    lines.append(
+        "# HELP amor_gpu_vram_envelope_mb Rolling peak VRAM used across all "
+        "GPUs since exporter boot (Cycle H v20 gate condition #5)."
+    )
+    lines.append("# TYPE amor_gpu_vram_envelope_mb gauge")
+    lines.append(f"amor_gpu_vram_envelope_mb {_ENVELOPE_STATE['peak_mb']}")
+    lines.append(
+        "# HELP amor_gpu_vram_envelope_current_mb Current poll's max VRAM "
+        "used across all GPUs."
+    )
+    lines.append("# TYPE amor_gpu_vram_envelope_current_mb gauge")
+    lines.append(f"amor_gpu_vram_envelope_current_mb {envelope_mb}")
+
     return "\n".join(lines) + "\n"
+
+
+# Cycle H.0.4 — module-level state for the rolling VRAM envelope.
+# Reset by ``reset_envelope_state()`` so tests / operator can rebase.
+_ENVELOPE_STATE: dict = {"peak_mb": 0.0}
+
+
+def reset_envelope_state() -> None:
+    """Operator / test helper — clears the rolling VRAM envelope so a
+    fresh window can be measured (e.g. before a Sprint-0 run)."""
+    _ENVELOPE_STATE["peak_mb"] = 0.0
 
 
 # ─── Poller thread ─────────────────────────────────────────────────

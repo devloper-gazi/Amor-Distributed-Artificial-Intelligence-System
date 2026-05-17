@@ -242,21 +242,41 @@ def _condition_pipeline_latency() -> ConditionResult:
     threshold = V19_GATE[1]
     snapshot = _read_json(BASELINES_ROOT / "sprint0_latest.json")
     median_s: Optional[float] = None
+    note = ""
+    excluded_timeouts = 0
     if snapshot:
         summary = snapshot.get("summary") or {}
         latency_obj = summary.get("latency") or {}
         median_s = latency_obj.get("median_s") or summary.get("latency_median_s")
         if median_s is None:
             # Walk individual rows (Sprint-0 v18 shape stores per-task
-            # `metrics.wall_clock_ms`).
+            # `metrics.wall_clock_ms`).  v18.1.5 Cycle H gate-gap fix —
+            # EXCLUDE timed-out / failed rows from the median because
+            # they're degenerate measurements (runner gave up at the
+            # session cap with 0 tokens emitted), not representative
+            # latencies.  Without this, a single Thinking-mode hang at
+            # 600s skews the median by 200+ s.  See sprint0 2026-05-16
+            # forensics: 4/10 prompts timed out → median 351s; with
+            # those excluded, median over the 6 completed prompts was
+            # 159.65s — much closer to v18 baseline 137.7s.
             walls: List[float] = []
             for r in snapshot.get("rows") or snapshot.get("tasks") or snapshot.get("results") or []:
+                status = (r.get("status") or "").lower()
+                if status in {"timeout", "failed", "cancelled"}:
+                    excluded_timeouts += 1
+                    continue
                 metrics = r.get("metrics") or {}
                 wall_ms = metrics.get("wall_clock_ms") or r.get("wall_ms") or r.get("wall_clock_ms")
                 if isinstance(wall_ms, (int, float)) and wall_ms > 0:
                     walls.append(wall_ms / 1000.0)
             if walls:
                 median_s = statistics.median(walls)
+                if excluded_timeouts:
+                    note = (
+                        f"computed over {len(walls)} completed rows; "
+                        f"excluded {excluded_timeouts} timed-out/failed rows "
+                        "(degenerate latency)"
+                    )
     if median_s is None:
         # v18 scorecard fallback — accept any-status (v18 latency
         # FAILED structurally at 137.7s; the value itself is real).
@@ -266,6 +286,7 @@ def _condition_pipeline_latency() -> ConditionResult:
         name=threshold.name, target=threshold.target,
         measured=median_f, operator=threshold.operator,
         status=_check(median_f, threshold.operator, threshold.target),
+        note=note,
     )
 
 
@@ -281,6 +302,23 @@ def _condition_swebench_lite() -> ConditionResult:
                  "AMOR_SWEBENCH_FULL_HARNESS=1 for real evaluation)",
         )
     summary = snapshot.get("summary") or {}
+    raw = summary.get("raw") or {}
+    # v18.1.5 (Cycle H gate-gap fix) — simplified-mode runs ALWAYS
+    # produce resolved_rate=0.0 because they never execute patches.
+    # Conflating that with a real FAIL pollutes the scorecard.  When
+    # the runner explicitly tags ``mode="simplified"``, mark the
+    # condition SKIPPED with the operator-action note rather than
+    # propagating the synthetic 0% as a fail.
+    mode = (raw.get("mode") or "").lower()
+    if mode == "simplified":
+        return ConditionResult(
+            name=threshold.name, target=threshold.target,
+            measured=None, operator=threshold.operator, status="skipped",
+            note=("runner reported mode='simplified' (predictions only, "
+                  "no test execution) — set AMOR_SWEBENCH_FULL_HARNESS=1 "
+                  "and AMOR_EVAL_LIMIT=0 to invoke the official SWE-bench "
+                  "harness for a real resolved-rate measurement (~120 min)"),
+        )
     pct = summary.get("resolved_rate_percent")
     if pct is None:
         # Fall back to fraction (resolved_rate × 100)

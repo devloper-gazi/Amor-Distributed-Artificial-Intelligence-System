@@ -362,6 +362,36 @@ async def trigger_swap(
     }
 
 
+# Cycle H.0.4 — BitNet shadow-window stats endpoint.  v20 gate
+# condition #2 reads:
+#   - shadow.agreement_rate_pct  ≥ 85
+#   - shadow.p95_latency_ms      ≤ 6000
+#   - shadow.samples             ≥ 200
+# The data source is the in-process ring buffer maintained by
+# ``document_processor.code_intelligence.bitnet_shadow`` (Cycle H.0.1).
+@router.get("/bitnet/shadow_stats")
+async def get_bitnet_shadow_stats(
+    _user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the live BitNet shadow-window stats.
+
+    Backed by the in-process ring buffer (maxlen=2000) that
+    ``bitnet_shadow.record_shadow_outcome`` populates each time the
+    shadow planner fires.  Survives uvicorn worker lifetime; flushed
+    on container restart.  v20 gate runner reads this same payload via
+    ``get_shadow_stats()`` when measuring condition #2.
+    """
+    try:
+        from ..code_intelligence import bitnet_shadow  # noqa: PLC0415
+        payload = bitnet_shadow.get_shadow_stats()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"bitnet_shadow module unavailable: {exc}",
+        ) from exc
+    return payload
+
+
 __all__ = [
     "router",
     "record_completion_timing",
