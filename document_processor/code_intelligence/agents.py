@@ -1198,7 +1198,15 @@ async def run_triage(
     if domain_detection and domain_detection.get("preferred_languages"):
         prefs = domain_detection["preferred_languages"]
         if language == "python" and language not in prefs:
-            language = prefs[0]
+            # v18.1.5 (Cycle H gate-gap fix) — respect explicit Python
+            # game framework hints.  The game-domain default prefers
+            # html canvas, but when the user wrote "snake game using
+            # pygame" they DO want python+pygame (CI test asserts this
+            # exact contract).  Mirrors the same hint set
+            # `_heuristic_language_override` Pass 2 consults.
+            user_p = (user_prompt or "").lower()
+            if not any(h in user_p for h in _PYTHON_HARDCODED_HINTS):
+                language = prefs[0]
 
     return {
         "task_type": _enum(

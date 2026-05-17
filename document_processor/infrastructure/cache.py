@@ -512,7 +512,13 @@ class CacheManager:
             if pubsub is not None:
                 try:
                     await pubsub.unsubscribe(channel)
-                    await pubsub.close()
+                    # v18.1.5 — `redis.asyncio.PubSub.close()` is
+                    # deprecated since redis-py 5.0.1 in favour of
+                    # `aclose()`; the rename is async-context aware.
+                    if hasattr(pubsub, "aclose"):
+                        await pubsub.aclose()
+                    else:
+                        await pubsub.close()
                 except Exception:
                     pass
 

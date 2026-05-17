@@ -200,7 +200,10 @@ def _engine(sandbox, *, max_debug=2):
 def test_phase_execute_caches_install_packages_for_debug_loop():
     sb = _RecordingSandbox()
     eng = _engine(sb)
-    eng.code = "x = 1"
+    # Cycle D `_filter_unused_packages` requires the deps to be
+    # referenced in the source.  Production coders always import their
+    # declared deps; test code mirrors that.
+    eng.code = "from flask import Flask\nimport redis\n"
     eng.detected_language = "python"
     eng.plan = {"spec": {"dependencies": ["flask"]}}
     eng.coder_metadata = {"dependencies": ["redis"]}
@@ -309,7 +312,8 @@ def test_debug_loop_forwards_install_packages_to_retry():
 
     DebuggerAgent.run = _stub_debugger  # type: ignore[assignment]
 
-    eng.code = "x = 1"
+    # Cycle D filter requires flask to be imported in the source.
+    eng.code = "from flask import Flask\n"
     eng.detected_language = "python"
     eng.plan = {"spec": {"dependencies": ["flask"]}}
 
@@ -342,7 +346,9 @@ def test_debug_loop_merges_new_dependencies_from_debugger():
 
     DebuggerAgent.run = _stub_debugger  # type: ignore[assignment]
 
-    eng.code = "x = 1"
+    # Initial code imports flask; debugger patch adds requests import
+    # (matches stub's `dependencies: ["requests"]`).
+    eng.code = "from flask import Flask\n"
     eng.detected_language = "python"
     eng.plan = {"spec": {"dependencies": ["flask"]}}
 

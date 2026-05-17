@@ -90,3 +90,15 @@ htmlcov/
 # code_intelligence sandbox (named volume bind target on Windows
 # hosts).  Per-run subdirectories accumulate test_run/ etc.
 sandbox-shared/
+
+
+# Local GGUF model files — large binaries downloaded by operator
+# from HuggingFace (microsoft/bitnet-b1.58-2B-4T-gguf,
+# LiquidAI/LFM2-2.6B-GGUF, BoscoTheDog/bitnet_b1_58_3B_gguf, ...).
+# Don't ship these in git — they're documented in
+# compose/llama-swap/config.yaml + tools/pull_models.py manifest
+# so operators can re-pull on demand.
+models/*/*.gguf
+models/lora/*.gguf
+models/lora/**/*.peft
+models/lora/**/*.bin

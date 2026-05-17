@@ -3,7 +3,7 @@ Core data models for the document processing system.
 All models use Pydantic for validation and serialization.
 """
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
@@ -60,11 +60,10 @@ class SourceDocument(BaseModel):
         # We'll add a model_validator instead
         return v
 
-    class Config:
-        use_enum_values = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_encoders={datetime: lambda v: v.isoformat()},
+    )
 
 
 class DetectedLanguage(BaseModel):
@@ -73,14 +72,15 @@ class DetectedLanguage(BaseModel):
     name: Optional[str] = None
     confidence: float = Field(ge=0.0, le=1.0)
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "code": "es",
                 "name": "Spanish",
-                "confidence": 0.95
+                "confidence": 0.95,
             }
         }
+    )
 
 
 class TranslationResult(BaseModel):
@@ -92,8 +92,7 @@ class TranslationResult(BaseModel):
     tokens_used: Optional[int] = None
     cost_estimate: Optional[float] = None
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TranslatedDocument(BaseModel):
@@ -123,11 +122,10 @@ class TranslatedDocument(BaseModel):
         if not self.translated_text_length:
             self.translated_text_length = len(self.translated_text)
 
-    class Config:
-        use_enum_values = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None,
-        }
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_encoders={datetime: lambda v: v.isoformat() if v else None},
+    )
 
 
 class ProcessingMetrics(BaseModel):
@@ -177,10 +175,9 @@ class ProcessingMetrics(BaseModel):
             return 0.0
         return self.processed / duration
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None,
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat() if v else None},
+    )
 
 
 class HealthStatus(BaseModel):
@@ -190,10 +187,9 @@ class HealthStatus(BaseModel):
     components: Dict[str, bool] = Field(default_factory=dict)
     message: Optional[str] = None
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()},
+    )
 
 
 class BatchProcessingRequest(BaseModel):
@@ -222,7 +218,6 @@ class BatchProcessingResponse(BaseModel):
     status_url: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()},
+    )

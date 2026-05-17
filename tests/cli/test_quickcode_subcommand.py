@@ -55,7 +55,11 @@ def test_parser_clamps_max_refine_via_dispatch(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli, "_run_quickcode_in_process", fake_run)
-    rc = asyncio.get_event_loop().run_until_complete(cli._dispatch_quickcode(args))
+    # v18.1.5 fix: use asyncio.run() rather than get_event_loop() — the
+    # latter raises ``DeprecationWarning: There is no current event loop``
+    # in Python 3.12+ when a prior test has closed the loop, surfacing as
+    # a runtime error in some sweep orders.
+    rc = asyncio.run(cli._dispatch_quickcode(args))
     assert rc == 0
 
 
@@ -68,7 +72,7 @@ def test_parser_no_refine_zeros_max_refine_via_dispatch(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli, "_run_quickcode_in_process", fake_run)
-    rc = asyncio.get_event_loop().run_until_complete(cli._dispatch_quickcode(args))
+    rc = asyncio.run(cli._dispatch_quickcode(args))
     assert rc == 0
 
 

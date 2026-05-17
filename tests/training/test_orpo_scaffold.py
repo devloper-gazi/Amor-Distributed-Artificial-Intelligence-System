@@ -179,7 +179,12 @@ def test_dry_run_prints_command(tmp_path: Path, monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "convert-lora-to-gguf.py" in out
-    assert str(peft) in out
+    # Windows path-escape in JSON output uses `\\` literally; the raw
+    # str(peft) here contains single `\`.  Compare via the JSON-escaped
+    # form so the test works cross-platform (Linux paths use `/` and
+    # match either way).
+    import json as _json
+    assert _json.dumps(str(peft)).strip('"') in out
 
 
 def test_converter_errors_when_inputs_missing(tmp_path: Path, monkeypatch):

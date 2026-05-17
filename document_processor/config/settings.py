@@ -3,7 +3,7 @@ Configuration management using Pydantic for type-safe settings.
 All settings can be overridden via environment variables.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 from pathlib import Path
 
@@ -350,6 +350,21 @@ class Settings(BaseSettings):
     # Flag-flip rollback to v18 inline-blocking critic behaviour.
     code_critic_async: bool = True
     code_critic_async_timeout_s: float = 8.0
+    # v18.1.5 (Cycle H gate-gap fix) — Thinking mode per-phase + per-session
+    # wall-clock caps.  Previously a Thinking session had NO timeout on the
+    # `_llm_json` call inside each phase, so if llama-swap evicted the
+    # architect model between sessions and the cold-reload stalled, the
+    # whole thinking pipeline hung silently — Sprint-0 2026-05-16 measured
+    # 3/3 Thinking prompts timing out at the runner's 600s cap with 0
+    # tokens emitted (peak VRAM dropped from 7.4 GB → 1.4 GB confirming
+    # eviction).  Per-phase 120s cap bounds worst-case wall-clock to 6×120
+    # = 12 min; failed phase marks `status="failed"` and continues
+    # downstream (synthesize tolerates empty prior phases).  Session cap
+    # is hard wall-clock; either fires → engine returns a partial snapshot
+    # instead of hanging forever.  Flag-flip via env override; setting
+    # `code_thinking_phase_timeout_s=0` disables the cap entirely.
+    code_thinking_phase_timeout_s: float = 120.0
+    code_thinking_session_timeout_s: float = 540.0
     # v18.1.2 (Cycle G) — sandbox tmpfs ceiling.  HumanEval+ 50 runs
     # circa 2026-05-05 hit ENOSPC during `pip install --target=
     # /tmp/pip-prefix numpy` because the previous 384m default was
@@ -370,12 +385,41 @@ class Settings(BaseSettings):
     # active routing.  Plan-agent locked 8s p99 timeout (`code_bitnet_planner_timeout_s`)
     # because BitNet CPU throughput is realistic 6-10 tok/s — fallback
     # to main planner is silent when timeout fires.
-    code_bitnet_planner_enabled: bool = False
-    code_bitnet_planner_url: str = "http://localhost:8081"
-    code_bitnet_shadow_traffic_pct: float = 10.0
+    code_bitnet_planner_enabled: bool = True   # Cycle H.1 — flipped ON after the 3B GGUF smoke proved end-to-end
+    # Cycle H.1 — default points at the existing llama-swap proxy
+    # which loads the BitNet GGUF on-demand (see the amor-bitnet-shadow
+    # entry in compose/llama-swap/config.yaml).  This sidesteps the
+    # Microsoft setup_env.py NotImplementedError on b1.58-2B-4T —
+    # llama.cpp mainline ≥b8500 ships i2_s tensor-type support out of
+    # the box, so the bitnet.cpp custom-LUT wrapper isn't required.
+    # The /v1/chat/completions API surface is identical; the shadow
+    # path's hash-routed model alias is "bitnet" (see aliases in the
+    # llama-swap config).  Override via env when running BitNet on a
+    # dedicated host port:  AMOR_CODE_BITNET_PLANNER_URL=http://localhost:8081
+    code_bitnet_planner_url: str = "http://amor-llama-swap:9100"
+    code_bitnet_model_alias: str = "bitnet"
+    code_bitnet_shadow_traffic_pct: float = 100.0   # Cycle H.1 — 100% during smoke; lower to 10% in production
     code_bitnet_planner_timeout_s: float = 8.0
     code_bitnet_fallback_to_main: bool = True
-    code_bitnet_model_tag: str = "bitnet-b1.58-2b4t"
+    code_bitnet_model_tag: str = "bitnet"   # Cycle H.1 — alias defined in compose/llama-swap/config.yaml
+    # Cycle I.1 — LFM2 long-context "associative cortex" track.
+    # Default OFF; flip on after the 2-week SWE-bench-Lite shadow gate
+    # passes (Plan-agent locked: ≥2pp drop = revert).  When enabled,
+    # the engine's _phase_plan routes to `cortex` role when the
+    # prompt+context window exceeds ``code_cortex_threshold_tokens``;
+    # otherwise the existing planner path runs.
+    code_lfm2_cortex_enabled: bool = False
+    code_cortex_threshold_tokens: int = 16384
+    # Cycle I.2 — Titans test-time predictive memory (Sapienza MAC
+    # reimpl, "no gradient through verifier" variant).  Default OFF —
+    # when enabled, the engine's _phase_plan recalls the top-K most
+    # similar past sessions (cosine sim over BGE-M3 embeddings) and
+    # prepends them to the planner prompt as auxiliary context.
+    # Operator opts in once the shadow-recall quality is validated.
+    code_titans_enabled: bool = False
+    code_titans_recall_k: int = 3
+    code_titans_max_window: int = 200
+    code_titans_min_score: float = 0.20
     # Cycle H Phase A.2 — LazyGraphRAG knowledge layer.  Microsoft's
     # lazy-eval GraphRAG variant — defers LLM use behind a per-query
     # relevance budget, 10-90% cheaper than full GraphRAG indexing
@@ -713,12 +757,20 @@ class Settings(BaseSettings):
     # writes silent (no Phase 15 ledger noise).
     memory_ledger_audit_enabled: bool = True
 
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    # v18.1.5 — migrate from Pydantic v1 class-based Config to v2 ConfigDict
+    # so PydanticDeprecatedSince20 stops firing on every settings import.
+    # Same semantics: .env file, case-insensitive, ignore unknown keys.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        # Inherits `protected_namespaces=()` set on BaseSettings via
+        # the existing helper (or leaves the default).  We also keep
+        # `protected_namespaces` empty so fields starting with `model_`
+        # don't warn — AMOR has 80+ such fields.
+        protected_namespaces=(),
+    )
 
 
 # Global settings instance

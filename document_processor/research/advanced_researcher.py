@@ -16,7 +16,15 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow_iso() -> str:
+    """Timezone-aware UTC timestamp in ISO format (Python 3.12+ safe).
+
+    v18.1.5 — `datetime.utcnow()` is deprecated; centralised here so
+    future swaps to ``datetime.now(UTC)`` only touch one helper."""
+    return datetime.now(timezone.utc).isoformat()
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -216,7 +224,7 @@ class AdvancedResearcher:
     # ─── event helpers ────────────────────────────────────────────────
 
     async def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
-        event = {"type": event_type, "ts": datetime.utcnow().isoformat(), **data}
+        event = {"type": event_type, "ts": _utcnow_iso(), **data}
         try:
             await self.on_event(event)
         except Exception as e:  # events must never kill the pipeline
@@ -229,7 +237,7 @@ class AdvancedResearcher:
         phase = self._phase(name)
         if phase:
             phase.status = "in_progress"
-            phase.started_at = datetime.utcnow().isoformat()
+            phase.started_at = _utcnow_iso()
             phase.detail.update(detail)
         await self._emit("phase_start", {"phase": name, "detail": detail})
 
@@ -237,7 +245,7 @@ class AdvancedResearcher:
         phase = self._phase(name)
         if phase:
             phase.status = "completed"
-            phase.completed_at = datetime.utcnow().isoformat()
+            phase.completed_at = _utcnow_iso()
             phase.detail.update(detail)
         await self._emit("phase_complete", {"phase": name, "detail": detail})
 
@@ -245,7 +253,7 @@ class AdvancedResearcher:
         phase = self._phase(name)
         if phase:
             phase.status = "failed"
-            phase.completed_at = datetime.utcnow().isoformat()
+            phase.completed_at = _utcnow_iso()
             phase.detail["error"] = message
         await self._emit("phase_failed", {"phase": name, "error": message})
 

@@ -1552,7 +1552,7 @@ async def research_health():
         "ollama_model": OLLAMA_MODEL,
         "ollama_url": OLLAMA_BASE_URL,
         "details": details,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1573,7 +1573,7 @@ async def health_check():
             "ollama_available": status.get("ollama_available", False),
             "model_installed": status.get("model_installed", False),
             "models": status.get("models", []),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except HTTPException as e:
         logger.error(f"Ollama health check failed: {e.detail}")
@@ -1584,7 +1584,7 @@ async def health_check():
             "ollama_url": OLLAMA_BASE_URL,
             "ollama_model": OLLAMA_MODEL,
             "ollama_auto_pull": OLLAMA_AUTO_PULL,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
 
@@ -1684,7 +1684,7 @@ async def start_research(
             "progress": 0,
             "current_agent": None,
             "current_task": "Initializing research",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             # Phase C — persistence + cancellation linkage
             "chat_session_id": request.chat_session_id,
             "query_record_id": request.query_record_id,
@@ -1899,7 +1899,7 @@ Return:
             session["confidence"] = confidence
             session["translated"] = translated_any
             session["depth"] = depth
-            session["completed_at"] = datetime.utcnow().isoformat()
+            session["completed_at"] = datetime.now(timezone.utc).isoformat()
             await _persist_session(session_id, session)
 
             logger.info(f"Quick research completed for session {session_id} with {len(scraped_content)} sources (translated: {translated_any})")
@@ -2113,7 +2113,7 @@ The summary should be clear, informative, and suitable for a general audience.""
         session["confidence"] = confidence
         session["translated"] = translated_any
         session["depth"] = depth
-        session["completed_at"] = datetime.utcnow().isoformat()
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
         await _persist_session(session_id, session)
 
         logger.info(f"Research completed for session {session_id} with {len(scraped_content)} sources (translated: {translated_any})")
@@ -2422,7 +2422,7 @@ async def execute_advanced_research(
     session["confidence"] = result["confidence"]
     session["translated"] = result["translated_any"]
     session["depth"] = result["depth"]
-    session["completed_at"] = datetime.utcnow().isoformat()
+    session["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # Derive a short summary for compatibility with earlier UI rendering
     first_para = ""
@@ -2558,7 +2558,7 @@ async def cancel_research(
     session["status"] = "cancelled"
     session["cancel_requested"] = True
     session["error"] = "Cancelled by user."
-    session["completed_at"] = datetime.utcnow().isoformat()
+    session["completed_at"] = datetime.now(timezone.utc).isoformat()
     await _persist_session(session_id, session)
     await _publish(session_id, {"type": "cancelled", "session_id": session_id})
 

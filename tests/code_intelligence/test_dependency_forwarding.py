@@ -148,7 +148,14 @@ def _make_engine_with_sandbox(sandbox):
 def test_engine_forwards_spec_dependencies():
     sb = _RecordingSandbox()
     eng = _make_engine_with_sandbox(sb)
-    eng.code = "from flask import Flask\napp = Flask(__name__)"
+    # Cycle D Fix #3 active — `_filter_unused_packages` drops packages
+    # not referenced in `self.code`.  Production coders always import
+    # their declared deps; test mirrors that by including both imports.
+    eng.code = (
+        "from flask import Flask\n"
+        "import requests\n"
+        "app = Flask(__name__)\n"
+    )
     eng.detected_language = "python"
     eng.plan = {
         "spec": {
@@ -164,7 +171,12 @@ def test_engine_forwards_spec_dependencies():
 def test_engine_unions_spec_and_coder_metadata_dependencies():
     sb = _RecordingSandbox()
     eng = _make_engine_with_sandbox(sb)
-    eng.code = "x = 1"
+    # Code imports all three so `_filter_unused_packages` keeps them.
+    eng.code = (
+        "from flask import Flask\n"
+        "import pydantic\n"
+        "import redis\n"
+    )
     eng.detected_language = "python"
     eng.plan = {"spec": {"dependencies": ["flask"]}}
     eng.coder_metadata = {"dependencies": ["pydantic", "redis"]}
@@ -178,7 +190,11 @@ def test_engine_unions_spec_and_coder_metadata_dependencies():
 def test_engine_dedupes_when_spec_and_coder_overlap():
     sb = _RecordingSandbox()
     eng = _make_engine_with_sandbox(sb)
-    eng.code = "x = 1"
+    eng.code = (
+        "from flask import Flask\n"
+        "import requests\n"
+        "import pydantic\n"
+    )
     eng.detected_language = "python"
     eng.plan = {"spec": {"dependencies": ["flask", "requests"]}}
     eng.coder_metadata = {"dependencies": ["flask", "pydantic"]}
