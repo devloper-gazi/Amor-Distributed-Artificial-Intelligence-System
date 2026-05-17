@@ -187,8 +187,14 @@ async def _run_bench(args: argparse.Namespace) -> BenchResult:
 
     # Build / open the LanceDB store.  The bench uses the same singleton
     # the production engine instantiates; we toggle
-    # `settings.rag_graphrag_enabled` between runs.
-    store = LanceDBVectorStore()
+    # `settings.rag_graphrag_enabled` between runs.  When ``--db-path``
+    # is set, point the store at the operator's bench corpus instead
+    # of the production /data/vectors (lets the bench run against a
+    # focused corpus without polluting production).
+    store_kwargs = {}
+    if getattr(args, "db_path", None):
+        store_kwargs["db_path"] = args.db_path
+    store = LanceDBVectorStore(**store_kwargs)
 
     # Phase 1: LanceDB-only.
     original_flag = settings.rag_graphrag_enabled
@@ -262,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--queries", default=str(DEFAULT_QUERIES),
         help=f"query bench JSON (default {DEFAULT_QUERIES})",
+    )
+    p.add_argument(
+        "--db-path", default=None,
+        help="override LanceDB db_path (default uses LanceDBVectorStore's "
+             "compiled-in /data/vectors; pass --db-path data/vectors_focused "
+             "to bench against a focused operator corpus)",
     )
     p.add_argument(
         "--top-k", type=int, default=10,

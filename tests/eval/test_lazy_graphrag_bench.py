@@ -131,3 +131,21 @@ def test_cli_defaults_match_v20_gate_thresholds():
     assert args.top_k == 10
     assert args.threshold_pct == 15.0
     assert args.json is False
+
+
+def test_cli_db_path_override_accepted():
+    """Operator can point the bench at a focused corpus separate from
+    production /data/vectors — useful for ad-hoc nDCG measurements
+    without polluting the production LanceDB."""
+    from tools.eval.lazy_graphrag_bench import build_parser
+    args = build_parser().parse_args(["--db-path", "data/vectors_focused"])
+    assert args.db_path == "data/vectors_focused"
+
+
+def test_cli_db_path_none_by_default():
+    """No --db-path → store falls back to its compiled-in default
+    (currently /data/vectors).  Operator must pass an absolute path
+    if running on a host without the container's mount."""
+    from tools.eval.lazy_graphrag_bench import build_parser
+    args = build_parser().parse_args([])
+    assert args.db_path is None

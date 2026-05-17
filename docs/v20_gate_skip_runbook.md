@@ -136,23 +136,71 @@ implements it once steps 5-7 produce data.
 
 ## #5 — LazyGraphRAG nDCG@10 uplift
 
-### Requirements
+### Status — bench validated end-to-end; corpus indexing is the blocker
 
-* LanceDB corpus populated with content (no minimum size; AMOR's
-  ~300 source files give a good multi-hop test bed)
-* Ground-truth-labeled query bench at
-  `tests/eval/lazy_graphrag_100_questions.json` (20 queries
-  shipped Cycle H.2; grow toward 100 over Cycle I+)
-* `settings.rag_graphrag_enabled` toggleable per-run (yes by default)
+The bench tool (`tools/eval/lazy_graphrag_bench.py`) was pilot-tested
+in this session with a 3-chunk LanceDB corpus.  It runs both
+retrieval paths, builds the entity-graph index (17 entities, 1
+community on the 3 chunks), and writes the canonical
+`data/baselines/lazygraphrag_bench_latest.json` snapshot.  Uplift
+was 0 % (corpus too small) but the pipeline is operational.
 
-### Runbook
+The blocker is corpus indexing speed: CPU `nomic-embed-text-v1.5`
+takes ~30s/file + first-load consumes 15–20 GB host memory while
+the model warm-loads.  At 38 focused files × 30s = ~20 min wall;
+at the full ~300 file AMOR repo, ~2.5 h.
+
+### Three operator paths (pick by hardware)
+
+**Path A — GPU-accelerated embedder (fastest, ~5 min).**
+
+Pass `device="cuda"` to the LanceDBVectorStore constructor (the
+default is `cpu` to preserve VRAM for the planner).  The 4060
+Laptop GPU handles nomic-embed at ~50× CPU throughput.  Adjust
+`tools/index_focused_corpus.py`:
+
+```python
+store = LanceDBVectorStore(db_path=args.db_path, device="cuda")
+```
+
+Pause `llama-swap` first to free GPU VRAM (planner cold-loads
+back on next request).  After indexing, the embedder unloads and
+the planner reclaims VRAM.
+
+**Path B — Lightweight CPU embedder (`all-MiniLM-L6-v2`, ~5×
+faster than nomic-embed).**
+
+Different model → different LanceDB table (the per-model-table
+guard in lancedb_store keeps schemas separate).  Costs ~3-5 min
+host first-load + 1-2 s/file thereafter:
 
 ```bash
-# 1. Index AMOR's repo (or alternate corpus)
+docker exec -e PYTHONPATH=/app -e AMOR_RAG_EMBEDDER=sentence-transformers/all-MiniLM-L6-v2 \
+    amor-app-2 python /app/tools/index_focused_corpus.py \
+    --queries /app/tests/eval/lazy_graphrag_100_questions.json \
+    --root /app
+```
+
+(Requires reading `AMOR_RAG_EMBEDDER` env var in
+`LanceDBVectorStore.__init__` — a small wire change.)
+
+**Path C — Overnight CPU batch (current default, no code change).**
+
+```bash
+# Full repo, overnight:
 docker exec -e PYTHONPATH=/app amor-app-2 python -u \
     /app/tools/index_amor_for_graphrag.py --root /app --chunk-lines 100
+```
 
-# 2. Build the LazyGraphRAG entity-graph index (one-shot, 20-40 min)
+Wall: 2.5–3 h.  Beware container memory limit (default 4 GB) —
+bump via `mem_limit` in docker-compose.yml to avoid OOM-kill mid-
+run.
+
+### Bench runner (after corpus is indexed)
+
+```bash
+# 1. Build the LazyGraphRAG entity-graph index (one-shot, ~1 min
+#    on the 38-file focused corpus; longer for full repo)
 docker exec -e PYTHONPATH=/app amor-app-2 python -c "
 import asyncio, sys
 sys.path.insert(0, '/app')
@@ -164,20 +212,22 @@ async def main():
 asyncio.run(main())
 "
 
-# 3. Run the bench (compares LanceDB-only vs LazyGraphRAG-on)
+# 2. Run the bench (compares LanceDB-only vs LazyGraphRAG-on)
 docker exec -e PYTHONPATH=/app amor-app-2 python \
     /app/tools/eval/lazy_graphrag_bench.py \
     --queries /app/tests/eval/lazy_graphrag_100_questions.json \
     --top-k 10 --threshold-pct 15.0 --json
 
-# 4. Snapshot lands at data/baselines/lazygraphrag_bench_latest.json
-# 5. Re-run v20 gate — condition #5 lifts
+# 3. Snapshot lands at data/baselines/lazygraphrag_bench_latest.json
+# 4. Re-run v20 gate — condition #5 lifts
 python tools/run_v20_launch_gate.py
 ```
 
 The bench computes `ndcg_uplift_pct = (graphrag_ndcg - baseline_ndcg) / baseline_ndcg`.
 Plan-agent locked: ≥15 % uplift is required to justify the
-LazyGraphRAG layer's cost.
+LazyGraphRAG layer's cost.  The bench tool now accepts
+`--db-path data/vectors_focused` to point at a non-production
+LanceDB (useful for repeated bench iterations).
 
 ## #6 — VRAM envelope (already PASS)
 
