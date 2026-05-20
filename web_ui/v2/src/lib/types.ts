@@ -8,7 +8,13 @@ export type ModeKey =
   | "build"
   | "consortium"
   | "sentinel"
-  | "system";
+  | "system"
+  // Cycle UI 2026-05-20 — QuickCode is the auto-classifier's 7th
+  // class (Decision 2 in the plan).  It surfaces in the unified
+  // chat composer but is intentionally not in MODES below — the
+  // sidebar's mode-color groups + the legacy /<mode> routes are
+  // 6-mode shaped; QuickCode is composer-only.
+  | "quickcode";
 
 export interface ModeMeta {
   key: ModeKey;
@@ -71,6 +77,19 @@ export const MODES: ReadonlyArray<ModeMeta> = [
     subtitle: "diagnostics, memory",
     glyph: "activity",
     href: "/system",
+    wired: true,
+  },
+  // Cycle UI 2026-05-20 — QuickCode entry for the composer's mode
+  // picker.  href = /build/quick disambiguates from the canonical
+  // Build mode but currently lands on the same /build route — the
+  // backend's /api/quick-code/start endpoint is dispatched directly
+  // by UnifiedChat based on the classifier verdict, not by routing.
+  {
+    key: "quickcode",
+    label: "QuickCode",
+    subtitle: "fast targeted edits",
+    glyph: "zap",
+    href: "/build",
     wired: true,
   },
 ];

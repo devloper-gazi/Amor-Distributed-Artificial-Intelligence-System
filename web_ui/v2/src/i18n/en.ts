@@ -241,6 +241,18 @@ export const en: Record<string, string> = {
   "chat.composer.placeholder":    "Ask anything — or /build, /research, /think… (@-mention to reference symbols)",
   "chat.send_hint":               "⌘+Enter to send · /build, /code, /research…",
 
+  // ── Cycle UI 2026-05-20 — Unified chat surface ──
+  "chat.unified_title":           "Chat",
+  "chat.unified_subtitle":        "auto-detects build / research / thinking / consortium / sentinel / quickcode",
+  "chat.unified_placeholder":     "Ask anything — I'll pick the right mode. Slash commands or the pill override.",
+  "chat.unified_empty_title":     "What are we working on?",
+  "chat.unified_empty_subtitle":  "Start typing — the badge under the composer shows which mode I'll route to.",
+  "chat.unified_empty_hint":      "Use /build, /research, /think, /consortium, /sentinel, /quick to override.",
+  "classifier.auto":              "auto",
+  "classifier.uncertain":         "guess?",
+  "classifier.thinking":          "thinking…",
+  "classifier.error":             "Classifier error",
+
   // ── CommandPalette ──────────────────────────────────────────
   "palette.dialog_label":        "Command palette",
   "palette.placeholder":         "Type a command…",

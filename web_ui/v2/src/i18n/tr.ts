@@ -241,6 +241,18 @@ export const tr: Record<string, string> = {
   "chat.composer.placeholder":    "Bir şey sor — ya da /build, /research, /think… (sembol referansı için @-mention)",
   "chat.send_hint":               "⌘+Enter ile gönder · /build, /code, /research…",
 
+  // ── Cycle UI 2026-05-20 — Birleşik sohbet yüzeyi ──
+  "chat.unified_title":           "Sohbet",
+  "chat.unified_subtitle":        "build / research / thinking / consortium / sentinel / quickcode otomatik tespit",
+  "chat.unified_placeholder":     "Ne istersen sor — doğru modu ben seçerim. Slash komutu veya pill ile geçersiz kılabilirsin.",
+  "chat.unified_empty_title":     "Ne üzerinde çalışıyoruz?",
+  "chat.unified_empty_subtitle":  "Yazmaya başla — composer altındaki rozet hangi moda yönlendireceğimi gösterir.",
+  "chat.unified_empty_hint":      "Geçersiz kılmak için /build, /research, /think, /consortium, /sentinel, /quick kullan.",
+  "classifier.auto":              "otomatik",
+  "classifier.uncertain":         "tahmin?",
+  "classifier.thinking":          "düşünüyorum…",
+  "classifier.error":             "Sınıflandırıcı hatası",
+
   // ── CommandPalette ──────────────────────────────────────────
   "palette.dialog_label":        "Komut paleti",
   "palette.placeholder":         "Bir komut yaz…",

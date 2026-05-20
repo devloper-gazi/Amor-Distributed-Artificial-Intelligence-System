@@ -39,8 +39,14 @@ import { Baselines } from "./routes/Baselines";
 import { LLMDashboard } from "./routes/LLM";
 // Cycle C Sprint 2 Day 5 — admin Evals dashboard.
 import { Evals } from "./routes/Evals";
-// Cycle C Sprint 4 Day 1 — mode-agnostic chat surface.
+// Cycle C Sprint 4 Day 1 — mode-agnostic chat surface (legacy).
 import { Chat } from "./routes/Chat";
+// Cycle UI 2026-05-20 — Unified chat single-page route at `/`.
+// Replaces the 6-route mode-segregated SPA as the primary surface.
+// Legacy /build /research /thinking /consortium /sentinel routes
+// stay mounted below for rollback (?ui=v1 query param navigates
+// back to /home when needed).
+import { UnifiedChat } from "./routes/UnifiedChat";
 // Cycle C Sprint 6 Day 4 — admin Training surface.
 import { Training } from "./routes/Training";
 // Cycle C Sprint 7 Day 3 — admin Memory viewer (Mem0 OSS).
@@ -168,7 +174,11 @@ render(
 
           {/* Protected — every route here mounts inside AppShell */}
           <Route path="/" component={Protected}>
-            <Route path="/" component={Home} />
+            {/* Cycle UI 2026-05-20 — UnifiedChat replaces Home at /.
+                Legacy welcome page moves to /home for operator
+                override / rollback. */}
+            <Route path="/" component={UnifiedChat} />
+            <Route path="/home" component={Home} />
             <Route path="/research" component={Research} />
             <Route path="/build" component={Build} />
             <Route path="/thinking" component={Thinking} />

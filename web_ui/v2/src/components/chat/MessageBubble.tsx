@@ -21,6 +21,10 @@ const ROLE_LABEL: Record<ChatTurn["role"], string> = {
   assistant: "AMOR",
   tool: "Tool",
   system: "System",
+  // ``approval`` turns short-circuit before reaching MessageBubble
+  // (MessageThread renders ApprovalPrompt directly), but TypeScript
+  // wants exhaustive coverage of ChatTurn["role"].
+  approval: "Approval",
 };
 
 const ROLE_VARIANT: Record<ChatTurn["role"], "user" | "system" | "model"> = {
@@ -28,6 +32,7 @@ const ROLE_VARIANT: Record<ChatTurn["role"], "user" | "system" | "model"> = {
   assistant: "model",
   tool: "system",
   system: "system",
+  approval: "system",
 };
 
 const ROLE_INITIALS: Record<ChatTurn["role"], string> = {
@@ -35,6 +40,7 @@ const ROLE_INITIALS: Record<ChatTurn["role"], string> = {
   assistant: "AM",
   tool: "TL",
   system: "SY",
+  approval: "AP",
 };
 
 /**

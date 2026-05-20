@@ -23,6 +23,10 @@ export const SLASH_ALIASES: Record<string, ModeKey> = {
   "/system": "system",
   "/sys": "system",
   "/diag": "system",
+  // Cycle UI 2026-05-20 — QuickCode (Decision 2.3).
+  "/quick": "quickcode",
+  "/quickcode": "quickcode",
+  "/qc": "quickcode",
 };
 
 export interface ParsedInput {
@@ -102,6 +106,7 @@ export const MODE_GLYPH: Record<ModeKey, string> = {
   consortium: "❖",
   sentinel: "◐",
   system: "≈",
+  quickcode: "⚡",  // Cycle UI 2026-05-20 — fast-edit variant
 };
 
 /** Look up a mode's metadata, falling back to the first defined mode

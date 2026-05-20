@@ -121,6 +121,23 @@ export interface UnifiedComposerProps {
   placeholder?: string;
   /** Initial mode override (otherwise restored from localStorage). */
   initialMode?: ModeKey;
+  /** Cycle UI 2026-05-20 — Notify parent of every text change so it can
+   *  feed an intent classifier or other side-effect.  Parent should
+   *  treat this as a high-frequency event and debounce downstream
+   *  work itself.  When omitted the composer behaves as before. */
+  onTextChange?: (text: string) => void;
+  /** Cycle UI 2026-05-20 — When provided, this mode replaces the
+   *  composer's internal ``activeMode`` until the user picks a
+   *  different mode via the ModePicker (which then "locks" the
+   *  user's choice and ignores further overrides).  Used by the
+   *  auto-mode classifier in UnifiedChat to suggest a mode while
+   *  letting manual selection still win. */
+  modeOverride?: ModeKey;
+  /** Cycle UI 2026-05-20 — Optional flag rendered next to the
+   *  ModePill, e.g. "auto" / "uncertain" / classifier confidence
+   *  badge.  Parent owns the string so it can be localised + carry
+   *  inline-classifier state.  When omitted, no badge is rendered. */
+  modeBadge?: string;
 }
 
 const formatBytes = (n: number): string => {
@@ -134,6 +151,16 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   const [activeMode, setActiveMode] = createSignal<ModeKey>(
     props.initialMode ?? DEFAULT_MODE,
   );
+  // Cycle UI 2026-05-20 — once the user explicitly clicks ModePicker,
+  // their choice "locks" the composer's mode and modeOverride is
+  // ignored until they click a different mode (or clear via slash).
+  const [userPickedMode, setUserPickedMode] = createSignal(false);
+  // Effective mode: user pick > modeOverride > activeMode > DEFAULT.
+  const effectiveMode = (): ModeKey => {
+    if (userPickedMode()) return activeMode();
+    if (props.modeOverride) return props.modeOverride;
+    return activeMode();
+  };
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [caret, setCaret] = createSignal(0);
   const [mentionMatches, setMentionMatches] = createSignal<RepoSymbol[]>([]);
@@ -166,7 +193,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   // show a soft hint under the textarea ("/build → Build mode") so
   // the user gets feedback before pressing Enter.
   const livePreview = createMemo<ParsedInput>(() =>
-    parseSlashCommand(text(), activeMode()),
+    parseSlashCommand(text(), effectiveMode()),
   );
 
   // Live mention detection.  This is ``createMemo`` so the picker
@@ -251,13 +278,18 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   const submit = () => {
     if (props.busy) return;
-    const parsed = parseSlashCommand(text(), activeMode());
+    const parsed = parseSlashCommand(text(), effectiveMode());
     if (!parsed.text && attachments().length === 0) return;
     const files = attachments().slice();
     void props.onSubmit(parsed.text, parsed.mode);
     void props.onSubmitRich?.({ text: parsed.text, mode: parsed.mode, attachments: files });
     setText("");
+    props.onTextChange?.("");
     setAttachments([]);
+    // After submit, release the user-picked lock so the next message's
+    // classifier suggestion can win again (matches Claude/ChatGPT
+    // semantics: each message starts fresh in auto-mode).
+    setUserPickedMode(false);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -313,11 +345,13 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   const pickMode = (mode: ModeKey) => {
     setActiveMode(mode);
+    setUserPickedMode(true);  // Cycle UI 2026-05-20 — lock the choice
     setPickerOpen(false);
     // Strip any matching slash prefix the user typed earlier — once
     // they pick a mode explicitly, the prefix is redundant noise.
     const { text: stripped } = parseSlashCommand(text(), mode);
     setText(stripped);
+    props.onTextChange?.(stripped);
     requestAnimationFrame(() => textareaRef?.focus());
   };
 
@@ -431,8 +465,10 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
           ref={(el: HTMLTextAreaElement) => (textareaRef = el)}
           value={text()}
           onInput={(e: InputEvent & { currentTarget: HTMLTextAreaElement }) => {
-            setText(e.currentTarget.value);
+            const v = e.currentTarget.value;
+            setText(v);
             trackCaret(e.currentTarget);
+            props.onTextChange?.(v);
           }}
           onKeyUp={(e: KeyboardEvent & { currentTarget: HTMLTextAreaElement }) =>
             trackCaret(e.currentTarget)
@@ -490,9 +526,10 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
       <div class="flex items-center justify-between gap-2">
         <ModePill
-          mode={activeMode()}
+          mode={effectiveMode()}
           onClick={() => setPickerOpen((o: boolean) => !o)}
           expanded={pickerOpen()}
+          badge={props.modeBadge}
         />
         <button
           type="button"
@@ -559,6 +596,10 @@ const ModePill: Component<{
   mode: ModeKey;
   onClick: () => void;
   expanded: boolean;
+  /** Cycle UI 2026-05-20 — optional badge text rendered to the right
+   *  of the mode label, e.g. "auto" / "uncertain".  Parent owns the
+   *  string so it can be localised + driven by classifier state. */
+  badge?: string;
 }> = (props) => {
   const meta = () => modeMeta(props.mode);
   return (
@@ -578,6 +619,14 @@ const ModePill: Component<{
         {MODE_GLYPH[props.mode]}
       </span>
       <span class="font-medium">{modeLabel(meta())}</span>
+      <Show when={props.badge}>
+        <span
+          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-text-tertiary"
+          data-amor-mode-badge=""
+        >
+          {props.badge}
+        </span>
+      </Show>
       <span class="text-text-tertiary" aria-hidden="true">
         {props.expanded ? "▴" : "▾"}
       </span>

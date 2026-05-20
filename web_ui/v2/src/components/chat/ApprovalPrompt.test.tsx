@@ -40,7 +40,11 @@ function basePayload(
 }
 
 
-let postSpy: ReturnType<typeof vi.spyOn>;
+// Vitest's MockInstance generic doesn't unify with api.post's generic
+// arrow signature in strict mode.  Widen to `any` here — this is a
+// test file only; runtime behaviour is unaffected.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let postSpy: any;
 
 
 beforeEach(() => {

@@ -261,6 +261,89 @@ async def get_session(
     )
 
 
+@router.get("/{session_id}/branch")
+async def get_active_branch(
+    session_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI 2026-05-20 — Return the active branch (chronological,
+    root-first) for a conversation via ``$graphLookup``.  Falls back
+    to a flat chronological read when no ``current_leaf_id`` is set
+    (legacy session, pre-Cycle-UI-backfill).
+
+    Powers the UnifiedChat thread hydration on deep-link
+    (``GET /?c=<sid>``) and the BranchNavigator sibling counter."""
+    client_id = _require_client_id(x_client_id)
+    try:
+        msgs = await chat_store.get_active_branch(
+            client_id=client_id,
+            user_id=user.id,
+            session_id=session_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Normalize the cursor docs into a UI-friendly shape: drop the
+    # internal $graphLookup `_depth` field, format timestamps, and
+    # expose the new branching fields (parent_id, state, mode,
+    # classifier_meta) so the frontend can render the BranchNavigator
+    # without a second roundtrip.
+    rendered: List[Dict[str, Any]] = []
+    for m in msgs:
+        created = m.get("created_at")
+        rendered.append({
+            "id": str(m.get("_id")),
+            "role": m.get("role"),
+            "content": m.get("content"),
+            "format": m.get("format", "text"),
+            "createdAt": _dt_utc(created) if isinstance(created, datetime) else created,
+            "parent_id": m.get("parent_id"),
+            "state": m.get("state", "finished"),
+            "mode": m.get("mode"),
+            "classifier_meta": m.get("classifier_meta"),
+            "extras": m.get("extras") or {},
+        })
+    return {"messages": rendered, "count": len(rendered)}
+
+
+@router.get("/{session_id}/siblings/{parent_id}")
+async def get_message_siblings(
+    session_id: str,
+    parent_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI 2026-05-20 — List all sibling messages under
+    ``parent_id`` for the BranchNavigator's ``< 2/4 >`` counter.
+
+    The ``parent_id`` path segment uses the string literal
+    ``"root"`` to mean "siblings of root-level messages"
+    (parent_id IS NULL in MongoDB)."""
+    client_id = _require_client_id(x_client_id)
+    # Ownership check via get_session — cheap.
+    try:
+        await chat_store.get_session(
+            client_id=client_id, user_id=user.id, session_id=session_id,
+            include_messages=False,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    parent_lookup: Optional[str] = None if parent_id == "root" else parent_id
+    siblings = await chat_store.get_sibling_branches(
+        session_id=session_id, parent_id=parent_lookup,
+    )
+    rendered = [
+        {"id": str(s["_id"]), "role": s.get("role"),
+         "createdAt": _dt_utc(s["created_at"])
+                      if isinstance(s.get("created_at"), datetime)
+                      else s.get("created_at")}
+        for s in siblings
+    ]
+    return {"siblings": rendered, "count": len(rendered)}
+
+
 @router.post("/{session_id}/messages")
 async def append_message(
     session_id: str,
