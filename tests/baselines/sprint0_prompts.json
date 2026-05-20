@@ -1,8 +1,9 @@
 {
   "$schema": "./sprint0_schema.json",
-  "version": "1.0",
+  "version": "2.0",
   "created_utc": "2026-05-04T00:00:00Z",
-  "rationale": "10 prompts across 3 chat modes (Build/Research/Thinking); 4 Build (varied debug-retry triggers), 3 Research (1 citation-required), 3 Thinking (multi-step + tradeoff + plan). Sprint 0 baseline corpus per Cycle C plan.",
+  "updated_utc": "2026-05-20T00:00:00Z",
+  "rationale": "25 prompts across 6 chat modes — 5 each for Build/Research/Thinking/Consortium/Sentinel/QuickCode + 5 disambiguation prompts at QuickCode/Build boundary = 30 total. Cycle UI corpus for SetFit auto-mode classifier acceptance (≥85% top-1).",
   "prompts": [
     {
       "id": "build-snake-html",
@@ -41,6 +42,15 @@
       "judge_rubric": ["correctness:1-5", "completeness:1-5"]
     },
     {
+      "id": "build-react-todo",
+      "mode": "Build",
+      "prompt": "Build a React 18 + TypeScript todo app: components TodoList + TodoItem + AddTodo, local state with useState, persistence via localStorage. Single-file or multi-file as you prefer. Include package.json scripts for dev + build.",
+      "rationale": "Frontend multi-file Build; tests component decomposition + TS typing.",
+      "expected_mode_routing": "Build",
+      "expects_debug_retry": false,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
       "id": "research-crdt-vs-ot",
       "mode": "Research",
       "prompt": "Compare CRDTs and Operational Transform for collaborative text editing. Cover: convergence guarantees, network assumptions, payload size, server-vs-peer-to-peer suitability. Cite at least 3 primary sources (papers or canonical implementations) with URLs.",
@@ -68,6 +78,24 @@
       "judge_rubric": ["correctness:1-5", "completeness:1-5"]
     },
     {
+      "id": "research-vector-db-comparison",
+      "mode": "Research",
+      "prompt": "Compare LanceDB, Qdrant, and Weaviate for a single-host, 100K-vector RAG application with hybrid search. Cover: storage format, indexing latency, query latency at top-10, memory footprint, embedded vs server modes. Cite docs URLs.",
+      "rationale": "Comparative research with strict matrix output; tests structured comparison.",
+      "expected_mode_routing": "Research",
+      "expects_citations": true,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "research-tls-1-3",
+      "mode": "Research",
+      "prompt": "What changed between TLS 1.2 and TLS 1.3 from a security and performance perspective? Cover: handshake roundtrips, cipher-suite simplification, deprecated features. Be concise (~250 words) with at least 1 RFC URL.",
+      "rationale": "Standards-research; tests precise technical recall.",
+      "expected_mode_routing": "Research",
+      "expects_citations": true,
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
       "id": "thinking-reasoning-multi",
       "mode": "Thinking",
       "prompt": "A train leaves city A at 06:00 traveling 80 km/h east. Another leaves city B (200 km east of A) at 06:30 traveling 60 km/h west. When and where do they meet? Show your work.",
@@ -89,6 +117,142 @@
       "prompt": "Plan the migration of a 50K-LOC Python 3.9 codebase to Python 3.12. Output: ordered milestone list, risks per milestone, rollback per milestone, estimated weeks of solo developer effort.",
       "rationale": "Tests structured planning output, the architect role's bread and butter.",
       "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "thinking-architecture-choice",
+      "mode": "Thinking",
+      "prompt": "Help me decide: should I use Postgres or SQLite for a single-user desktop knowledge-management app with ~50K notes? Walk through criteria (concurrency, backup, ops surface, migration cost), then recommend.",
+      "rationale": "Multi-criteria decision; tests weighing tradeoffs without code.",
+      "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "thinking-debug-strategy",
+      "mode": "Thinking",
+      "prompt": "Our distributed job queue silently loses ~0.5% of messages under load. We've ruled out network drops. Outline a debugging strategy with 4-6 hypotheses ranked by likelihood, and what observation would confirm or refute each.",
+      "rationale": "Hypothesis enumeration; tests structured investigation thinking.",
+      "expected_mode_routing": "Thinking",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "consortium-arch-review",
+      "mode": "Consortium",
+      "prompt": "Hold a multi-agent architecture review for AMOR's switch from llama-swap to vLLM. Roles: backend, ML platform, ops, security. Each role contributes concerns and trade-offs; produce a single verdict.",
+      "rationale": "Multi-agent deliberation; explicit role enumeration.",
+      "expected_mode_routing": "Consortium",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "consortium-code-review",
+      "mode": "Consortium",
+      "prompt": "Run a consortium code review of the proposed BitNet shadow planner change in document_processor/code_intelligence/engine.py:1972. Reviewers: senior backend, ML infrastructure, performance engineer. Produce a single shipping recommendation.",
+      "rationale": "Multi-reviewer perspective; references specific file:line.",
+      "expected_mode_routing": "Consortium",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "consortium-design-vote",
+      "mode": "Consortium",
+      "prompt": "Bring 3-4 expert agents (DBA, distributed systems, app dev, SRE) to vote on whether to migrate AMOR's chat persistence from MongoDB to PostgreSQL. Provide each agent's argument + final tally + verdict.",
+      "rationale": "Voting + per-agent reasoning; tests structured deliberation.",
+      "expected_mode_routing": "Consortium",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "consortium-roadmap-debate",
+      "mode": "Consortium",
+      "prompt": "Convene a product/eng/research consortium to debate the next-quarter priorities for AMOR (auto-mode UI vs SWE-bench harness vs BitNet promotion vs LFM2 production). Each role argues, then synthesize a prioritized roadmap.",
+      "rationale": "Cross-functional debate; tests multi-stakeholder synthesis.",
+      "expected_mode_routing": "Consortium",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "consortium-security-panel",
+      "mode": "Consortium",
+      "prompt": "Assemble a security panel (red team, blue team, compliance, app sec) to review the proposed Docker socket-proxy default. Each member raises a concern; produce a consensus go/no-go.",
+      "rationale": "Adversarial multi-agent; tests opposing-views aggregation.",
+      "expected_mode_routing": "Consortium",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "sentinel-audit-deps",
+      "mode": "Sentinel",
+      "prompt": "Audit the project's Python dependencies for known CVEs and outdated transitive deps. Output: severity-ranked list with package name, version, CVE id, and remediation.",
+      "rationale": "Security audit task; tests vulnerability surface enumeration.",
+      "expected_mode_routing": "Sentinel",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "sentinel-secrets-scan",
+      "mode": "Sentinel",
+      "prompt": "Scan the repo for hardcoded secrets, exposed API keys, credentials in commit history, and weak env defaults. Report findings with file:line and remediation steps.",
+      "rationale": "Secret-leak detection; tests pattern-matching breadth.",
+      "expected_mode_routing": "Sentinel",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "sentinel-perf-regression",
+      "mode": "Sentinel",
+      "prompt": "Monitor recent CI runs for performance regressions in the code_intelligence engine. Compare last 30 days p50/p95 latencies, flag anomalies, propose root-cause hypotheses.",
+      "rationale": "Continuous monitoring; tests time-series anomaly detection framing.",
+      "expected_mode_routing": "Sentinel",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "sentinel-flaky-test-watch",
+      "mode": "Sentinel",
+      "prompt": "Watch the last 100 CI runs for flaky tests. Group by test name, compute pass-rate, surface the top 5 flakiest with their suspected root causes.",
+      "rationale": "CI guardian role; tests aggregation + prioritization.",
+      "expected_mode_routing": "Sentinel",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "sentinel-vram-budget",
+      "mode": "Sentinel",
+      "prompt": "Audit VRAM utilization across the last 7 days of llama-swap dispatch events. Flag any session that exceeded 7.2 GB peak (the v20 budget). Output: timestamp, mode, model, peak GB, root cause.",
+      "rationale": "Resource-budget enforcement; tests time-series threshold detection.",
+      "expected_mode_routing": "Sentinel",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "quickcode-typo-fix",
+      "mode": "QuickCode",
+      "prompt": "Fix the typo in user.py line 42 — 'recieved' should be 'received'.",
+      "rationale": "Imperative + file:line anchor + single-token change. Canonical QuickCode shape.",
+      "expected_mode_routing": "QuickCode",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "quickcode-add-getter",
+      "mode": "QuickCode",
+      "prompt": "Add a getter method get_email() for the email field in models/user.py User class.",
+      "rationale": "Single-function addition; QuickCode scope.",
+      "expected_mode_routing": "QuickCode",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "quickcode-rename-symbol",
+      "mode": "QuickCode",
+      "prompt": "Rename foo to bar in routes.ts (all occurrences within the file).",
+      "rationale": "Mechanical refactor; clearly under QuickCode boundary.",
+      "expected_mode_routing": "QuickCode",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "quickcode-remove-unused-import",
+      "mode": "QuickCode",
+      "prompt": "Remove the unused import os from utils/helpers.py.",
+      "rationale": "Trivial dead-code removal; QuickCode minimum-viable scope.",
+      "expected_mode_routing": "QuickCode",
+      "judge_rubric": ["correctness:1-5", "completeness:1-5"]
+    },
+    {
+      "id": "quickcode-change-constant",
+      "mode": "QuickCode",
+      "prompt": "Change MAX_RETRIES from 3 to 5 in config/settings.py.",
+      "rationale": "Single-line config tweak; canonical QuickCode.",
+      "expected_mode_routing": "QuickCode",
       "judge_rubric": ["correctness:1-5", "completeness:1-5"]
     }
   ]

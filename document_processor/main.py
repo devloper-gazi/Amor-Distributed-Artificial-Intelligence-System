@@ -79,6 +79,19 @@ from .api.chat_sessions_routes import router as chat_sessions_router
 from .api.query_record_routes import router as query_record_router  # Phase B4
 from .api.chat_folders_routes import router as chat_folders_router
 from .api.auth_routes import router as auth_router
+# Cycle UI 2026-05-20 — unified chat endpoints (Phase 1: classifier;
+# Phase 2 will add /start + /events dispatcher).  Lazy-import-friendly:
+# if sentence-transformers is unavailable on a stripped runtime, we
+# log + skip registration rather than crash startup.
+try:
+    from .api.chat import router as chat_router
+    CHAT_UNIFIED_AVAILABLE = True
+except Exception as _chat_import_exc:  # pragma: no cover - infra
+    CHAT_UNIFIED_AVAILABLE = False
+    logger.warning(
+        "Unified chat routes unavailable (intent classifier import failed): %s",
+        _chat_import_exc,
+    )
 # Cycle C Sprint 0 Day 3 — admin baselines dashboard.
 from .api.admin_baselines_routes import router as admin_baselines_router
 # Cycle C Sprint 1 Day 4 — admin LLM dashboard (resident models,
@@ -726,6 +739,12 @@ if APPROVAL_ROUTES_AVAILABLE:
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
 logger.info("Chat sessions routes included")
+
+# Cycle UI 2026-05-20 — Unified chat endpoints (Phase 1: classifier;
+# subsequent phases add /start + /events dispatcher).
+if CHAT_UNIFIED_AVAILABLE:
+    app.include_router(chat_router)
+    logger.info("Unified chat routes included (Cycle UI Phase 1)")
 
 # Query records — durable bridge between ephemeral pipeline state and
 # permanent chat history (Phase B4 of fancy-swinging-karp.md).

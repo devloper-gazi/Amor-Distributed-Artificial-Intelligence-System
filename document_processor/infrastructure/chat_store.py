@@ -205,6 +205,26 @@ class ChatStore:
             [("idempotency_key", 1)], sparse=True, unique=True
         )
 
+        # Cycle UI 2026-05-20 — branching support.  parent_id walks the
+        # conversation tree (null for root); $graphLookup against
+        # (session_id, parent_id) reconstructs the active branch when
+        # combined with chat_sessions.current_leaf_id.  Sparse so
+        # legacy linear rows (pre-Cycle-UI backfill) don't conflict.
+        await messages.create_index(
+            [("session_id", 1), ("parent_id", 1)], sparse=True
+        )
+        # state='streaming' partial filter — fast lookup of in-flight
+        # messages for resume-on-reconnect + cleanup sweepers.  Other
+        # states never queried in isolation; partial index keeps it small.
+        try:
+            await messages.create_index(
+                [("state", 1)],
+                partialFilterExpression={"state": "streaming"},
+                name="msg_streaming_partial",
+            )
+        except Exception as exc:  # pragma: no cover - mongo version may not support partial
+            logger.debug("partial_state_index_skipped: %s", exc)
+
         # Phase B — chat_sessions: idempotency_key dedupe so a double-
         # submit during first message can't create two Untitled Chats.
         await sessions.create_index(
@@ -976,6 +996,12 @@ class ChatStore:
         extras: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        # ── Cycle UI 2026-05-20: branching + classifier metadata ──
+        parent_id: Optional[str] = None,
+        mode: Optional[str] = None,
+        state: str = "finished",
+        event_log: Optional[List[Dict[str, Any]]] = None,
+        classifier_meta: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Append a message to a chat session.
@@ -1009,6 +1035,16 @@ class ChatStore:
         now = _utcnow()
         message_id_str: str
 
+        # Cycle UI 2026-05-20 — auto-resolve parent_id when caller didn't
+        # specify one.  Defaults to the session's current_leaf_id so a
+        # plain `append_message(...)` call naturally extends the active
+        # branch.  ``parent_id=""`` (empty string) is reserved as the
+        # explicit "start a fresh root" signal — distinct from None.
+        if parent_id is None:
+            parent_id = session.get("current_leaf_id")
+        elif parent_id == "":
+            parent_id = None
+
         if idempotency_key:
             # Upsert path. We use the idempotency_key both to dedupe and
             # as the natural primary key for the row (str), which keeps
@@ -1024,6 +1060,14 @@ class ChatStore:
                 "extras": extras or {},
                 "created_at": now,
                 "idempotency_key": idempotency_key,
+                # Cycle UI fields — only persisted when caller provided
+                # (or auto-resolved for parent_id).  Schema stays sparse;
+                # legacy readers continue to ignore unknown keys.
+                "parent_id": parent_id,
+                "state": state,
+                "mode": mode,
+                "event_log": event_log or [],
+                "classifier_meta": classifier_meta,
             }
             doc = await _write_with_retry(
                 lambda: messages.find_one_and_update(
@@ -1045,6 +1089,12 @@ class ChatStore:
                 "ai_type": ai_type,
                 "extras": extras or {},
                 "created_at": now,
+                # Cycle UI fields (see above).
+                "parent_id": parent_id,
+                "state": state,
+                "mode": mode,
+                "event_log": event_log or [],
+                "classifier_meta": classifier_meta,
             }
             inserted = await _write_with_retry(
                 lambda: messages.insert_one(msg_doc),
@@ -1062,12 +1112,141 @@ class ChatStore:
             if existing_title in {"Untitled Chat", "New Chat"} and content.strip():
                 update["title"] = _generate_title_from_query(content)
 
+        # Cycle UI 2026-05-20 — advance current_leaf to this message so
+        # the next append (assistant reply, next user turn) naturally
+        # extends from here.  Edit-then-regenerate callers override by
+        # passing an explicit parent_id pointing at a non-leaf ancestor
+        # (see `branch_from_message` helper below).
+        update["current_leaf_id"] = message_id_str
+
         await _write_with_retry(
             lambda: sessions.update_one({"_id": session_id}, {"$set": update}),
             op_name="session_touch",
         )
 
         return message_id_str
+
+    # ── Cycle UI 2026-05-20 — branching reader + state mutators ──
+
+    async def get_active_branch(
+        self,
+        *,
+        client_id: str,
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Walk the chat tree from current_leaf_id back to root via
+        $graphLookup, then return messages in chronological order
+        (root first).  When no current_leaf_id is set (legacy session
+        pre-backfill, or a brand-new session), falls back to flat
+        chronological order — preserves backwards compatibility."""
+        await self.ensure_indexes()
+        db = await self._db()
+        sessions = db["chat_sessions"]
+        messages = db["chat_messages"]
+
+        session = await sessions.find_one({"_id": session_id})
+        if not session:
+            raise KeyError("session_not_found")
+        if user_id:
+            if session.get("user_id") != user_id:
+                raise KeyError("session_not_found")
+        else:
+            if session.get("client_id") != client_id:
+                raise KeyError("session_not_found")
+
+        leaf_id = session.get("current_leaf_id")
+        if not leaf_id:
+            # Legacy session — flat read in creation order.
+            cursor = messages.find({"session_id": session_id}).sort("created_at", 1)
+            return [m async for m in cursor]
+
+        # $graphLookup walks parent_id pointers up to root.
+        pipeline = [
+            {"$match": {"_id": leaf_id}},
+            {
+                "$graphLookup": {
+                    "from": "chat_messages",
+                    "startWith": "$parent_id",
+                    "connectFromField": "parent_id",
+                    "connectToField": "_id",
+                    "as": "ancestors",
+                    "depthField": "_depth",
+                },
+            },
+        ]
+        async for root in messages.aggregate(pipeline):
+            ancestors = root.pop("ancestors", [])
+            # ancestors come back unordered; depth field gives the
+            # reverse traversal index (0 = closest to leaf).  Sort
+            # descending so root is first, leaf is last.
+            ancestors.sort(key=lambda m: m.get("_depth", 0), reverse=True)
+            return ancestors + [root]
+        # Leaf pointer is stale (message deleted).  Fall back to flat.
+        cursor = messages.find({"session_id": session_id}).sort("created_at", 1)
+        return [m async for m in cursor]
+
+    async def get_sibling_branches(
+        self,
+        *,
+        session_id: str,
+        parent_id: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Return all sibling messages under the same parent_id, sorted
+        by created_at ascending.  Used by BranchNavigator UI to render
+        the ``< 2/4 >`` arrow counter under a user message."""
+        await self.ensure_indexes()
+        db = await self._db()
+        messages = db["chat_messages"]
+        cursor = messages.find(
+            {"session_id": session_id, "parent_id": parent_id}
+        ).sort("created_at", 1)
+        return [m async for m in cursor]
+
+    async def update_message_state(
+        self,
+        *,
+        message_id: str,
+        state: str,
+        event_log_append: Optional[List[Dict[str, Any]]] = None,
+        content: Optional[str] = None,
+    ) -> None:
+        """Mutate state + optionally append SSE events / update content.
+        Used by streaming code paths to flip ``state`` from 'streaming'
+        to 'finished'/'errored'/'cancelled' as the SSE stream resolves."""
+        await self.ensure_indexes()
+        db = await self._db()
+        messages = db["chat_messages"]
+        update: Dict[str, Any] = {"$set": {"state": state}}
+        if content is not None:
+            update["$set"]["content"] = content
+        if event_log_append:
+            update["$push"] = {"event_log": {"$each": event_log_append}}
+        await _write_with_retry(
+            lambda: messages.update_one({"_id": message_id}, update),
+            op_name="message_state_update",
+        )
+
+    async def set_current_leaf(
+        self,
+        *,
+        session_id: str,
+        message_id: Optional[str],
+    ) -> None:
+        """Flip a conversation's active branch by pointing
+        current_leaf_id at the new leaf.  Caller responsibility to
+        validate that message_id belongs to session_id (this method
+        does not enforce it for performance reasons)."""
+        await self.ensure_indexes()
+        db = await self._db()
+        sessions = db["chat_sessions"]
+        await _write_with_retry(
+            lambda: sessions.update_one(
+                {"_id": session_id},
+                {"$set": {"current_leaf_id": message_id, "updated_at": _utcnow()}},
+            ),
+            op_name="session_leaf_update",
+        )
 
     async def update_session(
         self,
