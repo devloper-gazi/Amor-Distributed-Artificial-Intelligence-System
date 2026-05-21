@@ -217,7 +217,7 @@ export const Training: Component = () => {
                   aria-label={t("training.pool.progress_aria")}
                 >
                   <div
-                    class="h-full bg-text-primary transition-[width]"
+                    class="h-full bg-text-display transition-[width]"
                     style={{ width: `${progressPct()}%` }}
                   />
                 </div>

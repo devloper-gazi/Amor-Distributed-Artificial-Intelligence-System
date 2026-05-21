@@ -13,7 +13,7 @@ export interface AvatarProps extends JSX.HTMLAttributes<HTMLSpanElement> {
 
 const VARIANT_BG: Record<Variant, string> = {
   user: "bg-bg-elevated-v25 text-text-display",
-  system: "bg-text-primary text-text-inverse",
+  system: "bg-text-display text-text-inverse",
   model: "bg-bg-elevated-v25 text-text-body",
 };
 

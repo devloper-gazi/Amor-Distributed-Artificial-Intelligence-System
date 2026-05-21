@@ -15,7 +15,7 @@ export interface ButtonProps
 
 const VARIANT_CLASS: Record<Variant, string> = {
   primary:
-    "bg-text-primary text-text-inverse hover:opacity-90 active:opacity-80 disabled:opacity-50",
+    "bg-text-display text-text-inverse hover:opacity-90 active:opacity-80 disabled:opacity-50",
   secondary:
     "border border-border-strong-v25 bg-bg-elevated text-text-display hover:bg-bg-hover disabled:opacity-50",
   ghost:

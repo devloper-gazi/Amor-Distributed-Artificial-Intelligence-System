@@ -123,6 +123,19 @@
   opacity: 1;
 }
 
+/* ── Aurora blob drift (Login backdrop) ─────────────────────────────────────
+ * Three OKLch mode-accent radial gradients on the Login surface drift on a
+ * very slow loop (18-26 s) so the canvas feels alive without being
+ * distracting.  Translation only — no opacity flicker — so users with
+ * vestibular sensitivity register motion but not flashing.  Disabled under
+ * prefers-reduced-motion at the bottom of this file.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-blob {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2%, -3%, 0) scale(1.05); }
+  100% { transform: translate3d(-2%, 2%, 0) scale(0.97); }
+}
+
 /* ── prefers-reduced-motion ────────────────────────────────────────────────
  * Extends the rule in theme.css.  Disable all amor-* animations + zero out
  * transition durations.  Streaming caret falls back to a static 70% opacity
@@ -136,6 +149,10 @@
   .amor-enter,
   [data-flip-pulse="1"] {
     animation: none;
+  }
+  /* Aurora blobs hold a static position under reduced motion. */
+  [class*="animate-[amor-blob"] {
+    animation: none !important;
   }
   .amor-rotate-target,
   .amor-composer,

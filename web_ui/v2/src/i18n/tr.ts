@@ -8,6 +8,30 @@
  */
 
 export const tr: Record<string, string> = {
+  // ── Giriş / Kayıt ───────────────────────────────────────────
+  "auth.signin.title":            "AMOR'a giriş yap",
+  "auth.signin.subtitle":         "Yerel öncelikli dağıtık yapay zekâ.",
+  "auth.register.title":          "Hesap oluştur",
+  "auth.register.subtitle":       "Tüm veriler bu makinede kalır.",
+  "auth.field.identifier":        "Kullanıcı adı veya e-posta",
+  "auth.field.username":          "Kullanıcı adı",
+  "auth.field.email":             "E-posta",
+  "auth.field.password":          "Şifre",
+  "auth.placeholder.identifier":  "ornek@amor.local",
+  "auth.placeholder.username":    "ada",
+  "auth.placeholder.email":       "ada@amor.local",
+  "auth.password.hint":           "En az 10 karakter · büyük + küçük harf + 1 rakam.",
+  "auth.cta.signin":              "Giriş yap",
+  "auth.cta.register":            "Hesap oluştur",
+  "auth.switch.no_account":       "Hesabın yok mu?",
+  "auth.switch.create_one":       "Oluştur",
+  "auth.switch.has_account":      "Zaten kayıtlı mısın?",
+  "auth.switch.signin_here":      "Giriş yap",
+  "auth.tag.privacy":             "Veri sizde",
+  "auth.tag.offline":             "Çevrimdışı çalışır",
+  "auth.tag.opensource":          "Açık kaynak",
+  "auth.error.generic":           "Giriş başarısız",
+
   // ── Ayarlar sayfası ──────────────────────────────────────────
   "settings.title":              "Ayarlar",
   "settings.subtitle":           "tema, hesap, dil",

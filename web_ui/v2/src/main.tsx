@@ -138,7 +138,7 @@ const ErrorFallback: Component<{
         <p class="text-sm text-text-body">{detail()}</p>
         <button
           type="button"
-          class="inline-flex h-9 items-center rounded-md bg-text-primary px-4 text-sm font-medium text-text-inverse hover:opacity-90"
+          class="inline-flex h-9 items-center rounded-md bg-text-display px-4 text-sm font-medium text-text-inverse hover:opacity-90"
           onClick={props.reset}
         >
           Reload

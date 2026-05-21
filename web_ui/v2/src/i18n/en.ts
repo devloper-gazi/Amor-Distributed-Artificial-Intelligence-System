@@ -8,6 +8,30 @@
  */
 
 export const en: Record<string, string> = {
+  // ── Login / Register ────────────────────────────────────────
+  "auth.signin.title":            "Sign in to AMOR",
+  "auth.signin.subtitle":         "Local-first distributed AI.",
+  "auth.register.title":          "Create your account",
+  "auth.register.subtitle":       "Everything stays on this machine.",
+  "auth.field.identifier":        "Username or email",
+  "auth.field.username":          "Username",
+  "auth.field.email":             "Email",
+  "auth.field.password":          "Password",
+  "auth.placeholder.identifier":  "you@amor.local",
+  "auth.placeholder.username":    "ada",
+  "auth.placeholder.email":       "ada@amor.local",
+  "auth.password.hint":           "At least 10 chars · upper + lower + 1 digit.",
+  "auth.cta.signin":              "Sign in",
+  "auth.cta.register":            "Create account",
+  "auth.switch.no_account":       "No account?",
+  "auth.switch.create_one":       "Create one",
+  "auth.switch.has_account":      "Already registered?",
+  "auth.switch.signin_here":      "Sign in",
+  "auth.tag.privacy":             "Data stays with you",
+  "auth.tag.offline":             "Works offline",
+  "auth.tag.opensource":          "Open source",
+  "auth.error.generic":           "Sign-in failed",
+
   // ── Settings page ────────────────────────────────────────────
   "settings.title":              "Settings",
   "settings.subtitle":           "theme, account, language",
