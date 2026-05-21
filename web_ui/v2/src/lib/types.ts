@@ -153,4 +153,42 @@ export interface ChatTurn {
     confidence: number;
     low_confidence: boolean;
   };
+  /** Cycle UI v2.5 Phase 2 — Build-mode structured tool-call card.
+   *  Set when the UNIFIED_REDUCER pushes a Build payload (code_ready /
+   *  test_ready / execution_result / review_ready) as a separate
+   *  ``role: "tool"`` turn rather than appending markdown to the
+   *  assistant bubble.  ``MessageThread`` routes these to
+   *  ``ToolCallCardBuild`` instead of ``MessageBubble``. */
+  buildCard?: BuildToolCard;
+}
+
+/** Cycle UI v2.5 Phase 2 — Build-engine tool-call payload.  One card
+ *  per Build pipeline event (implement / test / execute / review).
+ *  ``ToolCallCardBuild`` renders the header (file + kind), a
+ *  collapsible body (DiffBlock for diff payloads, raw text otherwise),
+ *  and a footer (status + duration_ms).
+ *
+ *  This is a domain-specific shape distinct from ``ToolCallFrame``
+ *  (Vercel AI SDK tool-call event accumulator at
+ *  ``web_ui/v2/src/lib/tool-stream.ts``).  Build's pipeline events
+ *  don't share Vercel's input-stream semantics — they arrive as
+ *  finished, atomic payloads — so a domain card is cleaner. */
+export interface BuildToolCard {
+  /** Which Build phase produced this card. */
+  kind: "code_ready" | "test_ready" | "execution_result" | "review_ready";
+  /** Primary file path the payload references (e.g. ``"snake.py"``).
+   *  Optional — review_ready usually has no single file anchor. */
+  file?: string;
+  /** Detected language for syntax-highlighted body, or "diff" when
+   *  the body is unified-diff text (DiffBlock renders). */
+  language?: string;
+  /** Card body — fenced code, unified diff, JSON output, etc. */
+  body?: string;
+  /** Status for the footer chip + colour. */
+  status?: "ok" | "pending" | "failed" | "approved" | "needs_revision";
+  /** Optional duration in milliseconds (sandbox runtime, etc.). */
+  durationMs?: number;
+  /** Free-form structured fields the card renders into the footer
+   *  (e.g. ``{exit_code: 1}`` or ``{verdict_score: 7.2}``). */
+  meta?: Record<string, unknown>;
 }

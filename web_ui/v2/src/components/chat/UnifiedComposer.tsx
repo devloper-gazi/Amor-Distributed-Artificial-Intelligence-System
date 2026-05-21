@@ -57,6 +57,10 @@ import {
   type RepoSymbol,
   type ParsedInput,
 } from "./composer-parsers";
+// Cycle UI v2.5 Phase 2 — auto-suggest popover when the user starts a
+// prompt with "/".  Pure-presentation; reuses SLASH_ALIASES from
+// composer-parsers via the overlay.
+import { SlashCommandOverlay } from "./SlashCommandOverlay";
 import { modeLabel, t } from "../../i18n";
 
 // Re-export the pure parsers so existing imports from
@@ -168,6 +172,14 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   const [mentionLoading, setMentionLoading] = createSignal(false);
   const [attachments, setAttachments] = createSignal<File[]>([]);
   const [dragActive, setDragActive] = createSignal(false);
+  // Cycle UI v2.5 Phase 2 — slash overlay open whenever the trimmed
+  // text starts with "/".  Closing it explicitly (ESC) hides for
+  // this composition; the next "/" keystroke reopens it.
+  const [slashDismissed, setSlashDismissed] = createSignal(false);
+  const slashOverlayOpen = createMemo(() => {
+    if (slashDismissed()) return false;
+    return text().replace(/^\s+/, "").startsWith("/");
+  });
   let textareaRef: HTMLTextAreaElement | undefined;
   let mentionAbort: AbortController | null = null;
   let mentionDebounceTimer: number | null = null;
@@ -469,6 +481,12 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             setText(v);
             trackCaret(e.currentTarget);
             props.onTextChange?.(v);
+            // Cycle UI v2.5 — reset the "user dismissed slash overlay"
+            // flag whenever the input is cleared, so the next "/"
+            // keystroke reopens the overlay.  Without this a one-
+            // off ESC would suppress the overlay forever in this
+            // composition.
+            if (v === "") setSlashDismissed(false);
           }}
           onKeyUp={(e: KeyboardEvent & { currentTarget: HTMLTextAreaElement }) =>
             trackCaret(e.currentTarget)
@@ -506,6 +524,23 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             query={mention()?.query ?? ""}
             onPick={insertMention}
             onHover={(i) => setMentionSelected(i)}
+          />
+        </Show>
+
+        {/* Cycle UI v2.5 — slash-command suggestion overlay.  Opens
+            automatically when the user starts the prompt with "/"; ESC
+            closes for the remainder of the composition; clearing the
+            text re-arms it. */}
+        <Show when={slashOverlayOpen()}>
+          <SlashCommandOverlay
+            text={text()}
+            onPick={(mode) => {
+              // Apply the same logic as ModePicker.onPick — strip the
+              // slash, lock the user's choice, refocus the textarea.
+              pickMode(mode);
+              setSlashDismissed(true);
+            }}
+            onClose={() => setSlashDismissed(true)}
           />
         </Show>
       </div>

@@ -355,57 +355,85 @@ describe("UNIFIED_REDUCER — cross-cutting events", () => {
   });
 });
 
-describe("UNIFIED_REDUCER — Build-specific dispatches", () => {
-  it("code_ready → appends fenced code block with language tag", () => {
+describe("UNIFIED_REDUCER — Build-specific dispatches (Cycle UI v2.5 Phase 2)", () => {
+  // Cycle UI v2.5 Phase 2 — Build typed events now emit STRUCTURED
+  // ToolCallCardBuild pushTurns rather than appending markdown
+  // fences to the assistant bubble.  Pin the new shape so we catch
+  // future regressions (e.g. someone reintroduces the legacy
+  // `append:` path).
+  it("code_ready → pushes a Build tool turn with buildCard payload", () => {
     const out = UNIFIED_REDUCER({
       type: "code_ready",
       code: "console.log('hi');",
       language: "javascript",
+      file: "snake.js",
     });
     expect(out).not.toBeNull();
-    expect(out!.append).toContain("```javascript");
-    expect(out!.append).toContain("console.log");
+    expect(out!.pushTurn).toBeDefined();
+    expect(out!.pushTurn!.role).toBe("tool");
+    expect(out!.pushTurn!.buildCard).toBeDefined();
+    expect(out!.pushTurn!.buildCard!.kind).toBe("code_ready");
+    expect(out!.pushTurn!.buildCard!.file).toBe("snake.js");
+    expect(out!.pushTurn!.buildCard!.language).toBe("javascript");
+    expect(out!.pushTurn!.buildCard!.body).toContain("```javascript");
+    expect(out!.pushTurn!.buildCard!.body).toContain("console.log");
+    expect(out!.pushTurn!.buildCard!.status).toBe("ok");
     expect(out!.tag).toBe("code");
   });
-  it("test_ready → appends a Tests block", () => {
+  it("test_ready → pushes a Build tool turn for tests", () => {
     const out = UNIFIED_REDUCER({
       type: "test_ready",
       tests: "assert(1 === 1);",
       language: "javascript",
     });
     expect(out).not.toBeNull();
-    expect(out!.append).toContain("_— Tests —_");
-    expect(out!.append).toContain("assert(1 === 1);");
+    expect(out!.pushTurn!.buildCard!.kind).toBe("test_ready");
+    expect(out!.pushTurn!.buildCard!.body).toContain("assert(1 === 1);");
+    expect(out!.pushTurn!.buildCard!.language).toBe("javascript");
     expect(out!.tag).toBe("test");
   });
-  it("execution_result(passed=true) → renders the passed marker", () => {
+  it("execution_result(passed=true) → status=ok, no error body", () => {
     const out = UNIFIED_REDUCER({
       type: "execution_result",
       passed: true,
       stdout: "ok",
+      duration_ms: 123,
     });
-    expect(out!.append).toContain("Execution passed");
+    expect(out!.pushTurn!.buildCard!.kind).toBe("execution_result");
+    expect(out!.pushTurn!.buildCard!.status).toBe("ok");
+    expect(out!.pushTurn!.buildCard!.durationMs).toBe(123);
     expect(out!.tag).toBe("executed");
   });
-  it("execution_result(passed=false) → renders stdout + stderr", () => {
+  it("execution_result(passed=false) → status=failed, body includes stderr", () => {
     const out = UNIFIED_REDUCER({
       type: "execution_result",
       passed: false,
       stdout: "trace",
       stderr: "ImportError: foo",
+      exit_code: 1,
     });
-    expect(out!.append).toContain("Execution failed");
-    expect(out!.append).toContain("ImportError: foo");
+    expect(out!.pushTurn!.buildCard!.status).toBe("failed");
+    expect(out!.pushTurn!.buildCard!.body).toContain("ImportError: foo");
+    expect(out!.pushTurn!.buildCard!.body).toContain("stderr:");
+    expect(out!.pushTurn!.buildCard!.meta).toEqual({ exit_code: 1 });
     expect(out!.tag).toBe("execution_failed");
   });
-  it("review_ready → replaces buffer with markdown verdict", () => {
+  it("review_ready → both replaces buffer AND pushes a build tool turn", () => {
     const out = UNIFIED_REDUCER({
       type: "review_ready",
       verdict: "approved",
       markdown: "# Review\n\nLGTM",
     });
+    // Replace into the assistant bubble — review IS the final
+    // deliverable for Build sessions.
     expect(out!.replace).toContain("LGTM");
     expect(out!.tag).toContain("approved");
+    // PLUS an additive pushTurn so the user sees a structured
+    // review card with the verdict status chip.
+    expect(out!.pushTurn).toBeDefined();
+    expect(out!.pushTurn!.buildCard!.kind).toBe("review_ready");
+    expect(out!.pushTurn!.buildCard!.status).toBe("approved");
+    expect(out!.pushTurn!.buildCard!.body).toContain("LGTM");
   });
   it("model_download_progress → tag-only update", () => {
     const out = UNIFIED_REDUCER({

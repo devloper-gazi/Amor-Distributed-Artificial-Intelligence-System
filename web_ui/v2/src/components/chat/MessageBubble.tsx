@@ -57,14 +57,40 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const showActions = () =>
     props.turn.role === "user" || props.turn.role === "assistant";
 
+  // Cycle UI v2.5 — 3 px sol mode-accent rule color.  For user turns we
+  // use --color-text-subtle (mode is the COMPOSER's chosen mode at
+  // submit time; the user themselves doesn't carry a mode identity).
+  // For assistant/tool turns we reach for --color-mode-{mode}; falls
+  // back to --color-mode-system when turn.mode is absent (legacy
+  // sessions pre-Phase-3).
+  const ruleColor = (): string => {
+    if (props.turn.role === "user") return "var(--color-text-subtle, var(--color-text-tertiary))";
+    const m = props.turn.mode;
+    return m
+      ? `var(--color-mode-${m}, var(--color-mode-system))`
+      : "var(--color-mode-system)";
+  };
+
   return (
     <div
       class={[
-        "group flex gap-3 px-5 py-4",
+        "group relative flex gap-3 px-5 py-4",
         isUser() ? "bg-bg-primary" : "bg-bg-secondary",
       ].join(" ")}
       data-role={props.turn.role}
+      data-amor-turn-mode={props.turn.mode}
     >
+      {/* Cycle UI v2.5 — 3 px sol mode-accent rule.  Identifies the
+          turn's mode without a always-visible pill (the pill moves to
+          hover-reveal below).  Absolute-positioned so it doesn't push
+          the avatar; rounded-full so it reads as a soft accent rather
+          than a hard divider. */}
+      <span
+        aria-hidden="true"
+        class="pointer-events-none absolute left-0 top-3 bottom-3 w-[3px] rounded-full"
+        style={{ "background-color": ruleColor() }}
+        data-amor-bubble-rule=""
+      />
       <Avatar
         variant={ROLE_VARIANT[props.turn.role]}
         initials={ROLE_INITIALS[props.turn.role]}
@@ -87,9 +113,13 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
                   `top2: ${m.top2} ${m.top2_score.toFixed(3)}`
                 );
               };
+              // Cycle UI v2.5 — hover-reveal: the pill was always-
+              // visible in Phase 3.  Now the 3 px sol rule carries the
+              // mode-identity affordance; the pill surfaces classifier
+              // confidence on hover for debug visibility.
               return (
                 <span
-                  class="inline-flex items-center rounded px-1.5 py-px text-[0.6rem] font-medium uppercase tracking-wide"
+                  class="amor-hover-reveal inline-flex items-center rounded px-1.5 py-px text-[0.6rem] font-medium uppercase tracking-wide"
                   style={{
                     "background-color": `var(--color-mode-${mode()}, var(--bg-elevated))`,
                     color: "var(--color-mode-fg, var(--text-secondary))",
@@ -110,6 +140,9 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
               {props.turn.tag}
             </span>
           </Show>
+          {/* Cycle UI v2.5 — keep the "streaming…" header label too:
+              it tells the user what's happening BEFORE the first token
+              arrives; the in-content DOM-node caret then takes over. */}
           <Show when={props.turn.streaming}>
             <span class="text-[0.65rem] text-text-tertiary motion-safe:animate-pulse">
               streaming…
@@ -139,19 +172,30 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
             )}
           </Show>
         </div>
+        {/* Cycle UI v2.5 — wrap content + streaming caret in a single
+            container.  The caret is a real DOM node (not ::after) so
+            SSE delta-append re-renders don't trigger pseudo-element
+            repaint quirks on Safari (Research J.3). */}
         <div
           class={[
             "mt-1 text-sm leading-relaxed",
             "prose-amor", // styled in global.css; safe even if absent
           ].join(" ")}
-          // Sanitised — see ../../lib/sanitise.ts.  Plain user text
-          // skips marked entirely to avoid surprising formatting.
-          innerHTML={
-            isUser()
-              ? escapeText(props.turn.content)
-              : renderMarkdown(props.turn.content)
-          }
-        />
+        >
+          <span
+            // Sanitised -- see ../../lib/sanitise.ts.  Plain user
+            // text skips marked entirely to avoid surprising
+            // formatting.
+            innerHTML={
+              isUser()
+                ? escapeText(props.turn.content)
+                : renderMarkdown(props.turn.content)
+            }
+          />
+          <Show when={props.turn.streaming && !isUser()}>
+            <span class="streaming-caret" aria-hidden="true" />
+          </Show>
+        </div>
         <Show when={showActions() && !props.turn.streaming}>
           <MessageActions
             turn={props.turn}

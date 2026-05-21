@@ -757,41 +757,121 @@ export const UNIFIED_REDUCER: EventReducer = (ev) => {
     return RESEARCH_REDUCER(ev);
   }
 
-  // Build + QuickCode share the same event taxonomy.  Inline
-  // handling for the typed-deliverable events the SIMPLE reducer
-  // doesn't know about.  Phase 4 will replace these append-strings
-  // with structured ToolCallCard pushTurns.
+  // Build + QuickCode share the same event taxonomy.  Cycle UI v2.5
+  // Phase 2 — typed Build payloads (code_ready / test_ready /
+  // execution_result / review_ready) become structured ``role: "tool"``
+  // turns carrying a BuildToolCard rather than markdown fences in
+  // the assistant bubble.  Lets MessageThread route them to
+  // ToolCallCardBuild (DiffBlock body, header + footer chrome).
   if (category === "build") {
     if (type === "code_ready") {
       const code = typeof ev.code === "string" ? ev.code : extractText(ev);
-      const lang = typeof ev.language === "string" ? ev.language : "";
+      if (!code) return null;
+      const lang = typeof ev.language === "string" ? ev.language : undefined;
+      const file = typeof ev.file === "string" ? ev.file : undefined;
       const fence = lang ? `\`\`\`${lang}\n${code}\n\`\`\`` : code;
-      return code ? { append: `\n${fence}\n`, tag: "code" } : null;
+      return {
+        pushTurn: {
+          role: "tool",
+          content: `code_ready: ${file ?? "(no file)"}`,
+          ts: Date.now(),
+          tag: "code",
+          buildCard: {
+            kind: "code_ready",
+            file,
+            language: lang,
+            body: fence,
+            status: "ok",
+          },
+        },
+        tag: "code",
+      };
     }
     if (type === "test_ready") {
       const tests = typeof ev.tests === "string" ? ev.tests : extractText(ev);
-      const lang = typeof ev.language === "string" ? ev.language : "";
+      if (!tests) return null;
+      const lang = typeof ev.language === "string" ? ev.language : undefined;
+      const file = typeof ev.file === "string" ? ev.file : undefined;
       const fence = lang ? `\`\`\`${lang}\n${tests}\n\`\`\`` : tests;
-      return tests ? { append: `\n_— Tests —_\n${fence}\n`, tag: "test" } : null;
+      return {
+        pushTurn: {
+          role: "tool",
+          content: `test_ready: ${file ?? "(no file)"}`,
+          ts: Date.now(),
+          tag: "test",
+          buildCard: {
+            kind: "test_ready",
+            file,
+            language: lang,
+            body: fence,
+            status: "ok",
+          },
+        },
+        tag: "test",
+      };
     }
     if (type === "execution_result") {
       const passed = ev.passed === true;
       const stderr = typeof ev.stderr === "string" ? ev.stderr : "";
       const stdout = typeof ev.stdout === "string" ? ev.stdout : "";
-      const line = passed
-        ? `_✓ Execution passed_\n`
-        : `_✗ Execution failed_\n` +
-          (stdout ? `\`\`\`\n${stdout.slice(0, 1500)}\n\`\`\`\n` : "") +
-          (stderr ? `\`\`\`\n${stderr.slice(0, 1500)}\n\`\`\`\n` : "");
-      return { append: line, tag: passed ? "executed" : "execution_failed" };
+      const durationMs =
+        typeof ev.duration_ms === "number" ? ev.duration_ms : undefined;
+      const exitCode =
+        typeof ev.exit_code === "number" ? ev.exit_code : undefined;
+      // Combined body for the collapsible — stdout above stderr,
+      // each fenced so MessageBubble's markdown renderer copies them
+      // cleanly.
+      const segments: string[] = [];
+      if (stdout) segments.push(`stdout:\n\`\`\`\n${stdout.slice(0, 4000)}\n\`\`\``);
+      if (stderr) segments.push(`stderr:\n\`\`\`\n${stderr.slice(0, 4000)}\n\`\`\``);
+      const body = segments.join("\n\n");
+      return {
+        pushTurn: {
+          role: "tool",
+          content: passed ? "execution passed" : "execution failed",
+          ts: Date.now(),
+          tag: passed ? "executed" : "execution_failed",
+          buildCard: {
+            kind: "execution_result",
+            body: body || undefined,
+            status: passed ? "ok" : "failed",
+            durationMs,
+            meta: exitCode != null ? { exit_code: exitCode } : undefined,
+          },
+        },
+        tag: passed ? "executed" : "execution_failed",
+      };
     }
     if (type === "review_ready") {
       const verdict = typeof ev.verdict === "string" ? ev.verdict : "";
       const md = typeof ev.markdown === "string" ? ev.markdown : extractText(ev);
+      // Review keeps replace-into-assistant-buffer behaviour because
+      // it IS the final assistant deliverable for Build sessions.
+      // The structured card is additive — both render.
+      const patch: StreamPatch = {
+        tag: `review: ${verdict || "complete"}`,
+      };
       if (md) {
-        return { replace: md, tag: `review: ${verdict || "complete"}`, done: false };
+        patch.replace = md;
+        patch.done = false;
       }
-      return verdict ? { tag: `review: ${verdict}` } : null;
+      return {
+        ...patch,
+        pushTurn: {
+          role: "tool",
+          content: `review_ready: ${verdict || "complete"}`,
+          ts: Date.now(),
+          tag: `review: ${verdict || "complete"}`,
+          buildCard: {
+            kind: "review_ready",
+            body: md || undefined,
+            status:
+              verdict === "approved" ? "approved" :
+              verdict === "needs_revision" ? "needs_revision" :
+              undefined,
+          },
+        },
+      };
     }
     if (type === "model_download_progress") {
       const pct = typeof ev.percent === "number" ? ev.percent : 0;

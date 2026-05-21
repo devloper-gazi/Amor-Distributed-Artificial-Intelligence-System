@@ -139,13 +139,17 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
     });
   };
 
-  return (
-    <div
-      role="toolbar"
-      aria-label={t("message.toolbar_label", { role: props.turn.role })}
-      class="mt-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100"
-      data-amor-message-actions=""
-    >
+  // Cycle UI v2.5 Phase 2 — mobile ⋯ menu split.  Below `md` the
+  // hover-reveal pattern is meaningless (no hover on touch); collapse
+  // the action toolbar into a native <details>/<summary> menu instead.
+  // Same buttons + callbacks; just a different visual chrome.  No
+  // new dep (Kobalte DropdownMenu would have been overkill here).
+  //
+  // The actual <IconButton> JSX is shared between mobile + desktop
+  // via the `actionButtons` JSX fragment captured below so we don't
+  // duplicate ~80 LOC of button blocks.
+  const actionButtons = (
+    <>
       <IconButton
         size="sm"
         aria-label={copied() ? t("message.copied") : t("message.copy")}
@@ -155,7 +159,6 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
       >
         <span aria-hidden="true">{copied() ? "✓" : "⧉"}</span>
       </IconButton>
-
       <Show when={isUser() && props.onEdit}>
         <IconButton
           size="sm"
@@ -167,7 +170,6 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           <span aria-hidden="true">✎</span>
         </IconButton>
       </Show>
-
       <Show when={isAssistant() && props.onRegenerate}>
         <IconButton
           size="sm"
@@ -179,7 +181,6 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           <span aria-hidden="true">↻</span>
         </IconButton>
       </Show>
-
       <Show when={props.onBranch}>
         <IconButton
           size="sm"
@@ -191,7 +192,6 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           <span aria-hidden="true">⎇</span>
         </IconButton>
       </Show>
-
       <Show when={isAssistant()}>
         <span
           class="ml-1 mr-0.5 h-4 w-px bg-border-subtle"
@@ -203,11 +203,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           aria-pressed={rating() === 1}
           onClick={() => setRate(1)}
           title={t("message.rate_up")}
-          class={
-            rating() === 1
-              ? "text-text-primary bg-bg-hover"
-              : ""
-          }
+          class={rating() === 1 ? "text-text-primary bg-bg-hover" : ""}
           data-amor-action="rate-up"
           data-amor-rate-state={rating() === 1 ? "on" : "off"}
         >
@@ -219,17 +215,47 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           aria-pressed={rating() === -1}
           onClick={() => setRate(-1)}
           title={t("message.rate_down")}
-          class={
-            rating() === -1
-              ? "text-text-primary bg-bg-hover"
-              : ""
-          }
+          class={rating() === -1 ? "text-text-primary bg-bg-hover" : ""}
           data-amor-action="rate-down"
           data-amor-rate-state={rating() === -1 ? "on" : "off"}
         >
           <span aria-hidden="true">▼</span>
         </IconButton>
       </Show>
+    </>
+  );
+
+  return (
+    <div data-amor-message-actions="">
+      {/* Mobile: ⋯ menu — visible below md only. */}
+      <details
+        class="amor-touch md:hidden mt-2 inline-block align-middle"
+        data-amor-mobile-actions=""
+      >
+        <summary
+          class="amor-touch inline-flex h-9 w-9 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 list-none cursor-pointer"
+          aria-label={t("message.toolbar_label", { role: props.turn.role })}
+        >
+          <span aria-hidden="true">⋯</span>
+        </summary>
+        <div
+          role="toolbar"
+          aria-label={t("message.toolbar_label", { role: props.turn.role })}
+          class="mt-1 flex flex-wrap items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md"
+          data-amor-actions-shell="mobile"
+        >
+          {actionButtons}
+        </div>
+      </details>
+
+      {/* Desktop: original hover-reveal toolbar.  Hidden below md. */}
+      <div
+        role="toolbar"
+        aria-label={t("message.toolbar_label", { role: props.turn.role })}
+        class="hidden md:flex mt-2 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100"
+        data-amor-actions-shell="desktop"
+      >
+        {actionButtons}
 
       <Show when={copied()}>
         <span
@@ -240,6 +266,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           {t("message.copied_status")}
         </span>
       </Show>
+      </div>
     </div>
   );
 };
