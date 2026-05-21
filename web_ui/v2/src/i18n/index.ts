@@ -68,7 +68,35 @@ function loadLocale(): Locale {
 
 const [locale, setLocaleSignal] = createSignal<Locale>(loadLocale());
 
+// Boot-time: mirror the resolved locale onto <html lang="…"> so that
+// screen-readers and CSS :lang(...) selectors see the right language
+// from the first paint.  Without this, the static lang attribute on
+// index.html lies to assistive tech about the page's content language.
+if (typeof document !== "undefined") {
+  try {
+    document.documentElement.setAttribute("lang", locale());
+  } catch {
+    // ignore (SSR, head-less render)
+  }
+}
+
 export { locale };
+
+/**
+ * Locale-aware uppercase wrapper.  Browsers do NOT honour ``lang``
+ * for CSS ``text-transform: uppercase`` — Chrome stays on Unicode
+ * default casing which turns Turkish ``i`` into ``I`` instead of
+ * ``İ``.  Call this helper in components that need uppercase TR
+ * text and remove the CSS class.
+ */
+export function localeUpper(s: string): string {
+  if (!s) return "";
+  try {
+    return s.toLocaleUpperCase(locale());
+  } catch {
+    return s.toUpperCase();
+  }
+}
 
 export function setLocale(next: Locale): void {
   if (!SUPPORTED.includes(next)) return;

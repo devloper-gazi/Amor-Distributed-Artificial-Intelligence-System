@@ -17,7 +17,7 @@ import { A, useLocation } from "@solidjs/router";
 import { auth } from "../../lib/auth";
 import { sessions, type ChatSession } from "../../lib/sessions";
 import { Modal, Button, Input } from "../ui";
-import { t } from "../../i18n";
+import { t, localeUpper } from "../../i18n";
 
 interface SessionListProps {
   collapsed: boolean;
@@ -312,8 +312,8 @@ export const SessionList: Component<SessionListProps> = (props) => {
   return (
     <Show when={!props.collapsed && auth.user()}>
       <div class="mt-6 flex items-center justify-between px-2 mb-1.5">
-        <p class="text-[0.65rem] font-semibold uppercase tracking-widest text-text-subtle">
-          {t("sessions.title")}
+        <p class="text-[0.65rem] font-semibold tracking-widest text-text-subtle">
+          {localeUpper(t("sessions.title"))}
         </p>
         <Show when={total() > 0}>
           <span class="text-[0.6rem] text-text-subtle tabular-nums">
@@ -344,8 +344,8 @@ export const SessionList: Component<SessionListProps> = (props) => {
                   data-amor-session-group={group.key}
                   aria-label={group.label}
                 >
-                  <h3 class="px-2 pb-0.5 text-[0.55rem] font-semibold uppercase tracking-wider text-text-subtle/80">
-                    {group.label}
+                  <h3 class="px-2 pb-0.5 text-[0.55rem] font-semibold tracking-wider text-text-subtle/80">
+                    {localeUpper(group.label)}
                   </h3>
                   <ul class="space-y-0.5">
                     <For each={group.items}>
@@ -513,13 +513,13 @@ const SessionRow: Component<SessionRowProps> = (props) => {
             {/* Mode chip */}
             <Show when={modeKey()}>
               <span
-                class="inline-flex items-center gap-1 rounded px-1 py-px text-[0.55rem] font-medium uppercase tracking-wide"
+                class="inline-flex items-center gap-1 rounded px-1 py-px text-[0.55rem] font-medium tracking-wide"
                 style={{
                   background: "color-mix(in oklch, " + modeColorVar(modeKey()) + " 14%, transparent)",
                   color: modeColorVar(modeKey()),
                 }}
               >
-                {modeShortLabel(modeKey())}
+                {localeUpper(modeShortLabel(modeKey()))}
               </span>
             </Show>
             <span class="truncate italic tabular-nums" data-amor-session-timestamp="">

@@ -4,7 +4,7 @@ import { MODES, type ModeMeta } from "../../lib/types";
 import { auth } from "../../lib/auth";
 import { Avatar, Tooltip, IconButton, Kbd } from "../ui";
 import { SessionList } from "./SessionList";
-import { modeLabel, t } from "../../i18n";
+import { modeLabel, t, localeUpper } from "../../i18n";
 
 interface SystemLink {
   href: string;
@@ -105,8 +105,8 @@ export const Sidebar: Component<SidebarProps> = (props) => {
       {/* Modes */}
       <nav class="flex-1 overflow-y-auto px-2 py-3">
         <Show when={!props.collapsed}>
-          <p class="mb-1.5 px-2 text-[0.65rem] font-semibold uppercase tracking-widest text-text-subtle">
-            {t("sidebar.section.modes")}
+          <p class="mb-1.5 px-2 text-[0.65rem] font-semibold tracking-widest text-text-subtle">
+            {localeUpper(t("sidebar.section.modes"))}
           </p>
         </Show>
         <ul class="space-y-0.5">
@@ -118,8 +118,8 @@ export const Sidebar: Component<SidebarProps> = (props) => {
         </ul>
 
         <Show when={!props.collapsed}>
-          <p class="mt-6 mb-1.5 px-2 text-[0.65rem] font-semibold uppercase tracking-widest text-text-subtle">
-            {t("sidebar.section.system")}
+          <p class="mt-6 mb-1.5 px-2 text-[0.65rem] font-semibold tracking-widest text-text-subtle">
+            {localeUpper(t("sidebar.section.system"))}
           </p>
         </Show>
         <ul class="space-y-0.5">
@@ -244,8 +244,8 @@ const SidebarItem: Component<{
       <Show when={!props.collapsed}>
         <span class="flex-1 truncate">{modeLabel(props.mode)}</span>
         <Show when={!props.mode.wired}>
-          <span class="rounded-full bg-bg-elevated-v25 px-1.5 py-0.5 text-[0.55rem] uppercase tracking-wide text-text-subtle">
-            {t("sidebar.mode.soon")}
+          <span class="rounded-full bg-bg-elevated-v25 px-1.5 py-0.5 text-[0.55rem] tracking-wide text-text-subtle">
+            {localeUpper(t("sidebar.mode.soon"))}
           </span>
         </Show>
       </Show>

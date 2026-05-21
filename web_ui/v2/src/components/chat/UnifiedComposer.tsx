@@ -61,7 +61,7 @@ import {
 // prompt with "/".  Pure-presentation; reuses SLASH_ALIASES from
 // composer-parsers via the overlay.
 import { SlashCommandOverlay } from "./SlashCommandOverlay";
-import { modeLabel, t } from "../../i18n";
+import { modeLabel, t, localeUpper } from "../../i18n";
 
 // Re-export the pure parsers so existing imports from
 // ``UnifiedComposer`` keep working.
@@ -681,10 +681,10 @@ const ModePill: Component<{
       <span class="font-medium">{modeLabel(meta())}</span>
       <Show when={props.badge}>
         <span
-          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-text-subtle"
+          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium tracking-wide text-text-subtle"
           data-amor-mode-badge=""
         >
-          {props.badge}
+          {localeUpper(props.badge ?? "")}
         </span>
       </Show>
       <span class="text-text-subtle" aria-hidden="true">

@@ -19,7 +19,7 @@
 
 import { type Component, For } from "solid-js";
 import type { ModeKey } from "../../lib/types";
-import { t } from "../../i18n";
+import { t, localeUpper } from "../../i18n";
 
 export interface EmptyStateProps {
   /** Called when the user clicks a seed card.  Composer's parent
@@ -96,8 +96,8 @@ export const EmptyState: Component<EmptyStateProps> = (props) => {
                 aria-hidden="true"
               />
               <div class="min-w-0 flex-1">
-                <div class="text-[10px] uppercase tracking-wider text-text-mute mb-0.5">
-                  {t(seed.labelKey)}
+                <div class="text-[10px] tracking-wider text-text-mute mb-0.5">
+                  {localeUpper(t(seed.labelKey))}
                 </div>
                 <div class="text-[13px] leading-[19px] text-text-body">
                   {t(seed.promptKey)}
