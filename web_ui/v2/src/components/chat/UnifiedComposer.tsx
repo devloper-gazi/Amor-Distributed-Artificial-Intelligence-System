@@ -1,5 +1,5 @@
 /**
- * Cycle C Sprint 4 Day 1+2 — mode-agnostic composer.
+ * Cycle C Sprint 4 Day 1+2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â mode-agnostic composer.
  *
  * Single textarea + a mode pill + @-mention picker + drag-drop attach
  * for the entire AMOR product surface.  Slash-command parsing routes
@@ -18,7 +18,7 @@
  * * Slash-command parser ({build, research, think, consortium,
  *   sentinel, system} + aliases).
  * * Mode pill with OKLch accent per mode + listbox-style ModePicker.
- * * @-mention picker — debounced GET /api/repo/symbols, arrow / Enter
+ * * @-mention picker ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â debounced GET /api/repo/symbols, arrow / Enter
  *   navigation, inserts ``@[name](path:line)`` token at the cursor.
  * * Drag-drop attach overlay + paste-clipboard handler for images
  *   and text files; attachment chips render above the textarea.
@@ -27,12 +27,12 @@
  * * Persistent last-mode in localStorage["amor.composer.mode"].
  *
  * What Day 3-5 add:
- * * Day 3 — message hover-actions bar.
- * * Day 4 — tool-call cards.
- * * Day 5 — axe-core a11y gate.
+ * * Day 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â message hover-actions bar.
+ * * Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â tool-call cards.
+ * * Day 5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â axe-core a11y gate.
  *
  * Existing per-mode pages (Build.tsx, Research.tsx etc) keep working
- * unchanged — UnifiedComposer is opt-in via a new /chat route.
+ * unchanged ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â UnifiedComposer is opt-in via a new /chat route.
  */
 
 import {
@@ -57,7 +57,7 @@ import {
   type RepoSymbol,
   type ParsedInput,
 } from "./composer-parsers";
-// Cycle UI v2.5 Phase 2 — auto-suggest popover when the user starts a
+// Cycle UI v2.5 Phase 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â auto-suggest popover when the user starts a
 // prompt with "/".  Pure-presentation; reuses SLASH_ALIASES from
 // composer-parsers via the overlay.
 import { SlashCommandOverlay } from "./SlashCommandOverlay";
@@ -111,7 +111,7 @@ export interface ComposerSubmission {
 }
 
 export interface UnifiedComposerProps {
-  /** Called when the user submits — receives final text + resolved mode. */
+  /** Called when the user submits ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â receives final text + resolved mode. */
   onSubmit: (text: string, mode: ModeKey) => void | Promise<void>;
   /** Optional richer submit callback receiving the full submission record
    *  (text + mode + attachments).  Called *in addition to* ``onSubmit``
@@ -121,23 +121,23 @@ export interface UnifiedComposerProps {
   /** Disable the send button + show Cancel instead. */
   busy?: boolean;
   onCancel?: () => void;
-  /** Override the placeholder.  Default: "Ask anything — or /build, /research, /think…" */
+  /** Override the placeholder.  Default: "Ask anything ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â or /build, /research, /thinkÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦" */
   placeholder?: string;
   /** Initial mode override (otherwise restored from localStorage). */
   initialMode?: ModeKey;
-  /** Cycle UI 2026-05-20 — Notify parent of every text change so it can
+  /** Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Notify parent of every text change so it can
    *  feed an intent classifier or other side-effect.  Parent should
    *  treat this as a high-frequency event and debounce downstream
    *  work itself.  When omitted the composer behaves as before. */
   onTextChange?: (text: string) => void;
-  /** Cycle UI 2026-05-20 — When provided, this mode replaces the
+  /** Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â When provided, this mode replaces the
    *  composer's internal ``activeMode`` until the user picks a
    *  different mode via the ModePicker (which then "locks" the
    *  user's choice and ignores further overrides).  Used by the
    *  auto-mode classifier in UnifiedChat to suggest a mode while
    *  letting manual selection still win. */
   modeOverride?: ModeKey;
-  /** Cycle UI 2026-05-20 — Optional flag rendered next to the
+  /** Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Optional flag rendered next to the
    *  ModePill, e.g. "auto" / "uncertain" / classifier confidence
    *  badge.  Parent owns the string so it can be localised + carry
    *  inline-classifier state.  When omitted, no badge is rendered. */
@@ -155,7 +155,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   const [activeMode, setActiveMode] = createSignal<ModeKey>(
     props.initialMode ?? DEFAULT_MODE,
   );
-  // Cycle UI 2026-05-20 — once the user explicitly clicks ModePicker,
+  // Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â once the user explicitly clicks ModePicker,
   // their choice "locks" the composer's mode and modeOverride is
   // ignored until they click a different mode (or clear via slash).
   const [userPickedMode, setUserPickedMode] = createSignal(false);
@@ -172,7 +172,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   const [mentionLoading, setMentionLoading] = createSignal(false);
   const [attachments, setAttachments] = createSignal<File[]>([]);
   const [dragActive, setDragActive] = createSignal(false);
-  // Cycle UI v2.5 Phase 2 — slash overlay open whenever the trimmed
+  // Cycle UI v2.5 Phase 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â slash overlay open whenever the trimmed
   // text starts with "/".  Closing it explicitly (ESC) hides for
   // this composition; the next "/" keystroke reopens it.
   const [slashDismissed, setSlashDismissed] = createSignal(false);
@@ -189,6 +189,31 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
     if (!props.initialMode) {
       setActiveMode(loadLastMode());
     }
+    // Cycle UI v2.5 Phase 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â EmptyState seed prompt cards
+    // dispatch `amor:composer-seed` to fill the textarea.  Listening
+    // here keeps EmptyState decoupled from the composer's internal
+    // ref + signal plumbing.
+    const onSeed = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { text?: string; mode?: ModeKey }
+        | undefined;
+      if (!detail || typeof detail.text !== "string") return;
+      setText(detail.text);
+      props.onTextChange?.(detail.text);
+      if (detail.mode) {
+        setActiveMode(detail.mode);
+        setUserPickedMode(true);
+      }
+      requestAnimationFrame(() => {
+        if (!textareaRef) return;
+        textareaRef.focus();
+        // Caret to end so the user can continue typing or hit ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ+Enter.
+        const end = detail.text!.length;
+        textareaRef.setSelectionRange(end, end);
+      });
+    };
+    window.addEventListener("amor:composer-seed", onSeed);
+    onCleanup(() => window.removeEventListener("amor:composer-seed", onSeed));
   });
 
   onCleanup(() => {
@@ -202,7 +227,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   );
 
   // Live-parsed view of what the slash command resolves to.  Used to
-  // show a soft hint under the textarea ("/build → Build mode") so
+  // show a soft hint under the textarea ("/build ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Build mode") so
   // the user gets feedback before pressing Enter.
   const livePreview = createMemo<ParsedInput>(() =>
     parseSlashCommand(text(), effectiveMode()),
@@ -221,7 +246,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         return m ? m.query : null;
       },
       (q) => {
-        // Close → clear state.
+        // Close ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ clear state.
         if (q === null) {
           setMentionMatches([]);
           setMentionSelected(0);
@@ -357,9 +382,9 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   const pickMode = (mode: ModeKey) => {
     setActiveMode(mode);
-    setUserPickedMode(true);  // Cycle UI 2026-05-20 — lock the choice
+    setUserPickedMode(true);  // Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â lock the choice
     setPickerOpen(false);
-    // Strip any matching slash prefix the user typed earlier — once
+    // Strip any matching slash prefix the user typed earlier ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â once
     // they pick a mode explicitly, the prefix is redundant noise.
     const { text: stripped } = parseSlashCommand(text(), mode);
     setText(stripped);
@@ -387,7 +412,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   };
 
   const onDragLeave = (e: DragEvent) => {
-    // Only flip off when the leave event leaves the form itself —
+    // Only flip off when the leave event leaves the form itself ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
     // child elements emit their own dragleave.
     if (e.currentTarget === e.target) {
       setDragActive(false);
@@ -421,7 +446,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   return (
     <form
-      class="relative flex flex-col gap-2 border-t border-border-subtle bg-bg-secondary px-5 py-4"
+      class="relative flex flex-col gap-2 border-t border-border-subtle bg-bg-elevated-v25 px-5 py-4"
       onSubmit={(e: SubmitEvent) => {
         e.preventDefault();
         submit();
@@ -434,7 +459,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
       {/* Drag-drop overlay */}
       <Show when={dragActive()}>
         <div
-          class="pointer-events-none absolute inset-0 z-[var(--z-overlay)] flex items-center justify-center rounded-md border-2 border-dashed border-text-primary/50 bg-bg-elevated/80 text-sm text-text-primary backdrop-blur-sm"
+          class="pointer-events-none absolute inset-0 z-[var(--z-overlay)] flex items-center justify-center rounded-md border-2 border-dashed border-text-primary/50 bg-bg-elevated/80 text-sm text-text-display backdrop-blur-sm"
           aria-hidden="true"
           data-amor-overlay="drop"
         >
@@ -451,20 +476,20 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         >
           <For each={attachments()}>
             {(file, i) => (
-              <li class="flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-elevated px-2.5 py-0.5 text-[0.7rem] text-text-secondary">
+              <li class="flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-elevated px-2.5 py-0.5 text-[0.7rem] text-text-body">
                 <span class="truncate max-w-[14rem]" title={file.name}>
                   {file.name}
                 </span>
-                <span class="text-text-tertiary tabular-nums">
+                <span class="text-text-subtle tabular-nums">
                   {formatBytes(file.size)}
                 </span>
                 <button
                   type="button"
                   onClick={() => removeFile(i())}
                   aria-label={`Remove ${file.name}`}
-                  class="text-text-tertiary hover:text-text-primary"
+                  class="text-text-subtle hover:text-text-display"
                 >
-                  ×
+                  ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
                 </button>
               </li>
             )}
@@ -481,7 +506,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             setText(v);
             trackCaret(e.currentTarget);
             props.onTextChange?.(v);
-            // Cycle UI v2.5 — reset the "user dismissed slash overlay"
+            // Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â reset the "user dismissed slash overlay"
             // flag whenever the input is cleared, so the next "/"
             // keystroke reopens the overlay.  Without this a one-
             // off ESC would suppress the overlay forever in this
@@ -527,7 +552,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
           />
         </Show>
 
-        {/* Cycle UI v2.5 — slash-command suggestion overlay.  Opens
+        {/* Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â slash-command suggestion overlay.  Opens
             automatically when the user starts the prompt with "/"; ESC
             closes for the remainder of the composition; clearing the
             text re-arms it. */}
@@ -535,7 +560,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
           <SlashCommandOverlay
             text={text()}
             onPick={(mode) => {
-              // Apply the same logic as ModePicker.onPick — strip the
+              // Apply the same logic as ModePicker.onPick ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â strip the
               // slash, lock the user's choice, refocus the textarea.
               pickMode(mode);
               setSlashDismissed(true);
@@ -550,7 +575,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         when={livePreview().slashUsed && livePreview().mode !== activeMode()}
       >
         <p
-          class="text-[0.7rem] text-text-tertiary"
+          class="text-[0.7rem] text-text-subtle"
           role="status"
           aria-live="polite"
         >
@@ -568,7 +593,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         />
         <button
           type="button"
-          class="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-xs text-text-secondary hover:border-border-strong"
+          class="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-xs text-text-body hover:border-border-strong"
           onClick={() => fileInputRef?.click()}
           aria-label={t("common.attach")}
           data-amor-attach="trigger"
@@ -587,7 +612,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             e.currentTarget.value = "";
           }}
         />
-        <span class="ml-2 flex-1 truncate text-xs text-text-tertiary">
+        <span class="ml-2 flex-1 truncate text-xs text-text-subtle">
           {t("chat.send_hint")}
         </span>
         <Show
@@ -613,7 +638,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         </Show>
       </div>
 
-      {/* Inline mode picker (Day 1 fallback — Kobalte combobox swap deferred
+      {/* Inline mode picker (Day 1 fallback ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Kobalte combobox swap deferred
           to a follow-up; the listbox-style picker keeps the bundle light
           and Day 5's axe-core gate validates the ARIA bookkeeping). */}
       <Show when={pickerOpen()}>
@@ -631,7 +656,7 @@ const ModePill: Component<{
   mode: ModeKey;
   onClick: () => void;
   expanded: boolean;
-  /** Cycle UI 2026-05-20 — optional badge text rendered to the right
+  /** Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â optional badge text rendered to the right
    *  of the mode label, e.g. "auto" / "uncertain".  Parent owns the
    *  string so it can be localised + driven by classifier state. */
   badge?: string;
@@ -656,14 +681,14 @@ const ModePill: Component<{
       <span class="font-medium">{modeLabel(meta())}</span>
       <Show when={props.badge}>
         <span
-          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-text-tertiary"
+          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-text-subtle"
           data-amor-mode-badge=""
         >
           {props.badge}
         </span>
       </Show>
-      <span class="text-text-tertiary" aria-hidden="true">
-        {props.expanded ? "▴" : "▾"}
+      <span class="text-text-subtle" aria-hidden="true">
+        {props.expanded ? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â´" : "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¾"}
       </span>
     </button>
   );
@@ -674,11 +699,43 @@ const ModePicker: Component<{
   onPick: (mode: ModeKey) => void;
   onClose: () => void;
 }> = (props) => {
-  // Cycle UI Phase 4.3 — Tailwind responsive variant.  Below `md`
+  // Cycle UI Phase 4.3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Tailwind responsive variant.  Below `md`
   // (768 px) the picker becomes a bottom-anchored sheet with
   // safe-area-inset padding so iOS Safari's home indicator doesn't
   // crop the last row.  Above `md` it's the same listbox dropdown
   // as before.
+  //
+  // Cycle UI v2.5 Phase 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drag-to-dismiss on mobile.  touchstart
+  // records the starting Y; touchmove translates the sheet
+  // (positive deltas only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drag down to dismiss); touchend snaps
+  // back when delta < 80 px or calls onClose when ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 80 px.
+  // touch-action: none on the sheet element prevents iOS Safari
+  // pull-to-refresh during the gesture.  Desktop variant ignores
+  // these handlers entirely (no touch events fire).
+  const [dragY, setDragY] = createSignal(0);
+  const [isDragging, setIsDragging] = createSignal(false);
+  let startY = 0;
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    startY = t.clientY;
+    setIsDragging(true);
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (!isDragging()) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dy = Math.max(0, t.clientY - startY);  // only drag down
+    setDragY(dy);
+  };
+  const onTouchEnd = () => {
+    setIsDragging(false);
+    if (dragY() >= 80) {
+      props.onClose();
+    }
+    // Snap back regardless ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â onClose unmounts on dismiss anyway.
+    setDragY(0);
+  };
   return (
     <div
       role="listbox"
@@ -686,12 +743,28 @@ const ModePicker: Component<{
       class={[
         "z-[var(--z-dropdown)] gap-0.5 rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md",
         // Mobile (default): fixed bottom-sheet spanning width.
-        "fixed inset-x-0 bottom-0 grid grid-cols-2 gap-1 rounded-b-none pb-[max(env(safe-area-inset-bottom),0.5rem)]",
+        "fixed inset-x-0 bottom-0 grid grid-cols-2 gap-1 rounded-b-none pb-[max(env(safe-area-inset-bottom),0.5rem)] [touch-action:none]",
         // Desktop: absolutely positioned just above the pill.
-        "md:absolute md:inset-x-auto md:bottom-[100%] md:left-5 md:mb-2 md:grid-cols-2 md:rounded-md md:pb-1",
+        "md:absolute md:inset-x-auto md:bottom-[100%] md:left-5 md:mb-2 md:grid-cols-2 md:rounded-md md:pb-1 md:[touch-action:auto]",
       ].join(" ")}
       data-amor-mode-picker=""
+      // Cycle UI v2.5 Phase 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â touch drag-to-dismiss (mobile only;
+      // touch events don't fire on non-touch devices).
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
+      style={{
+        transform: dragY() > 0 ? `translateY(${dragY()}px)` : undefined,
+        transition: isDragging() ? "none" : "transform 200ms cubic-bezier(0,0,0.2,1)",
+      }}
     >
+      {/* Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â drag handle (mobile only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â md:hidden). */}
+      <div
+        class="col-span-2 mx-auto my-1 h-1 w-10 rounded-full bg-border-strong-v25 md:hidden"
+        aria-hidden="true"
+        data-amor-sheet-handle=""
+      />
       {MODES.map((meta: ModeMeta) => (
         <button
           type="button"
@@ -710,7 +783,7 @@ const ModePicker: Component<{
             {MODE_GLYPH[meta.key]}
           </span>
           <span class="font-medium">{modeLabel(meta)}</span>
-          <span class="ml-auto text-[0.65rem] text-text-tertiary">
+          <span class="ml-auto text-[0.65rem] text-text-subtle">
             /{meta.key === "thinking" ? "think" : meta.key}
           </span>
         </button>
@@ -738,12 +811,12 @@ const MentionPicker: Component<{
       <Show
         when={props.matches.length > 0}
         fallback={
-          <p class="px-3 py-2 text-xs text-text-tertiary">
+          <p class="px-3 py-2 text-xs text-text-subtle">
             {props.loading
-              ? "Searching…"
+              ? "SearchingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"
               : props.query
-                ? `No symbols match “${props.query}”`
-                : "Type to search the codebase…"}
+                ? `No symbols match ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“${props.query}ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â`
+                : "Type to search the codebaseÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"}
           </p>
         }
       >
@@ -762,21 +835,21 @@ const MentionPicker: Component<{
               class={[
                 "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs",
                 i() === props.selected
-                  ? "bg-bg-hover text-text-primary"
-                  : "text-text-secondary",
+                  ? "bg-bg-hover text-text-display"
+                  : "text-text-body",
               ].join(" ")}
               data-amor-mention-kind={sym.kind}
             >
               <span class="flex min-w-0 flex-col">
-                <span class="truncate font-mono text-[0.75rem] text-text-primary">
+                <span class="truncate font-mono text-[0.75rem] text-text-display">
                   {sym.name}
                 </span>
-                <span class="truncate text-[0.65rem] text-text-tertiary">
+                <span class="truncate text-[0.65rem] text-text-subtle">
                   {sym.path}:{sym.line}
-                  {sym.parent ? ` · ${sym.parent}` : ""}
+                  {sym.parent ? ` ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ${sym.parent}` : ""}
                 </span>
               </span>
-              <span class="text-[0.6rem] uppercase tracking-wide text-text-tertiary">
+              <span class="text-[0.6rem] uppercase tracking-wide text-text-subtle">
                 {sym.kind}
               </span>
             </button>

@@ -98,13 +98,13 @@ const STATUS_TO_PILL: Record<BaselineRow["status"], Status> = {
 };
 
 const formatMs = (ms: number | null | undefined): string => {
-  if (ms == null) return "—";
+  if (ms == null) return "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â";
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 };
 
 const formatVram = (mb: number | null | undefined): string => {
-  if (mb == null) return "—";
+  if (mb == null) return "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â";
   if (mb < 1024) return `${mb} MB`;
   return `${(mb / 1024).toFixed(1)} GB`;
 };
@@ -211,7 +211,7 @@ export const Baselines: Component = () => {
 
   const sortIndicator = (k: SortKey) => {
     if (sortKey() !== k) return "";
-    return sortDir() === "asc" ? " ▲" : " ▼";
+    return sortDir() === "asc" ? " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²" : " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼";
   };
 
   return (
@@ -252,7 +252,7 @@ export const Baselines: Component = () => {
         <Show
           when={!q.isLoading}
           fallback={
-            <div class="flex h-64 items-center justify-center text-text-tertiary">
+            <div class="flex h-64 items-center justify-center text-text-subtle">
               <Spinner size={20} />
             </div>
           }
@@ -261,12 +261,12 @@ export const Baselines: Component = () => {
             when={(q.data?.rows?.length ?? 0) > 0}
             fallback={
               <div class="rounded-lg border border-border-subtle bg-bg-elevated p-8 text-center">
-                <p class="text-sm text-text-secondary">
+                <p class="text-sm text-text-body">
                   No baseline recorded yet.
                 </p>
-                <p class="mt-2 text-xs text-text-tertiary">
+                <p class="mt-2 text-xs text-text-subtle">
                   Run{" "}
-                  <code class="rounded bg-bg-tertiary px-1 py-0.5 font-mono">
+                  <code class="rounded bg-bg-elevated-v25 px-1 py-0.5 font-mono">
                     python tools/run_sprint0_baseline.py
                   </code>{" "}
                   to capture the first snapshot.
@@ -290,7 +290,7 @@ export const Baselines: Component = () => {
                 label={t("baselines.card.judge_mean")}
                 value={
                   summary().judge_mean == null
-                    ? "—"
+                    ? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
                     : (summary().judge_mean as number).toFixed(2)
                 }
                 hint={t("baselines.card.judge_mean_sub", {
@@ -300,12 +300,12 @@ export const Baselines: Component = () => {
               />
               <SummaryCell
                 label={t("baselines.card.backend")}
-                value={q.data?.meta?.backend ?? "—"}
+                value={q.data?.meta?.backend ?? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"}
                 hint={q.data?.meta?.judge?.method ?? t("baselines.card.no_judge")}
               />
               <SummaryCell
                 label={t("baselines.card.host")}
-                value={q.data?.meta?.host ?? "—"}
+                value={q.data?.meta?.host ?? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"}
                 hint={q.data?.meta?.git_sha?.slice(0, 7) ?? t("baselines.card.no_git_sha")}
               />
             </div>
@@ -313,7 +313,7 @@ export const Baselines: Component = () => {
             {/* Table */}
             <div class="overflow-x-auto rounded-lg border border-border-subtle">
               <table class="min-w-full text-sm">
-                <thead class="bg-bg-secondary text-text-tertiary">
+                <thead class="bg-bg-elevated-v25 text-text-subtle">
                   <tr>
                     <Th onClick={toggleSort("prompt_id")}>
                       {t("baselines.col.prompt")}{sortIndicator("prompt_id")}
@@ -352,7 +352,7 @@ export const Baselines: Component = () => {
               </table>
             </div>
 
-            <p class="mt-4 text-xs text-text-tertiary">
+            <p class="mt-4 text-xs text-text-subtle">
               {t("common.auto_refresh", { seconds: 30 })}.{" "}
               {t("common.sources")}:{" "}
               <code class="font-mono">data/baselines/sprint0_latest.json</code>
@@ -373,7 +373,7 @@ const Th: Component<{
   <th
     class={[
       "select-none border-b border-border-subtle px-3 py-2 text-left text-[0.7rem] font-medium uppercase tracking-wider",
-      props.onClick ? "cursor-pointer hover:bg-bg-tertiary" : "",
+      props.onClick ? "cursor-pointer hover:bg-bg-elevated-v25" : "",
       props.numeric ? "text-right tabular-nums" : "",
     ].join(" ")}
     onClick={props.onClick}
@@ -385,11 +385,11 @@ const Th: Component<{
 const Row: Component<{ row: BaselineRow }> = (props) => {
   const r = () => props.row;
   return (
-    <tr class="border-b border-border-subtle hover:bg-bg-secondary">
+    <tr class="border-b border-border-subtle hover:bg-bg-elevated-v25">
       <td class="max-w-xs px-3 py-2">
         <span class="block font-mono text-xs">{r().prompt_id}</span>
         <span
-          class="block max-w-[40ch] truncate text-[0.7rem] text-text-tertiary"
+          class="block max-w-[40ch] truncate text-[0.7rem] text-text-subtle"
           title={r().prompt}
         >
           {r().prompt}
@@ -406,7 +406,7 @@ const Row: Component<{ row: BaselineRow }> = (props) => {
         />
         <Show when={r().error}>
           <span
-            class="ml-2 inline-block max-w-[24ch] truncate text-[0.7rem] text-text-tertiary"
+            class="ml-2 inline-block max-w-[24ch] truncate text-[0.7rem] text-text-subtle"
             title={r().error ?? ""}
           >
             {r().error}
@@ -416,15 +416,15 @@ const Row: Component<{ row: BaselineRow }> = (props) => {
       <td class="px-3 py-2 text-right tabular-nums">
         {formatMs(r().metrics.wall_clock_ms)}
       </td>
-      <td class="px-3 py-2 text-right tabular-nums text-text-secondary">
+      <td class="px-3 py-2 text-right tabular-nums text-text-body">
         {formatMs(r().metrics.first_token_ms)}
       </td>
       <td class="px-3 py-2 text-right tabular-nums">
-        <span title={`prompt: ${r().metrics.prompt_tokens} · completion: ${r().metrics.completion_tokens}`}>
+        <span title={`prompt: ${r().metrics.prompt_tokens} ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· completion: ${r().metrics.completion_tokens}`}>
           {r().metrics.prompt_tokens + r().metrics.completion_tokens}
         </span>
       </td>
-      <td class="px-3 py-2 text-right tabular-nums text-text-secondary">
+      <td class="px-3 py-2 text-right tabular-nums text-text-body">
         {formatVram(r().metrics.peak_vram_mb)}
       </td>
       <td class="px-3 py-2 text-right tabular-nums">{r().metrics.retries}</td>
@@ -441,14 +441,14 @@ const SummaryCell: Component<{
   hint?: string;
 }> = (props) => (
   <div class="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
-    <p class="text-[0.65rem] uppercase tracking-wider text-text-tertiary">
+    <p class="text-[0.65rem] uppercase tracking-wider text-text-subtle">
       {props.label}
     </p>
-    <p class="mt-1 truncate font-mono text-sm text-text-primary">
+    <p class="mt-1 truncate font-mono text-sm text-text-display">
       {props.value}
     </p>
     <Show when={props.hint}>
-      <p class="mt-0.5 truncate text-[0.65rem] text-text-tertiary">
+      <p class="mt-0.5 truncate text-[0.65rem] text-text-subtle">
         {props.hint}
       </p>
     </Show>
@@ -459,7 +459,7 @@ const JudgeBadge: Component<{ judge: JudgeScore | null }> = (props) => {
   return (
     <Show
       when={props.judge}
-      fallback={<span class="text-text-tertiary">—</span>}
+      fallback={<span class="text-text-subtle">ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â</span>}
     >
       {(judge) => (
         <Show
@@ -468,7 +468,7 @@ const JudgeBadge: Component<{ judge: JudgeScore | null }> = (props) => {
           }
           fallback={
             <span
-              class="text-[0.7rem] text-text-tertiary"
+              class="text-[0.7rem] text-text-subtle"
               title={judge().error ?? ""}
             >
               {t("baselines.judge.err")}
@@ -477,7 +477,7 @@ const JudgeBadge: Component<{ judge: JudgeScore | null }> = (props) => {
         >
           <span
             class={
-              judge().uncertain ? "text-text-secondary" : "text-text-primary"
+              judge().uncertain ? "text-text-body" : "text-text-display"
             }
             title={judge().rationale ?? ""}
           >
@@ -485,7 +485,7 @@ const JudgeBadge: Component<{ judge: JudgeScore | null }> = (props) => {
               {judge().correctness}/{judge().completeness}
             </span>
             <Show when={judge().uncertain}>
-              <span class="ml-1 text-[0.7rem] text-text-tertiary">?</span>
+              <span class="ml-1 text-[0.7rem] text-text-subtle">?</span>
             </Show>
           </span>
         </Show>

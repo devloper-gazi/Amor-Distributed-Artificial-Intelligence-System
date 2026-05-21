@@ -253,6 +253,28 @@ export const en: Record<string, string> = {
   "classifier.thinking":          "thinking…",
   "classifier.error":             "Classifier error",
 
+  // ── Cycle UI v2.5 — empty state + search + composer polish ──
+  "composer.slash_overlay_aria":  "Slash commands",
+  "empty.greeting":               "What are we working on today?",
+  "empty.seed.build":             "Refactor SessionList.tsx into smaller components",
+  "empty.seed.research":          "Compare OKLch usage in design systems published in 2026",
+  "empty.seed.thinking":          "Walk me through the trade-offs of a Rust backend rewrite",
+  "empty.seed.quickcode":         "Quick: rename foo to bar in routes.ts (this file only)",
+  "search.placeholder":           "Search conversations",
+  "search.open_palette_aria":     "Open command palette",
+  "search.clear_aria":            "Clear search",
+  "build.card.code":              "Code",
+  "build.card.tests":             "Tests",
+  "build.card.execution":         "Execution",
+  "build.card.review":            "Review",
+  "build.card.collapse":          "Collapse",
+  "build.card.expand":            "Expand",
+  "build.status.ok":              "ok",
+  "build.status.pending":         "pending",
+  "build.status.failed":          "failed",
+  "build.status.approved":        "approved",
+  "build.status.needs_revision":  "needs revision",
+
   // ── Cycle UI Phase 4 — branching navigator ──
   "branch.navigator_aria":        "Branch navigator",
   "branch.previous_aria":         "Previous version",

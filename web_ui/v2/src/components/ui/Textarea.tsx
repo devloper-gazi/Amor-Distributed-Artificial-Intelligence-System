@@ -29,7 +29,7 @@ export const Textarea: Component<TextareaProps> = (props) => {
 
   let textareaRef: HTMLTextAreaElement | undefined;
   // ``rows`` from JSX.TextareaHTMLAttributes is typed as
-  // ``number | string`` because HTML accepts both — coerce so the
+  // ``number | string`` because HTML accepts both ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â coerce so the
   // arithmetic below stays numeric.
   const min = (): number =>
     local.minRows ?? Number(local.rows) ?? 1;
@@ -81,11 +81,11 @@ export const Textarea: Component<TextareaProps> = (props) => {
         }
       }}
       class={[
-        "w-full resize-none rounded-md border border-border-default",
-        "bg-bg-elevated px-3 py-2 text-sm text-text-primary",
-        "placeholder:text-text-tertiary",
+        "w-full resize-none rounded-md border border-border-strong-v25",
+        "bg-bg-elevated px-3 py-2 text-sm text-text-display",
+        "placeholder:text-text-subtle",
         "outline-none focus:border-border-strong",
-        // Modern path — zero JS resize work where supported.
+        // Modern path ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â zero JS resize work where supported.
         "[field-sizing:content]",
         local.class ?? "",
       ].join(" ")}

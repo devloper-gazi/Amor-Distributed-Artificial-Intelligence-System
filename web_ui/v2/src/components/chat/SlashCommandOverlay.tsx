@@ -1,5 +1,5 @@
 /**
- * Cycle UI v2.5 Phase 2 — slash-command suggestion overlay.
+ * Cycle UI v2.5 Phase 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â slash-command suggestion overlay.
  *
  * Surfaces when the user types `/` at the start of the composer.
  * Renders a compact 6-chip popover (one per primary mode) plus a
@@ -8,11 +8,11 @@
  * dismisses.
  *
  * Parser reuse: `parseSlashCommand` + `SLASH_ALIASES` from
- * `composer-parsers.ts`.  This component is presentation-only — it
+ * `composer-parsers.ts`.  This component is presentation-only ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â it
  * doesn't own the active-mode state, just emits `onPick(mode)`.
  *
  * Accessibility: role="listbox" + arrow-key navigation +
- * aria-activedescendant.  44×44 touch targets via the .amor-touch
+ * aria-activedescendant.  44ÃƒÆ’Ã¢â‚¬â€44 touch targets via the .amor-touch
  * utility (Sprint 11).
  */
 
@@ -45,7 +45,7 @@ interface SlashCommandOverlayProps {
   onClose: () => void;
 }
 
-/** Build the chip list — one chip per primary mode (system mode is
+/** Build the chip list ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â one chip per primary mode (system mode is
  *  legacy + intentionally excluded from the composer's chip wall;
  *  the /system slash alias still resolves it for power users). */
 const CHIP_MODES: ReadonlyArray<ModeMeta> = MODES.filter(
@@ -53,7 +53,7 @@ const CHIP_MODES: ReadonlyArray<ModeMeta> = MODES.filter(
 );
 
 /** First slash alias that resolves to ``mode``; used as the chip's
- *  primary label.  E.g. build → /build, quickcode → /quick. */
+ *  primary label.  E.g. build ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ /build, quickcode ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ /quick. */
 function primaryAliasFor(mode: ModeKey): string {
   for (const [alias, target] of Object.entries(SLASH_ALIASES)) {
     if (target === mode) return alias;
@@ -88,7 +88,7 @@ export const SlashCommandOverlay: Component<SlashCommandOverlayProps> = (
     if (idx >= 0) setActive(idx);
   };
 
-  // Keyboard navigation — composer's textarea owns key events; this
+  // Keyboard navigation ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â composer's textarea owns key events; this
   // overlay listens at document level only for ESC.
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -161,8 +161,8 @@ export const SlashCommandOverlay: Component<SlashCommandOverlayProps> = (
                   "amor-touch flex items-center gap-2 rounded px-2 py-1.5",
                   "text-left text-[13px] transition-colors duration-100",
                   isActive()
-                    ? "bg-bg-hover text-text-primary"
-                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                    ? "bg-bg-hover text-text-display"
+                    : "text-text-body hover:bg-bg-hover hover:text-text-display",
                   isMatched() ? "ring-1 ring-focus-ring" : "",
                 ].join(" ")}
                 data-amor-slash-mode={meta.key}
@@ -179,7 +179,7 @@ export const SlashCommandOverlay: Component<SlashCommandOverlayProps> = (
                 </span>
                 <span class="flex min-w-0 flex-col">
                   <span class="truncate font-medium">{modeLabel(meta)}</span>
-                  <span class="truncate text-[0.7rem] text-text-tertiary">
+                  <span class="truncate text-[0.7rem] text-text-subtle">
                     {primaryAliasFor(meta.key)}
                   </span>
                 </span>

@@ -153,17 +153,23 @@ describe("Cycle UI v2.5 — mode picker covers all 7 classifier classes", () => 
   });
 });
 
-// ─── Legacy tokens still present (bridge period) ───────────────────────
+// ─── Legacy tokens DELETED (Phase 3 closing commit) ────────────────────
 
-describe("Cycle UI v2.5 — bridge period preserves legacy tokens", () => {
-  it("--color-bg-primary still defined (Phase 3 deletes it)", () => {
-    expect(themeCss).toMatch(/--color-bg-primary:/);
+describe("Cycle UI v2.5 Phase 3 — legacy tokens removed from theme.css", () => {
+  it("--color-bg-primary is gone", () => {
+    expect(themeCss).not.toMatch(/--color-bg-primary:/);
   });
-  it("--color-text-primary still defined (Phase 3 deletes it)", () => {
-    expect(themeCss).toMatch(/--color-text-primary:/);
+  it("--color-text-primary is gone", () => {
+    expect(themeCss).not.toMatch(/--color-text-primary:/);
   });
-  it("--color-border-subtle still defined as legacy", () => {
-    expect(themeCss).toMatch(/--color-border-subtle:\s*#e5e5e5/);
+  it("--color-border-default is gone", () => {
+    expect(themeCss).not.toMatch(/--color-border-default:/);
+  });
+  it("--color-bg-elevated kept (still used by legacy /home + /build chrome)", () => {
+    expect(themeCss).toMatch(/--color-bg-elevated:/);
+  });
+  it("--color-text-inverse kept (light-on-dark accent buttons)", () => {
+    expect(themeCss).toMatch(/--color-text-inverse:/);
   });
 });
 

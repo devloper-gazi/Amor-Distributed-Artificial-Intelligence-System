@@ -25,8 +25,8 @@ const STATUS_COLOR: Record<Status, string> = {
 };
 
 /**
- * Status pill — the 4 states adopted across the diagnostics surface
- * (cf. design doc §5.2).  ``warming`` animates a pulse to signal
+ * Status pill â€” the 4 states adopted across the diagnostics surface
+ * (cf. design doc Â§5.2).  ``warming`` animates a pulse to signal
  * "loading"; the animation is disabled by ``prefers-reduced-motion``.
  *
  * Pass ``label=""`` to render the dot in icon-only mode (a tighter
@@ -42,10 +42,10 @@ export const StatusPill: Component<StatusPillProps> = (props) => {
     "class",
   ]);
   const size = () => local.size ?? "sm";
-  /** Visible text — empty string OR undefined → icon only. */
+  /** Visible text â€” empty string OR undefined â†’ icon only. */
   const visibleText = (): string =>
     local.label && local.label.length > 0 ? local.label : "";
-  /** ARIA label — always non-empty so SR users hear the status. */
+  /** ARIA label â€” always non-empty so SR users hear the status. */
   const a11yLabel = (): string => visibleText() || STATUS_LABEL[local.status];
   const iconOnly = () => visibleText() === "";
 
@@ -53,7 +53,7 @@ export const StatusPill: Component<StatusPillProps> = (props) => {
     <span
       class={[
         "inline-flex items-center rounded-full font-medium",
-        "border border-border-subtle bg-bg-elevated text-text-primary",
+        "border border-border-subtle bg-bg-elevated text-text-display",
         iconOnly()
           ? size() === "sm"
             ? "h-4 w-4"

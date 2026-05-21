@@ -36,7 +36,7 @@ interface PhaseDef {
   label: string;
   pct: number;
   /** User-facing description shown while this phase is running so
-   *  the chat thread isn't a blank "starting…" for 1–2 minutes
+   *  the chat thread isn't a blank "startingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦" for 1ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ2 minutes
    *  during a slow LLM phase like implement. */
   doingNow: string;
 }
@@ -45,7 +45,7 @@ const PHASES: ReadonlyArray<PhaseDef> = [
   { key: "triage",     label: "Triage",      pct: 10, doingNow: "Classifying the request" },
   { key: "model_prep", label: "Model prep",  pct: 15, doingNow: "Preparing models" },
   { key: "plan",       label: "Plan",        pct: 25, doingNow: "Drafting a plan" },
-  { key: "implement",  label: "Implement",   pct: 50, doingNow: "Writing the code (this is the slow phase — usually 30–120 s)" },
+  { key: "implement",  label: "Implement",   pct: 50, doingNow: "Writing the code (this is the slow phase ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â usually 30ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ120 s)" },
   { key: "execute",    label: "Execute",     pct: 60, doingNow: "Running the code in the sandbox" },
   { key: "analyze",    label: "Analyse",     pct: 68, doingNow: "Static-analysing the output" },
   { key: "test",       label: "Test",        pct: 78, doingNow: "Generating tests" },
@@ -62,7 +62,7 @@ type PhaseStatus = "pending" | "running" | "done" | "failed" | "skipped";
 let _idCounter = 0;
 const newId = (): string => `b-${Date.now()}-${++_idCounter}`;
 
-/* ─── Module-scoped state ──────────────────────────────────────────
+/* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Module-scoped state ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
  * Signals created at module level so the user can navigate away
  * from /build (e.g. to /system) and come back without wiping the
  * conversation or killing an in-flight pipeline.  ``resetBuild``
@@ -72,7 +72,7 @@ const newId = (): string => `b-${Date.now()}-${++_idCounter}`;
 
 const STORAGE_KEY_TURNS = "amor.chat.v1.build.turns";
 const STORAGE_KEY_PHASES = "amor.chat.v1.build.phases";
-// Cycle D — per-mode effort persistence (twin of Research's
+// Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â per-mode effort persistence (twin of Research's
 // `amor.research.effort`).  Build accepts the same five canonical
 // tiers as the LocalAI backend.  Default = "medium" matches the
 // long-standing hardcoded default.
@@ -138,7 +138,7 @@ const setTurns = ((next: Parameters<typeof setTurnsRaw>[0]) => {
 const [busy, setBusy] = createSignal(false);
 const [status, setStatus] = createSignal<StreamStatus>("closed");
 const [sessionId, setSessionId] = createSignal<string | null>(null);
-// Cycle D Sessions polish — links the running pipeline to its
+// Cycle D Sessions polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â links the running pipeline to its
 // chat_sessions row so done/error events can bump updated_at and
 // nudge the sidebar's derived activity status to "recent".
 const [chatSessionId, setChatSessionId] = createSignal<string | null>(null);
@@ -158,7 +158,7 @@ const setPhases = ((next: Parameters<typeof setPhasesRaw>[0]) => {
 }) as typeof setPhasesRaw;
 /** Active phase key + when it started.  Drives the live status block
  *  rendered above the composer so the user doesn't stare at a blank
- *  "starting…" for 60+ seconds during a slow phase. */
+ *  "startingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦" for 60+ seconds during a slow phase. */
 const [activePhase, setActivePhase] = createSignal<string | null>(null);
 const [phaseStartedAt, setPhaseStartedAt] = createSignal<number | null>(null);
 /** Re-renders every second so the elapsed counter ticks live. */
@@ -232,7 +232,7 @@ const currentBuffer = (): string => {
 const appendBlock = (block: string): void => {
   const cur = currentBuffer();
   const next =
-    cur === "_(starting…)_" || cur === "" ? block : cur + "\n" + block;
+    cur === "_(startingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦)_" || cur === "" ? block : cur + "\n" + block;
   patchAssistant(next, undefined, true);
 };
 
@@ -259,7 +259,7 @@ const handleEvent = (ev: SseEvent): void => {
       if (phase) setPhase(phase, "failed");
       patchAssistant(
         currentBuffer() +
-          `\n\n**Phase failed:** ${phase} — ${String(ev.error ?? "")}`,
+          `\n\n**Phase failed:** ${phase} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${String(ev.error ?? "")}`,
         "failed",
       );
       break;
@@ -270,31 +270,31 @@ const handleEvent = (ev: SseEvent): void => {
       break;
     }
     case "language_corrected": {
-      // Cycle B Commit V — engine flipped the language post-coder
-      // (e.g. python→html when the body sniffed as HTML).  Surface it
+      // Cycle B Commit V ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â engine flipped the language post-coder
+      // (e.g. pythonÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢html when the body sniffed as HTML).  Surface it
       // so the user knows we re-routed without them seeing a Python
       // pip-install attempt against an HTML runner.
       const from = String(ev.from ?? "");
       const to = String(ev.to ?? "");
       appendBlock(
-        `_Language corrected: \`${from}\` → \`${to}\` (sandbox runner switched, stale dependencies dropped)._\n`,
+        `_Language corrected: \`${from}\` ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ \`${to}\` (sandbox runner switched, stale dependencies dropped)._\n`,
       );
       break;
     }
     case "planner_fallback": {
-      // Cycle D Fix #6 — planner LLM emitted unparseable / empty
+      // Cycle D Fix #6 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â planner LLM emitted unparseable / empty
       // output; engine swapped in a deterministic minimal plan so
       // the pipeline can still produce a deliverable.  Surface it
       // as a subtle italic notice so the operator can spot the
       // degradation without thinking the run failed.
       appendBlock(
-        "_⚠ Planner fallback active — model produced unparseable output, " +
+        "_ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  Planner fallback active ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â model produced unparseable output, " +
         "running with a minimal generated plan._\n",
       );
       break;
     }
     case "install_packages_filtered": {
-      // Cycle D Fix #3 — engine cross-checked declared deps against
+      // Cycle D Fix #3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â engine cross-checked declared deps against
       // actual code use and dropped some packages (e.g. doxygen+latex
       // for a self-contained C++ formatter).  Surface so the operator
       // sees why a "pip install" they expected didn't happen.
@@ -324,22 +324,22 @@ const handleEvent = (ev: SseEvent): void => {
       break;
     }
     case "repomap_attached": {
-      // Sprint 3 Day 4 — engine prepended a repomap excerpt to the
+      // Sprint 3 Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â engine prepended a repomap excerpt to the
       // triage system message.  Surface it as a small collapsible
       // <details> block so the user sees what context the planner
       // actually had.  Render only the metadata (token count + render
-      // time) — the full repomap markdown isn't streamed to the UI
+      // time) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the full repomap markdown isn't streamed to the UI
       // (it's already in the LLM's prompt).
       const tk = Number(ev.tokens_estimate ?? 0);
       const ms = Number(ev.render_ms ?? 0);
       const budget = Number(ev.budget_tokens ?? 0);
       appendBlock(
-        `<details><summary>📚 Repomap context attached — ${tk} tokens / ${budget} budget · rendered in ${ms} ms</summary>\n\nThe triage agent saw a token-budgeted summary of the workspace symbol graph before classifying this prompt. Toggle <code>AMOR_REPOMAP_ENABLED</code> on the app service to disable.</details>\n`,
+        `<details><summary>ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€¦Ã‚Â¡ Repomap context attached ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${tk} tokens / ${budget} budget ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· rendered in ${ms} ms</summary>\n\nThe triage agent saw a token-budgeted summary of the workspace symbol graph before classifying this prompt. Toggle <code>AMOR_REPOMAP_ENABLED</code> on the app service to disable.</details>\n`,
       );
       break;
     }
     case "memory_recalled": {
-      // Sprint 7 Day 4 — Mem0 surfaced N memories before triage.
+      // Sprint 7 Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Mem0 surfaced N memories before triage.
       // Stamp the assistant turn with ``remembered`` metadata so
       // ``MessageBubble`` renders the "Remembered N" pill, and add
       // a small <details> block below the bubble for inspection.
@@ -359,7 +359,7 @@ const handleEvent = (ev: SseEvent): void => {
         );
         if (snippets.length > 0) {
           appendBlock(
-            `<details><summary>🧠 Remembered ${count} prior fact${count === 1 ? "" : "s"}</summary>\n\n${snippets.map((s) => `- ${s}`).join("\n")}\n</details>\n`,
+            `<details><summary>ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â§Ãƒâ€šÃ‚Â  Remembered ${count} prior fact${count === 1 ? "" : "s"}</summary>\n\n${snippets.map((s) => `- ${s}`).join("\n")}\n</details>\n`,
           );
         }
       }
@@ -371,7 +371,7 @@ const handleEvent = (ev: SseEvent): void => {
       break;
     }
     case "test_execution_result": {
-      // Cycle D — Tests actually ran against the implementation.
+      // Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Tests actually ran against the implementation.
       // Render a pass/fail block so the operator can see test
       // outcomes in addition to the standalone test source.
       const result = (ev.result ?? {}) as Record<string, unknown>;
@@ -381,14 +381,14 @@ const handleEvent = (ev: SseEvent): void => {
       const stderr = String(result.stderr ?? "").trim();
       if (skipped) {
         appendBlock(
-          "_Test execution skipped — runner not configured for this language._\n",
+          "_Test execution skipped ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runner not configured for this language._\n",
         );
         break;
       }
       const passed = exit === 0;
       const head = passed
-        ? "### Test Results — ✅ Pass"
-        : "### Test Results — ❌ Fail";
+        ? "### Test Results ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Pass"
+        : "### Test Results ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Fail";
       const block = [
         head,
         exit !== undefined ? `exit_code: ${exit}` : "",
@@ -412,7 +412,7 @@ const handleEvent = (ev: SseEvent): void => {
       break;
     }
     case "reflexion_score": {
-      // Cycle D — Reflexion baseline score emitted right after the
+      // Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Reflexion baseline score emitted right after the
       // first review.  Subtle italic so it stays unobtrusive.
       const score = Number(ev.score ?? 0);
       const phase = String(ev.phase ?? "");
@@ -427,7 +427,7 @@ const handleEvent = (ev: SseEvent): void => {
       const baseline = Number(ev.baseline_score ?? 0);
       const threshold = Number(ev.threshold ?? 80);
       appendBlock(
-        `_♻ Reflexion iteration ${iter}/${max} starting — ` +
+        `_ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢Ãƒâ€šÃ‚Â» Reflexion iteration ${iter}/${max} starting ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ` +
         `baseline ${baseline}/100 below threshold ${threshold}._\n`,
       );
       break;
@@ -439,12 +439,12 @@ const handleEvent = (ev: SseEvent): void => {
       const newScore = Number(ev.new_score ?? 0);
       if (outcome === "improved") {
         appendBlock(
-          `_✨ Reflexion ${iter} improved quality: ` +
-          `${baseline} → ${newScore}/100.  Adopted the new version._\n`,
+          `_ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ Reflexion ${iter} improved quality: ` +
+          `${baseline} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ${newScore}/100.  Adopted the new version._\n`,
         );
       } else if (outcome === "no_gain") {
         appendBlock(
-          `_Reflexion ${iter} produced no gain (${newScore} ≤ ${baseline}).  ` +
+          `_Reflexion ${iter} produced no gain (${newScore} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¤ ${baseline}).  ` +
           `Kept the original version._\n`,
         );
       } else if (outcome === "error") {
@@ -478,7 +478,7 @@ const handleEvent = (ev: SseEvent): void => {
     }
     case "review_ready": {
       const review = (ev.review ?? ev.detail ?? {}) as Record<string, unknown>;
-      const verdict = String(review.verdict ?? review.score ?? "—");
+      const verdict = String(review.verdict ?? review.score ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â");
       const summary = String(review.final_comment ?? review.summary ?? "");
       appendBlock(`### Review\n\n**Verdict:** ${verdict}\n\n${summary}\n`);
       break;
@@ -528,12 +528,12 @@ const handleEvent = (ev: SseEvent): void => {
   }
 };
 
-/** Cycle D — at the end of a pipeline run, bump the linked
+/** Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â at the end of a pipeline run, bump the linked
  *  chat_session's ``updated_at`` so the sidebar moves the row to the
  *  top of the "Today" / "Now" group and the derived activity dot
  *  reflects the recent finish.  Touches title with a no-op patch
  *  (the smallest mutation that updates ``updated_at`` server-side).
- *  Best-effort — failure is logged and silently swallowed. */
+ *  Best-effort ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â failure is logged and silently swallowed. */
 const bumpChatSession = (): void => {
   const id = chatSessionId();
   if (!id) return;
@@ -562,7 +562,7 @@ const start = async (prompt: string): Promise<void> => {
     {
       id: assistantTurnId!,
       role: "assistant",
-      content: "_(starting…)_",
+      content: "_(startingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦)_",
       streaming: true,
       tag: "phase: triage",
       ts: Date.now(),
@@ -570,7 +570,7 @@ const start = async (prompt: string): Promise<void> => {
   ]);
 
   try {
-    // Cycle D Sessions polish — register a chat_session ROW first so
+    // Cycle D Sessions polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â register a chat_session ROW first so
     // the sidebar shows the new session immediately (before the
     // pipeline even reaches the triage phase).  ``code`` is the
     // backend's canonical mode tag for Build sessions.
@@ -583,7 +583,7 @@ const start = async (prompt: string): Promise<void> => {
       chatSessionId = (created as { id?: string }).id;
       invalidateSessionsList();
     } catch (err: unknown) {
-      // Don't block the run if the chat-session create fails —
+      // Don't block the run if the chat-session create fails ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
       // the pipeline can still run; the sidebar just won't list it.
       console.warn("[build] chat_session create failed:", err);
     }
@@ -630,10 +630,10 @@ const cancel = async (): Promise<void> => {
 };
 
 /**
- * Live phase status bar — rendered above the composer while busy.
+ * Live phase status bar ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â rendered above the composer while busy.
  * Shows the current phase's user-friendly description + an elapsed
  * counter that ticks every second.  Empty when the pipeline isn't
- * running.  Solves the "(starting…) for 60 s" black hole during
+ * running.  Solves the "(startingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦) for 60 s" black hole during
  * the slow Implement phase.
  */
 const PhaseStatusBar: Component = () => {
@@ -658,20 +658,20 @@ const PhaseStatusBar: Component = () => {
           <div
             role="status"
             aria-live="polite"
-            class="flex items-center gap-3 border-t border-border-subtle bg-bg-secondary px-5 py-3 text-sm"
+            class="flex items-center gap-3 border-t border-border-subtle bg-bg-elevated-v25 px-5 py-3 text-sm"
           >
             <span
               class="h-2 w-2 rounded-full motion-safe:animate-pulse"
               style={{ background: "var(--mode-accent)" }}
               aria-hidden="true"
             />
-            <span class="flex-1 truncate text-text-primary">
+            <span class="flex-1 truncate text-text-display">
               <span class="font-medium">{def()?.label ?? phase()}</span>
-              <span class="ml-2 text-text-secondary">
+              <span class="ml-2 text-text-body">
                 {def()?.doingNow ?? "running"}
               </span>
             </span>
-            <span class="font-mono text-xs text-text-tertiary tabular-nums">
+            <span class="font-mono text-xs text-text-subtle tabular-nums">
               {fmtElapsed(elapsed())}
             </span>
           </div>
@@ -682,9 +682,9 @@ const PhaseStatusBar: Component = () => {
 };
 
 /**
- * Build mode component — pure render shell.  All state lives at the
- * module level above so it survives route remounts (Build → System
- * → Build doesn't wipe an in-flight pipeline).
+ * Build mode component ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â pure render shell.  All state lives at the
+ * module level above so it survives route remounts (Build ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ System
+ * ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Build doesn't wipe an in-flight pipeline).
  */
 export const Build: Component = () => {
   const headerStatus = createMemo<Status>(() => {
@@ -703,9 +703,9 @@ export const Build: Component = () => {
 
   return (
     <div data-mode="build" class="flex h-full">
-      {/* Left rail — phase timeline */}
-      <aside class="hidden w-52 shrink-0 border-r border-border-subtle bg-bg-secondary lg:flex lg:flex-col">
-        <div class="border-b border-border-subtle px-3 py-3 text-[0.65rem] font-semibold uppercase tracking-widest text-text-tertiary">
+      {/* Left rail ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â phase timeline */}
+      <aside class="hidden w-52 shrink-0 border-r border-border-subtle bg-bg-elevated-v25 lg:flex lg:flex-col">
+        <div class="border-b border-border-subtle px-3 py-3 text-[0.65rem] font-semibold uppercase tracking-widest text-text-subtle">
           Pipeline
         </div>
         <ol class="flex-1 overflow-y-auto p-2 space-y-1">
@@ -715,15 +715,15 @@ export const Build: Component = () => {
               const dot = (): string => {
                 switch (st()) {
                   case "running":
-                    return "●";
+                    return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â";
                   case "done":
-                    return "✓";
+                    return "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ";
                   case "failed":
-                    return "✗";
+                    return "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â";
                   case "skipped":
-                    return "○";
+                    return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹";
                   default:
-                    return "○";
+                    return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹";
                 }
               };
               return (
@@ -731,12 +731,12 @@ export const Build: Component = () => {
                   class={[
                     "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
                     st() === "running"
-                      ? "bg-bg-hover text-text-primary"
+                      ? "bg-bg-hover text-text-display"
                       : st() === "done"
-                        ? "text-text-secondary"
+                        ? "text-text-body"
                         : st() === "failed"
                           ? "text-status-failed"
-                          : "text-text-tertiary",
+                          : "text-text-subtle",
                   ].join(" ")}
                 >
                   <span
@@ -756,7 +756,7 @@ export const Build: Component = () => {
                     {dot()}
                   </span>
                   <span class="flex-1 truncate">{p.label}</span>
-                  <span class="text-[0.6rem] text-text-tertiary">
+                  <span class="text-[0.6rem] text-text-subtle">
                     {p.pct}%
                   </span>
                 </li>
@@ -766,7 +766,7 @@ export const Build: Component = () => {
         </ol>
       </aside>
 
-      {/* Right side — chat */}
+      {/* Right side ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â chat */}
       <div class="flex min-w-0 flex-1 flex-col">
         <TopBar
           title={t("build.title")}
@@ -785,10 +785,10 @@ export const Build: Component = () => {
           turns={turns()}
           emptyState={
             <div class="max-w-md text-center">
-              <p class="text-base text-text-primary">
+              <p class="text-base text-text-display">
                 {t("build.empty.title")}
               </p>
-              <p class="mt-2 text-sm text-text-tertiary">
+              <p class="mt-2 text-sm text-text-subtle">
                 {t("build.empty.body")}
               </p>
             </div>

@@ -1,5 +1,5 @@
 /**
- * Cycle C Sprint 11 Day 2 — mobile-first shell.
+ * Cycle C Sprint 11 Day 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â mobile-first shell.
  *
  * Active below ``MOBILE_BREAKPOINT_PX`` (768 px).  Replaces the
  * always-visible desktop Sidebar with:
@@ -13,7 +13,7 @@
  * The desktop Sidebar component is reused inside the drawer so we
  * have a single source of truth for navigation; only the framing
  * changes per breakpoint.  When the user navigates (e.g. clicks a
- * mode link) the drawer auto-closes — that's tracked by listening
+ * mode link) the drawer auto-closes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â that's tracked by listening
  * to ``location.pathname`` changes.
  *
  * Accessibility
@@ -56,7 +56,7 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
     setDrawerOpen(false);
   });
 
-  // Lock body scroll while the drawer is open — iOS Safari leaks
+  // Lock body scroll while the drawer is open ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â iOS Safari leaks
   // backgrounding gestures otherwise.
   createEffect(() => {
     if (typeof document === "undefined") return;
@@ -80,12 +80,12 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
 
   return (
     <div
-      class="flex h-full flex-col bg-bg-primary text-text-primary amor-safe-x"
+      class="flex h-full flex-col bg-bg-canvas text-text-display amor-safe-x"
       data-amor-shell="mobile"
     >
-      {/* Top bar — brand + hamburger + palette trigger */}
+      {/* Top bar ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â brand + hamburger + palette trigger */}
       <header
-        class="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-secondary px-3 amor-safe-top"
+        class="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-elevated-v25 px-3 amor-safe-top"
         role="banner"
       >
         <IconButton
@@ -99,7 +99,7 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
           class="amor-touch"
           data-amor-action="drawer-toggle"
         >
-          <span aria-hidden="true">{drawerOpen() ? "✕" : "☰"}</span>
+          <span aria-hidden="true">{drawerOpen() ? "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢" : "ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒâ€šÃ‚Â°"}</span>
         </IconButton>
         <a href="/" class="font-semibold tracking-tight">
           {t("sidebar.brand")}
@@ -107,10 +107,10 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
         <button
           type="button"
           onClick={props.onOpenPalette}
-          class="ml-auto flex h-9 items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-2 text-xs text-text-tertiary hover:bg-bg-hover amor-touch"
+          class="ml-auto flex h-9 items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-2 text-xs text-text-subtle hover:bg-bg-hover amor-touch"
           aria-label={t("sidebar.palette_open")}
         >
-          <span aria-hidden="true">⌘</span>
+          <span aria-hidden="true">ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ</span>
           <span>{t("sidebar.search")}</span>
         </button>
       </header>
@@ -121,7 +121,7 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
         {props.children}
       </main>
 
-      {/* Drawer + backdrop — Tailwind-only, no transition lib */}
+      {/* Drawer + backdrop ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Tailwind-only, no transition lib */}
       <Show when={drawerOpen()}>
         {/* Backdrop */}
         <button
@@ -137,7 +137,7 @@ export const MobileShell: Component<MobileShellProps> = (props) => {
           role="dialog"
           aria-modal="true"
           aria-label={t("palette.dialog_label")}
-          class="fixed inset-y-0 left-0 z-[var(--z-modal)] flex w-72 max-w-[80vw] flex-col bg-bg-secondary shadow-xl amor-safe-y"
+          class="fixed inset-y-0 left-0 z-[var(--z-modal)] flex w-72 max-w-[80vw] flex-col bg-bg-elevated-v25 shadow-xl amor-safe-y"
           data-amor-mobile-drawer=""
         >
           <Sidebar

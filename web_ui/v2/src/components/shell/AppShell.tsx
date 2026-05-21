@@ -17,11 +17,11 @@ interface AppShellProps {
 
 /**
  * Top-level layout.  Sidebar + main content + a globally-mounted
- * command palette opened by ⌘+K / Ctrl+K.  The collapse state
+ * command palette opened by Ã¢Å’Ëœ+K / Ctrl+K.  The collapse state
  * persists in localStorage so the user's chrome density carries
  * across reloads.
  *
- * Cycle C Sprint 11 Day 2 — below the 768 px breakpoint we delegate
+ * Cycle C Sprint 11 Day 2 Ã¢â‚¬â€ below the 768 px breakpoint we delegate
  * to ``MobileShell`` which trades the always-visible Sidebar for a
  * drawer + top app-bar.  The same ``CommandPalette`` mounts in both
  * modes; the children + palette open-state are shared.
@@ -36,7 +36,7 @@ export const AppShell: Component<AppShellProps> = (props) => {
       const saved = localStorage.getItem("amor.sidebar.collapsed");
       if (saved === "1") setCollapsed(true);
     } catch {
-      // ignore — localStorage may be unavailable in private modes
+      // ignore Ã¢â‚¬â€ localStorage may be unavailable in private modes
     }
   });
 
@@ -53,7 +53,7 @@ export const AppShell: Component<AppShellProps> = (props) => {
   };
 
   /** Cmd-K (mac) / Ctrl-K (others) opens the command palette.
-   *  Allow opening from inside text inputs too — power users want
+   *  Allow opening from inside text inputs too Ã¢â‚¬â€ power users want
    *  to escape from a stuck composer via the palette.  Only ignore
    *  when an isContentEditable target is captured. */
   const onKeyDown = (e: KeyboardEvent): void => {
@@ -74,7 +74,7 @@ export const AppShell: Component<AppShellProps> = (props) => {
     <Show
       when={viewport().isMobile}
       fallback={
-        <div class="flex h-full bg-bg-primary text-text-primary">
+        <div class="flex h-full bg-bg-canvas text-text-display">
           <Sidebar
             collapsed={collapsed()}
             onToggle={toggleSidebar}

@@ -1,16 +1,16 @@
 /**
- * Cycle C Sprint 4 Day 4 — animated tool-call card.
+ * Cycle C Sprint 4 Day 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â animated tool-call card.
  *
  * Renders one ``ToolCallFrame`` (see ``../../lib/tool-stream.ts``) with
- * the canonical pending → running → complete | error state machine.
+ * the canonical pending ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ running ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ complete | error state machine.
  * Input + output payloads live behind a native ``<details>`` so the
  * default rendered surface is small.
  *
  * Visual conventions
  * ------------------
- * * 2 px mode-accent left border — keeps the card threaded with the
+ * * 2 px mode-accent left border ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â keeps the card threaded with the
  *   surrounding mode (Build/Research/etc.).
- * * Status pill: spinner while ``running``, "✓" on complete, "!" on
+ * * Status pill: spinner while ``running``, "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" on complete, "!" on
  *   error.  Matches existing StatusPill but inline so we don't import
  *   the larger primitive twice on every card.
  * * Monospace input/output blocks; arbitrary JSON is pretty-printed.
@@ -18,7 +18,7 @@
  * Accessibility
  * -------------
  * * Card root is ``role="status"`` so screen readers announce
- *   transitions (input-streaming → complete).
+ *   transitions (input-streaming ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ complete).
  * * Native ``<details>`` keeps keyboard navigation working without
  *   custom ARIA bookkeeping.
  */
@@ -35,9 +35,9 @@ export interface ToolCallCardProps {
 }
 
 const STATUS_ICON: Record<ToolCallFrame["status"], string> = {
-  pending: "○",
-  running: "◔",
-  complete: "✓",
+  pending: "ÃƒÂ¢Ã¢â‚¬â€Ã¢â‚¬Â¹",
+  running: "ÃƒÂ¢Ã¢â‚¬â€Ã¢â‚¬Â",
+  complete: "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“",
   error: "!",
 };
 
@@ -52,9 +52,9 @@ const STATUS_KEY: Record<ToolCallFrame["status"], string> = {
 };
 
 const STATUS_TONE: Record<ToolCallFrame["status"], string> = {
-  pending: "text-text-tertiary",
-  running: "text-text-secondary motion-safe:animate-pulse",
-  complete: "text-text-primary",
+  pending: "text-text-subtle",
+  running: "text-text-body motion-safe:animate-pulse",
+  complete: "text-text-display",
   error: "text-status-error",
 };
 
@@ -87,11 +87,11 @@ export const ToolCallCard: Component<ToolCallCardProps> = (props) => {
           >
             {STATUS_ICON[props.frame.status]}
           </span>
-          <code class="truncate font-mono text-[0.75rem] text-text-primary">
+          <code class="truncate font-mono text-[0.75rem] text-text-display">
             {props.frame.tool}
           </code>
           <Show when={props.frame.meta?.iteration !== undefined}>
-            <span class="text-[0.65rem] text-text-tertiary">
+            <span class="text-[0.65rem] text-text-subtle">
               {t("toolcall.iteration", { n: String(props.frame.meta?.iteration) })}
             </span>
           </Show>
@@ -105,10 +105,10 @@ export const ToolCallCard: Component<ToolCallCardProps> = (props) => {
 
       <Show when={props.frame.input !== undefined || props.frame.inputDelta}>
         <details class="border-t border-border-subtle">
-          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-tertiary hover:text-text-secondary">
+          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-subtle hover:text-text-body">
             {t("toolcall.input")}
           </summary>
-          <pre class="max-h-40 overflow-auto px-3 pb-2 font-mono text-[0.7rem] text-text-secondary">
+          <pre class="max-h-40 overflow-auto px-3 pb-2 font-mono text-[0.7rem] text-text-body">
             {props.frame.input !== undefined
               ? prettyJson(props.frame.input)
               : props.frame.inputDelta}
@@ -118,7 +118,7 @@ export const ToolCallCard: Component<ToolCallCardProps> = (props) => {
 
       <Show when={props.frame.output !== undefined}>
         <details class="border-t border-border-subtle" open>
-          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-tertiary hover:text-text-secondary">
+          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-subtle hover:text-text-body">
             {t("toolcall.output")}
           </summary>
           <Show
@@ -129,7 +129,7 @@ export const ToolCallCard: Component<ToolCallCardProps> = (props) => {
                   "max-h-40 overflow-auto px-3 pb-2 font-mono text-[0.7rem]",
                   props.frame.isError
                     ? "text-status-error"
-                    : "text-text-secondary",
+                    : "text-text-body",
                 ].join(" ")}
               >
                 {prettyJson(props.frame.output)}

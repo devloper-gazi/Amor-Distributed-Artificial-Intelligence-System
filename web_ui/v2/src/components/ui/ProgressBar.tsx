@@ -31,7 +31,7 @@ export const ProgressBar: Component<ProgressBarProps> = (props) => {
       aria-label={local.label}
       {...rest}
     >
-      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-tertiary">
+      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-elevated-v25">
         <Show
           when={pct() !== null}
           fallback={
@@ -54,7 +54,7 @@ export const ProgressBar: Component<ProgressBarProps> = (props) => {
           />
         </Show>
       </div>
-      {/* Inline keyframes for indeterminate stripe — small enough to
+      {/* Inline keyframes for indeterminate stripe â€” small enough to
           live next to the component instead of leaking into theme.css. */}
       <style>{`
         @keyframes progress {

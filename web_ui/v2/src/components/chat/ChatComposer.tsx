@@ -25,14 +25,14 @@ export interface ChatComposerProps {
   busy?: boolean;
   onCancel?: () => void;
   placeholder?: string;
-  /** Shown next to the send button — usually "⌘+Enter to send". */
+  /** Shown next to the send button ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â usually "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ+Enter to send". */
   hint?: string;
-  /** Cycle C polish — segmented control above the textarea.  When
+  /** Cycle C polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â segmented control above the textarea.  When
    *  ``effortTiers`` is provided, the composer renders a row of
    *  buttons (one per tier) that call ``onEffortChange`` on click.
    *  Pass-through pattern: the route owns the signal so persistence
    *  + default selection live there.  When omitted, the composer
-   *  renders exactly the same as before — backward compatible. */
+   *  renders exactly the same as before ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â backward compatible. */
   effortTiers?: ReadonlyArray<EffortTierOption>;
   effortValue?: string;
   onEffortChange?: (next: string) => void;
@@ -43,10 +43,10 @@ export interface ChatComposerProps {
 
 /**
  * Chat composer.  Cmd/Ctrl-Enter sends; Shift-Enter newline; plain
- * Enter newline (chat convention — accidental sends are worse than
+ * Enter newline (chat convention ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â accidental sends are worse than
  * an extra keystroke).
  *
- * Cycle C polish — optional effort segmented control above the
+ * Cycle C polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â optional effort segmented control above the
  * textarea, rendered when ``effortTiers`` is provided.  Used by
  * Research today; Build/Thinking can opt in by passing the same
  * three props (``effortTiers`` / ``effortValue`` / ``onEffortChange``).
@@ -72,7 +72,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
 
   return (
     <form
-      class="flex flex-col gap-2 border-t border-border-subtle bg-bg-secondary px-5 py-4"
+      class="flex flex-col gap-2 border-t border-border-subtle bg-bg-elevated-v25 px-5 py-4"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -85,7 +85,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
           aria-label={t(props.effortLabelKey ?? "composer.effort_aria")}
           data-amor-effort-group=""
         >
-          <span class="text-[0.7rem] font-medium uppercase tracking-wide text-text-tertiary">
+          <span class="text-[0.7rem] font-medium uppercase tracking-wide text-text-subtle">
             {t(props.effortLabelKey ?? "composer.effort")}
           </span>
           <div class="flex flex-wrap gap-1 rounded-md border border-border-subtle bg-bg-elevated p-0.5">
@@ -101,8 +101,8 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
                     "amor-touch rounded px-3 py-1 text-xs font-medium transition-colors",
                     "focus-visible:outline-2 focus-visible:outline-offset-2",
                     tier.value === props.effortValue
-                      ? "bg-bg-hover text-text-primary"
-                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                      ? "bg-bg-hover text-text-display"
+                      : "text-text-body hover:bg-bg-hover hover:text-text-display",
                   ].join(" ")}
                   data-amor-effort={tier.value}
                   data-amor-effort-active={
@@ -120,15 +120,15 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
         value={text()}
         onInput={(e) => setText(e.currentTarget.value)}
         onKeyDown={onKeyDown}
-        placeholder={props.placeholder ?? "Ask anything…"}
+        placeholder={props.placeholder ?? "Ask anythingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"}
         minRows={2}
         maxRows={10}
         class="bg-bg-elevated"
         autofocus
       />
       <div class="flex items-center justify-between gap-2">
-        <span class="text-xs text-text-tertiary">
-          {props.hint ?? "⌘+Enter to send · Shift+Enter for newline"}
+        <span class="text-xs text-text-subtle">
+          {props.hint ?? "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ+Enter to send ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Shift+Enter for newline"}
         </span>
         <Show
           when={!props.busy}

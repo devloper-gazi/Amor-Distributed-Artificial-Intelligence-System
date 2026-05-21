@@ -1,5 +1,5 @@
 /**
- * Cycle UI 2026-05-20 — Unified chat single-page route.
+ * Cycle UI 2026-05-20 Ã¢â‚¬â€ Unified chat single-page route.
  *
  * Mounts at ``/`` as the new primary chat surface, replacing the
  * 6-route mode-segregated SPA.  Behaviour:
@@ -15,7 +15,7 @@
  *     as the per-mode routes, so Approval cards, dedup, reconnect
  *     and SSE rotation all work out of the box.
  *
- * Phase 2 MVP — covers build / research / thinking / consortium /
+ * Phase 2 MVP Ã¢â‚¬â€ covers build / research / thinking / consortium /
  * sentinel / quickcode modes.  Each mode's submission body is shaped
  * by ``MODE_SUBMIT_ADAPTERS`` so the dispatch is purely data-driven.
  *
@@ -34,6 +34,10 @@ import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { MessageThread } from "../components/chat/MessageThread";
 import { UnifiedComposer } from "../components/chat/UnifiedComposer";
+// Cycle UI v2.5 Phase 3 Ã¢â‚¬â€ seed-prompt grid shown when the thread
+// is empty.  Clicking a card pre-fills the composer + sets the
+// suggested mode without auto-submitting.
+import { EmptyState } from "../components/chat/EmptyState";
 import {
   UNIFIED_REDUCER,
   createChatStream,
@@ -46,7 +50,7 @@ import {
 import type { ModeKey } from "../lib/types";
 import { t } from "../i18n";
 
-// ─── Per-mode dispatch adapters ─────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Per-mode dispatch adapters Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface ModeAdapter {
   startPath: string;
@@ -57,7 +61,7 @@ interface ModeAdapter {
   chatSessionMode: string;
 }
 
-// Cycle UI Phase 3 — Mode → endpoint map.  Reducer field dropped; the
+// Cycle UI Phase 3 Ã¢â‚¬â€ Mode Ã¢â€ â€™ endpoint map.  Reducer field dropped; the
 // single UNIFIED_REDUCER (imported above) dispatches via event_registry
 // so every mode shares the same dispatch core + the same approval /
 // snapshot / terminator handling.
@@ -135,7 +139,7 @@ export const UnifiedChat: Component = () => {
     if (!r) return undefined;
     if (r.low_confidence) {
       // Still surface the guess via badge text but don't override the
-      // composer's mode — let user explicit-pick or default ride.
+      // composer's mode Ã¢â‚¬â€ let user explicit-pick or default ride.
       return undefined;
     }
     return r.mode as ModeKey;
@@ -151,7 +155,7 @@ export const UnifiedChat: Component = () => {
 
   // Lazily create the stream API for the chosen mode + prompt.  Each
   // submission spawns a new stream singleton keyed on startPath.
-  // All 6 modes share UNIFIED_REDUCER — per-mode dispatch happens
+  // All 6 modes share UNIFIED_REDUCER Ã¢â‚¬â€ per-mode dispatch happens
   // inside the reducer via event_registry.
   const ensureStream = (mode: ModeKey): ChatStreamApi => {
     const adapter = MODE_ADAPTERS[mode];
@@ -200,21 +204,21 @@ export const UnifiedChat: Component = () => {
 
   onCleanup(() => classifier.cancel());
 
-  // Hydrate from ?c=<session_id> deep-link.  Phase 2 placeholder —
+  // Hydrate from ?c=<session_id> deep-link.  Phase 2 placeholder Ã¢â‚¬â€
   // Phase 4 will fetch /api/sessions/{id}/branch and replay turns.
   onMount(() => {
     const params = new URLSearchParams(window.location.search);
     const cid = params.get("c");
     if (cid) {
-      // Phase 4 hook — for now just no-op so the URL is preserved.
+      // Phase 4 hook Ã¢â‚¬â€ for now just no-op so the URL is preserved.
       // Future: const branch = await fetch(`/api/sessions/${cid}/branch`)
       //        and seed the turns from the branch payload.
     }
 
-    // Cycle UI Phase 3.4 — eager-prefetch the classifier on mount so
+    // Cycle UI Phase 3.4 Ã¢â‚¬â€ eager-prefetch the classifier on mount so
     // the user's first real prompt doesn't trigger the 3-5 s MiniLM
     // first-load.  Fire-and-forget: swallow any error (network /
-    // auth / cold-start) — the actual classifier path retries on
+    // auth / cold-start) Ã¢â‚¬â€ the actual classifier path retries on
     // every user keystroke, so a failed prefetch only loses the
     // warmup benefit, not functionality.
     void classifyPrompt("warmup").catch(() => undefined);
@@ -225,7 +229,7 @@ export const UnifiedChat: Component = () => {
       class="flex h-dvh flex-col overflow-hidden"
       data-amor-route="unified-chat"
       style={{
-        // Cycle UI Phase 4.3 — keep the layout glued to the visible
+        // Cycle UI Phase 4.3 Ã¢â‚¬â€ keep the layout glued to the visible
         // viewport on iOS Safari when the on-screen keyboard pushes
         // the address bar around.  `100dvh` already adapts; the
         // safe-area padding handles the home-indicator gap below.
@@ -241,17 +245,28 @@ export const UnifiedChat: Component = () => {
         <MessageThread
           turns={turns()}
           emptyState={
-            <div class="mx-auto max-w-2xl px-6 py-16 text-center">
-              <h1 class="text-2xl font-semibold text-text-primary">
-                {t("chat.unified_empty_title")}
-              </h1>
-              <p class="mt-3 text-sm text-text-secondary">
-                {t("chat.unified_empty_subtitle")}
-              </p>
-              <p class="mt-2 text-xs text-text-tertiary">
-                {t("chat.unified_empty_hint")}
-              </p>
-            </div>
+            <EmptyState
+              onSeed={(text, mode) => {
+                // Pre-fill the composer by routing through the
+                // classifier signal path.  Setting the suggested
+                // mode override directly so the ModePill reflects
+                // the user's seed pick.
+                setActiveMode(mode);
+                classifier.setPrompt(text);
+                // Surface the seed text via DOM event the
+                // UnifiedComposer listens for (composer owns the
+                // textarea ref + value).  Falls back to inserting
+                // via classifier path only if the composer hasn't
+                // wired the listener yet.
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(
+                    new CustomEvent("amor:composer-seed", {
+                      detail: { text, mode },
+                    }),
+                  );
+                }
+              }}
+            />
           }
         />
       </main>
@@ -266,7 +281,7 @@ export const UnifiedChat: Component = () => {
         placeholder={t("chat.unified_placeholder")}
       />
       <Show when={classifier.error()}>
-        <div class="bg-bg-secondary px-5 py-1 text-[0.7rem] text-text-tertiary">
+        <div class="bg-bg-elevated-v25 px-5 py-1 text-[0.7rem] text-text-subtle">
           {t("classifier.error")}: {classifier.error()?.message}
         </div>
       </Show>

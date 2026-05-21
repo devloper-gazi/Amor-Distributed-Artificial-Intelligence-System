@@ -24,7 +24,7 @@ interface ResearchRequest {
   depth: string;
 }
 
-/** Cycle C polish — five canonical depth tiers the backend
+/** Cycle C polish Ã¢â‚¬â€ five canonical depth tiers the backend
  *  ``LocalAIResearchRequest.depth`` accepts (basic/medium/deep/
  *  expert/ultra).  Order is significant: it's how the segmented
  *  control renders left-to-right. */
@@ -60,7 +60,7 @@ const saveEffort = (next: string): void => {
 
 
 /**
- * Research mode — single-shot autonomous research session.  The
+ * Research mode Ã¢â‚¬â€ single-shot autonomous research session.  The
  * pipeline is a single long-running task; SSE events report
  * progress, intermediate findings, and the final synthesis.
  *
@@ -68,7 +68,7 @@ const saveEffort = (next: string): void => {
  * /research and back doesn't wipe the conversation or kill an
  * in-flight pipeline.
  *
- * Cycle C polish (post-close-out) — uses ``RESEARCH_REDUCER`` so
+ * Cycle C polish (post-close-out) Ã¢â‚¬â€ uses ``RESEARCH_REDUCER`` so
  * the rich progress event stream (phase markers, sources, final
  * markdown report) actually renders.  Effort segmented control
  * exposes the backend's five depth tiers; persists the user's
@@ -95,7 +95,7 @@ export const Research: Component = () => {
     eventsPath: (sid) => `/api/local-ai/research/${sid}/events`,
     cancelPath: (sid) => `/api/local-ai/research/${sid}/cancel`,
     reduce: RESEARCH_REDUCER,
-    // Cycle D Sessions polish — register a chat_session row in the
+    // Cycle D Sessions polish Ã¢â‚¬â€ register a chat_session row in the
     // sidebar as soon as the user submits a research query, and bump
     // updated_at when the stream finishes / errors / is cancelled.
     chatSessionMode: "research",
@@ -128,10 +128,10 @@ export const Research: Component = () => {
         turns={stream.turns()}
         emptyState={
           <div class="max-w-md text-center">
-            <p class="text-base text-text-primary">
+            <p class="text-base text-text-display">
               {t("research.empty.title")}
             </p>
-            <p class="mt-2 text-sm text-text-tertiary">
+            <p class="mt-2 text-sm text-text-subtle">
               {t("research.empty.body")}
             </p>
           </div>

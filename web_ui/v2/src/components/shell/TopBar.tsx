@@ -3,7 +3,7 @@ import { type Component, type JSX, Show } from "solid-js";
 export interface TopBarProps {
   title: string;
   subtitle?: string;
-  /** Right-side action slot — typically a button or action group. */
+  /** Right-side action slot Ã¢â‚¬â€ typically a button or action group. */
   actions?: JSX.Element;
 }
 
@@ -14,7 +14,7 @@ export interface TopBarProps {
  */
 export const TopBar: Component<TopBarProps> = (props) => {
   return (
-    <header class="flex h-14 shrink-0 items-center justify-between border-b border-border-subtle bg-bg-primary px-5">
+    <header class="flex h-14 shrink-0 items-center justify-between border-b border-border-subtle bg-bg-canvas px-5">
       <div class="min-w-0">
         <div class="flex items-center gap-2">
           <span
@@ -27,7 +27,7 @@ export const TopBar: Component<TopBarProps> = (props) => {
           </h1>
         </div>
         <Show when={props.subtitle}>
-          <p class="truncate text-xs text-text-tertiary">{props.subtitle}</p>
+          <p class="truncate text-xs text-text-subtle">{props.subtitle}</p>
         </Show>
       </div>
       <Show when={props.actions}>

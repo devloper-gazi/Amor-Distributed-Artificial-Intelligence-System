@@ -1,5 +1,5 @@
 /**
- * Cycle C Sprint 4 Day 1+4 — unified chat surface (preview).
+ * Cycle C Sprint 4 Day 1+4 Ã¢â‚¬â€ unified chat surface (preview).
  *
  * Single-page chat that hosts UnifiedComposer + a readback panel
  * showing the parsed mode, attachment count, and a Day-4 ToolCallCard
@@ -44,7 +44,7 @@ interface SubmittedTurn {
 
 /**
  * Synthesize a minimal canned tool-call trace for the resolved mode
- * so the user sees ToolCallCards animate end-to-end.  Pure local —
+ * so the user sees ToolCallCards animate end-to-end.  Pure local Ã¢â‚¬â€
  * no network.
  */
 function synthFrames(mode: ModeKey): ToolCallFrame[] {
@@ -56,7 +56,7 @@ function synthFrames(mode: ModeKey): ToolCallFrame[] {
       iteration: 0,
       language: mode === "build" ? "python" : "text",
       exit_code: 0,
-      stdout: `(synthetic preview — Day 4 tool-card rendering for ${mode} mode)`,
+      stdout: `(synthetic preview Ã¢â‚¬â€ Day 4 tool-card rendering for ${mode} mode)`,
       stderr: "",
       duration_ms: 12,
     },
@@ -64,7 +64,7 @@ function synthFrames(mode: ModeKey): ToolCallFrame[] {
       type: "review_ready",
       iteration: 0,
       score: 88,
-      summary: "Stubbed — live review awaits chat-stream wiring.",
+      summary: "Stubbed Ã¢â‚¬â€ live review awaits chat-stream wiring.",
       findings: [],
     },
   ];
@@ -117,14 +117,14 @@ export const Chat: Component = () => {
         <Show
           when={history().length > 0}
           fallback={
-            <div class="mx-auto max-w-md text-center text-text-tertiary">
-              <p class="text-base text-text-primary">{t("chat.preview.title")}</p>
+            <div class="mx-auto max-w-md text-center text-text-subtle">
+              <p class="text-base text-text-display">{t("chat.preview.title")}</p>
               <p class="mt-2 text-sm whitespace-pre-line">
                 {t("chat.preview.body", {
                   cmds: "/build, /research, /think, /consortium, /sentinel, /system",
                 })}
               </p>
-              <p class="mt-3 text-[0.7rem] text-text-tertiary">
+              <p class="mt-3 text-[0.7rem] text-text-subtle">
                 {t("chat.preview.hint")}
               </p>
             </div>
@@ -135,16 +135,16 @@ export const Chat: Component = () => {
               {(turn) => (
                 <li class="space-y-2">
                   <div class="rounded-md border border-border-subtle bg-bg-elevated p-3">
-                    <div class="mb-1 flex items-center gap-2 text-[0.7rem] text-text-tertiary">
+                    <div class="mb-1 flex items-center gap-2 text-[0.7rem] text-text-subtle">
                       <Badge>{modeLabel(turn.mode)}</Badge>
                       <span class="tabular-nums">
                         {new Date(turn.ts).toLocaleTimeString()}
                       </span>
                       <Show when={turn.attachments > 0}>
-                        <span>· {turn.attachments} attachment{turn.attachments === 1 ? "" : "s"}</span>
+                        <span>Ã‚Â· {turn.attachments} attachment{turn.attachments === 1 ? "" : "s"}</span>
                       </Show>
                     </div>
-                    <pre class="whitespace-pre-wrap font-mono text-xs text-text-primary">
+                    <pre class="whitespace-pre-wrap font-mono text-xs text-text-display">
                       {turn.text}
                     </pre>
                   </div>

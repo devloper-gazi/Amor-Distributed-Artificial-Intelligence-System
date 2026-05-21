@@ -20,7 +20,7 @@ function humanReadableError(err: unknown): string {
     const d = (body as { detail: unknown }).detail;
     if (typeof d === "string") return d;
     if (Array.isArray(d) && d.length > 0) {
-      // Array → take the first validation error and format as
+      // Array ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ take the first validation error and format as
       // "field: message".
       const first = d[0] as Partial<PydanticValidationError>;
       const field = Array.isArray(first.loc)
@@ -67,7 +67,7 @@ export const Login: Component = () => {
   return (
     <div
       data-mode="system"
-      class="flex min-h-screen items-center justify-center bg-bg-primary px-4 text-text-primary"
+      class="flex min-h-screen items-center justify-center bg-bg-canvas px-4 text-text-display"
     >
       <form
         onSubmit={submit}
@@ -78,13 +78,13 @@ export const Login: Component = () => {
           <h1 class="text-xl font-semibold tracking-tight">
             {mode() === "login" ? "Sign in to AMOR" : "Create your account"}
           </h1>
-          <p class="text-sm text-text-secondary">
+          <p class="text-sm text-text-body">
             Local-first distributed AI desktop.
           </p>
         </header>
 
         <label class="block space-y-1.5">
-          <span class="text-xs font-medium text-text-secondary">
+          <span class="text-xs font-medium text-text-body">
             {mode() === "login" ? "Username or email" : "Username"}
           </span>
           <Input
@@ -98,7 +98,7 @@ export const Login: Component = () => {
 
         <Show when={mode() === "register"}>
           <label class="block space-y-1.5">
-            <span class="text-xs font-medium text-text-secondary">Email</span>
+            <span class="text-xs font-medium text-text-body">Email</span>
             <Input
               type="email"
               value={email()}
@@ -111,7 +111,7 @@ export const Login: Component = () => {
         </Show>
 
         <label class="block space-y-1.5">
-          <span class="text-xs font-medium text-text-secondary">Password</span>
+          <span class="text-xs font-medium text-text-body">Password</span>
           <Input
             type="password"
             value={password()}
@@ -121,8 +121,8 @@ export const Login: Component = () => {
             minlength={mode() === "register" ? 10 : 1}
           />
           <Show when={mode() === "register"}>
-            <p class="-mt-1 text-[0.65rem] text-text-tertiary">
-              At least 10 chars · upper + lower + 1 digit.
+            <p class="-mt-1 text-[0.65rem] text-text-subtle">
+              At least 10 chars ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· upper + lower + 1 digit.
             </p>
           </Show>
         </label>
@@ -144,13 +144,13 @@ export const Login: Component = () => {
           {mode() === "login" ? "Sign in" : "Create account"}
         </Button>
 
-        <div class="text-center text-xs text-text-tertiary">
+        <div class="text-center text-xs text-text-subtle">
           {mode() === "login" ? (
             <>
               No account?{" "}
               <button
                 type="button"
-                class="text-text-primary underline-offset-2 hover:underline"
+                class="text-text-display underline-offset-2 hover:underline"
                 onClick={() => setMode("register")}
               >
                 Create one
@@ -161,7 +161,7 @@ export const Login: Component = () => {
               Already registered?{" "}
               <button
                 type="button"
-                class="text-text-primary underline-offset-2 hover:underline"
+                class="text-text-display underline-offset-2 hover:underline"
                 onClick={() => setMode("login")}
               >
                 Sign in

@@ -17,9 +17,9 @@ const VARIANT_CLASS: Record<Variant, string> = {
   primary:
     "bg-text-primary text-text-inverse hover:opacity-90 active:opacity-80 disabled:opacity-50",
   secondary:
-    "border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover disabled:opacity-50",
+    "border border-border-strong-v25 bg-bg-elevated text-text-display hover:bg-bg-hover disabled:opacity-50",
   ghost:
-    "text-text-primary hover:bg-bg-hover disabled:opacity-50",
+    "text-text-display hover:bg-bg-hover disabled:opacity-50",
   danger:
     "border border-status-failed/40 text-status-failed hover:bg-status-failed/10 disabled:opacity-50",
 };
@@ -59,7 +59,7 @@ export const Button: Component<ButtonProps> = (props) => {
         "font-medium transition-[background-color,opacity] duration-100",
         "focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed",
-        // Sprint 11 Day 4 — guarantee 44×44 hit area on coarse-pointer
+        // Sprint 11 Day 4 Ã¢â‚¬â€ guarantee 44Ãƒâ€”44 hit area on coarse-pointer
         // devices.  Visual size stays whatever ``SIZE_CLASS`` set; the
         // utility only enlarges when @media (pointer: coarse) hits.
         "amor-touch",

@@ -253,6 +253,28 @@ export const tr: Record<string, string> = {
   "classifier.thinking":          "düşünüyorum…",
   "classifier.error":             "Sınıflandırıcı hatası",
 
+  // ── Cycle UI v2.5 — boş durum + arama + composer cilası ──
+  "composer.slash_overlay_aria":  "Slash komutları",
+  "empty.greeting":               "Bugün ne üzerine çalışıyoruz?",
+  "empty.seed.build":             "SessionList.tsx bileşenini daha küçük parçalara böl",
+  "empty.seed.research":          "2026'da yayımlanan tasarım sistemlerinde OKLch kullanımına dair güncel örnekleri karşılaştır",
+  "empty.seed.thinking":          "Rust backend rewrite kararının avantaj/dezavantajlarını adım adım anlat",
+  "empty.seed.quickcode":         "Hızlı: routes.ts içinde foo'yu bar olarak değiştir (sadece bu dosya)",
+  "search.placeholder":           "Konuşmalarda ara",
+  "search.open_palette_aria":     "Komut paletini aç",
+  "search.clear_aria":            "Aramayı temizle",
+  "build.card.code":              "Kod",
+  "build.card.tests":             "Testler",
+  "build.card.execution":         "Çalıştırma",
+  "build.card.review":            "İnceleme",
+  "build.card.collapse":          "Daralt",
+  "build.card.expand":            "Genişlet",
+  "build.status.ok":              "tamam",
+  "build.status.pending":         "bekliyor",
+  "build.status.failed":          "başarısız",
+  "build.status.approved":        "onaylandı",
+  "build.status.needs_revision":  "düzeltme gerek",
+
   // ── Cycle UI Phase 4 — dallanma navigatörü ──
   "branch.navigator_aria":        "Dal navigatörü",
   "branch.previous_aria":         "Önceki sürüm",

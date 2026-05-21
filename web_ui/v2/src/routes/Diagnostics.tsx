@@ -28,7 +28,7 @@ interface Diagnostics {
     samples: number;
     recent_failures: Array<{ ts: string; where: string; detail: string }>;
     docker_available?: boolean | null;
-    /** Cycle C Sprint 5 — sandbox hardening posture. */
+    /** Cycle C Sprint 5 Ã¢â‚¬â€ sandbox hardening posture. */
     security?: {
       docker_host: string;
       via_proxy: boolean;
@@ -92,7 +92,7 @@ export const Diagnostics: Component = () => {
         <Show
           when={q.data}
           fallback={
-            <div class="flex h-full items-center justify-center text-sm text-text-tertiary">
+            <div class="flex h-full items-center justify-center text-sm text-text-subtle">
               <Show when={q.isError} fallback={<Spinner size={20} />}>
                 <p>
                   {t("diagnostics.failed_to_load", {
@@ -108,7 +108,7 @@ export const Diagnostics: Component = () => {
         >
           {(d) => (
             <div class="mx-auto max-w-5xl space-y-6">
-              <p class="text-xs text-text-tertiary">
+              <p class="text-xs text-text-subtle">
                 {t("diagnostics.last_refreshed", {
                   ts: new Date(d().ts).toLocaleTimeString(),
                 })}
@@ -136,7 +136,7 @@ export const Diagnostics: Component = () => {
                   }
                   secondary={
                     d().sandbox.cold_start_p95_ms !== null
-                      ? `${d().sandbox.cold_start_p95_ms} ms p95 · ${d().sandbox.samples} runs`
+                      ? `${d().sandbox.cold_start_p95_ms} ms p95 Ã‚Â· ${d().sandbox.samples} runs`
                       : t("diagnostics.value.run_to_populate")
                   }
                 />
@@ -145,7 +145,7 @@ export const Diagnostics: Component = () => {
                   title={t("diagnostics.card.ledger")}
                   primary={d().ledger.intact ? t("diagnostics.value.intact") : "broken"}
                   secondary={t("diagnostics.value.tail", {
-                    tail: d().ledger.tail_hash.slice(0, 12) + "…",
+                    tail: d().ledger.tail_hash.slice(0, 12) + "Ã¢â‚¬Â¦",
                     n: d().ledger.entries,
                   })}
                 />
@@ -170,7 +170,7 @@ export const Diagnostics: Component = () => {
                     d().rag.reranker_enabled ? "reranker on" : null,
                   ]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(" Ã‚Â· ")}
                 />
                 <Card
                   status="healthy"
@@ -240,7 +240,7 @@ export const Diagnostics: Component = () => {
                     {([role, tag]) => (
                       <div class="flex items-center justify-between border-b border-border-subtle px-4 py-2 text-sm last:border-b-0">
                         <span class="font-medium">{role}</span>
-                        <code class="text-xs text-text-secondary">{tag}</code>
+                        <code class="text-xs text-text-body">{tag}</code>
                       </div>
                     )}
                   </For>
@@ -257,13 +257,13 @@ export const Diagnostics: Component = () => {
                     <For each={d().recent_sessions.slice(0, 8)}>
                       {(s) => (
                         <div class="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-2 text-sm last:border-b-0">
-                          <code class="text-xs text-text-tertiary">
+                          <code class="text-xs text-text-subtle">
                             #{(s.session_id ?? s.sid ?? "?").slice(0, 8)}
                           </code>
-                          <span class="flex-1 text-text-secondary">
-                            {s.status ?? "—"}
+                          <span class="flex-1 text-text-body">
+                            {s.status ?? "Ã¢â‚¬â€"}
                           </span>
-                          <span class="text-xs text-text-tertiary">
+                          <span class="text-xs text-text-subtle">
                             {s.duration_ms
                               ? `${Math.round(s.duration_ms / 1000)} s`
                               : ""}
@@ -285,8 +285,8 @@ export const Diagnostics: Component = () => {
                     <For each={d().recent_failures.slice(0, 8)}>
                       {(f) => (
                         <div class="border-b border-border-subtle px-4 py-2 text-sm last:border-b-0">
-                          <p class="text-xs text-text-tertiary">{f.where}</p>
-                          <p class="mt-0.5 text-text-secondary">{f.detail}</p>
+                          <p class="text-xs text-text-subtle">{f.where}</p>
+                          <p class="mt-0.5 text-text-body">{f.detail}</p>
                         </div>
                       )}
                     </For>
@@ -309,14 +309,14 @@ const Card: Component<{
 }> = (props) => (
   <div class="rounded-lg border border-border-subtle bg-bg-elevated p-4">
     <div class="flex items-center justify-between">
-      <span class="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+      <span class="text-xs font-medium uppercase tracking-wide text-text-subtle">
         {props.title}
       </span>
       <StatusPill status={props.status} size="sm" label="" />
     </div>
     <p class="mt-2 text-base font-semibold tracking-tight">{props.primary}</p>
     <Show when={props.secondary}>
-      <p class="mt-0.5 text-xs text-text-tertiary">{props.secondary}</p>
+      <p class="mt-0.5 text-xs text-text-subtle">{props.secondary}</p>
     </Show>
   </div>
 );

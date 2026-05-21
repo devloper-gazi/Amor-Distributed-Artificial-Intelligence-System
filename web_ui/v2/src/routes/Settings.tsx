@@ -59,7 +59,7 @@ export const Settings: Component = () => {
             <h2 class="text-base font-semibold tracking-tight">
               {t("settings.theme.heading")}
             </h2>
-            <p class="mt-1 text-sm text-text-secondary">
+            <p class="mt-1 text-sm text-text-body">
               {t("settings.theme.description")}
             </p>
             <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -79,7 +79,7 @@ export const Settings: Component = () => {
                     <div class="text-sm font-medium">
                       {t(opt.label_key)}
                     </div>
-                    <div class="text-xs text-text-tertiary">
+                    <div class="text-xs text-text-subtle">
                       {t(opt.subtitle_key)}
                     </div>
                   </button>
@@ -88,12 +88,12 @@ export const Settings: Component = () => {
             </div>
           </section>
 
-          {/* Language — Sprint 10 Day 1 */}
+          {/* Language ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Sprint 10 Day 1 */}
           <section>
             <h2 class="text-base font-semibold tracking-tight">
               {t("settings.language.heading")}
             </h2>
-            <p class="mt-1 text-sm text-text-secondary">
+            <p class="mt-1 text-sm text-text-body">
               {t("settings.language.description")}
             </p>
             <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -114,7 +114,7 @@ export const Settings: Component = () => {
                     <div class="text-sm font-medium">
                       {t(`settings.language.${loc}`)}
                     </div>
-                    <div class="text-xs text-text-tertiary">
+                    <div class="text-xs text-text-subtle">
                       {t(`settings.language.${loc}_subtitle`)}
                     </div>
                   </button>
@@ -129,13 +129,13 @@ export const Settings: Component = () => {
               {t("settings.account.heading")}
             </h2>
             <div class="mt-3 rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm">
-              <p class="text-text-secondary">
+              <p class="text-text-body">
                 {t("settings.account.signed_in_as")}{" "}
-                <span class="font-medium text-text-primary">
-                  {auth.user()?.username ?? "—"}
+                <span class="font-medium text-text-display">
+                  {auth.user()?.username ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
                 </span>
               </p>
-              <p class="mt-1 text-xs text-text-tertiary">
+              <p class="mt-1 text-xs text-text-subtle">
                 {auth.user()?.email ?? ""}
               </p>
               <div class="mt-4 flex gap-2">
@@ -152,12 +152,12 @@ export const Settings: Component = () => {
               {t("settings.developer.heading")}
             </h2>
             <div class="mt-3 rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm">
-              <p class="text-text-secondary">
+              <p class="text-text-body">
                 {t("settings.developer.description")}
               </p>
               <a
                 href="/showcase"
-                class="mt-3 inline-flex h-8 items-center rounded-md border border-border-default bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
+                class="mt-3 inline-flex h-8 items-center rounded-md border border-border-strong-v25 bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
               >
                 {t("settings.developer.cta")}
               </a>

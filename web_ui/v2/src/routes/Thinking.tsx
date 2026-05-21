@@ -13,16 +13,16 @@ import {
 interface ThinkRequest {
   prompt: string;
   effort: string;
-  /** Map of ClarifyingQuestion id → user's answer.  v2 skips the
+  /** Map of ClarifyingQuestion id Ã¢â€ â€™ user's answer.  v2 skips the
    *  ``/api/thinking/analyze`` Q&A step for now, so the dict is
-   *  always empty — the engine treats every clarification as
+   *  always empty Ã¢â‚¬â€ the engine treats every clarification as
    *  "no answer given" and proceeds. */
   clarifications: Record<string, string>;
 }
 
-// Cycle D — per-mode effort persistence.  Thinking accepts the same
+// Cycle D Ã¢â‚¬â€ per-mode effort persistence.  Thinking accepts the same
 // 5-tier canonical scale as Build/Research (basic/medium/deep/expert/
-// ultra) — see document_processor/thinking/models.py:80.
+// ultra) Ã¢â‚¬â€ see document_processor/thinking/models.py:80.
 const STORAGE_KEY_THINKING_EFFORT = "amor.thinking.effort";
 const THINKING_EFFORT_TIERS = [
   { value: "basic",  label_key: "effort.basic.label",  description_key: "effort.basic.description" },
@@ -54,7 +54,7 @@ function saveThinkingEffort(value: ThinkingEffort): void {
 }
 
 /**
- * Thinking mode — multi-step reasoning with streaming output.
+ * Thinking mode Ã¢â‚¬â€ multi-step reasoning with streaming output.
  *
  * The backend has an ``/api/thinking/analyze`` endpoint that asks
  * clarifying questions before the run; v2 sends an empty
@@ -78,7 +78,7 @@ export const Thinking: Component = () => {
     eventsPath: (sid) => `/api/thinking/${sid}/events`,
     cancelPath: (sid) => `/api/thinking/${sid}/cancel`,
     reduce: SIMPLE_TEXT_REDUCER,
-    // Cycle D Sessions polish — see Research.tsx for the rationale.
+    // Cycle D Sessions polish Ã¢â‚¬â€ see Research.tsx for the rationale.
     chatSessionMode: "thinking",
   });
 
@@ -109,10 +109,10 @@ export const Thinking: Component = () => {
         turns={stream.turns()}
         emptyState={
           <div class="max-w-md text-center">
-            <p class="text-base text-text-primary">
+            <p class="text-base text-text-display">
               {t("thinking.empty.title")}
             </p>
-            <p class="mt-2 text-sm text-text-tertiary">
+            <p class="mt-2 text-sm text-text-subtle">
               {t("thinking.empty.body")}
             </p>
           </div>

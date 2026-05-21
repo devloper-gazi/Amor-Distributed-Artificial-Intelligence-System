@@ -48,7 +48,7 @@ const STATUS_TO_PILL: Record<EvalRun["status"], Status> = {
 };
 
 const formatTime = (iso: string | null): string => {
-  if (!iso) return "—";
+  if (!iso) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
   try {
     return new Date(iso).toLocaleString();
   } catch {
@@ -57,19 +57,19 @@ const formatTime = (iso: string | null): string => {
 };
 
 const formatDuration = (start: string | null, end: string | null): string => {
-  if (!start || !end) return "—";
+  if (!start || !end) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
   try {
     const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 0 || !Number.isFinite(ms)) return "—";
+    if (ms < 0 || !Number.isFinite(ms)) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
     if (ms < 60_000) return `${(ms / 1000).toFixed(0)}s`;
     return `${(ms / 60_000).toFixed(1)}m`;
   } catch {
-    return "—";
+    return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
   }
 };
 
 const formatSummary = (summary: Record<string, unknown>): string => {
-  if (!summary || Object.keys(summary).length === 0) return "—";
+  if (!summary || Object.keys(summary).length === 0) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
   if (typeof summary.error === "string") return `err: ${summary.error.slice(0, 60)}`;
   // Pull the most-meaningful key.
   if ("pass_at_1" in summary) {
@@ -165,13 +165,13 @@ export const Evals: Component = () => {
 
       <div class="flex-1 overflow-auto px-6 py-6">
         {/* Available evals */}
-        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-tertiary">
+        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-subtle">
           {t("evals.section.available")}
         </h2>
         <Show
           when={manifest.data}
           fallback={
-            <div class="flex h-32 items-center justify-center text-text-tertiary">
+            <div class="flex h-32 items-center justify-center text-text-subtle">
               <Spinner size={20} />
             </div>
           }
@@ -183,19 +183,19 @@ export const Evals: Component = () => {
                   <div class="rounded-lg border border-border-subtle bg-bg-elevated p-4">
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0 flex-1">
-                        <p class="font-medium text-text-primary">
+                        <p class="font-medium text-text-display">
                           {entry.title}
                         </p>
-                        <p class="mt-1 text-xs text-text-secondary">
+                        <p class="mt-1 text-xs text-text-body">
                           {entry.description}
                         </p>
-                        <div class="mt-2 flex flex-wrap gap-2 text-[0.7rem] text-text-tertiary">
+                        <div class="mt-2 flex flex-wrap gap-2 text-[0.7rem] text-text-subtle">
                           <span>{t("evals.duration", { n: entry.expected_minutes })}</span>
                           <Show when={entry.implemented}>
                             <Badge>{t("common.status.ready")}</Badge>
                           </Show>
                           <Show when={!entry.implemented}>
-                            <span class="rounded-full border border-border-subtle px-2 py-0.5 text-text-tertiary">
+                            <span class="rounded-full border border-border-subtle px-2 py-0.5 text-text-subtle">
                               {t("common.status.scaffolded")}
                             </span>
                           </Show>
@@ -214,7 +214,7 @@ export const Evals: Component = () => {
                           when={
                             kickMutation.isPending && pendingKick() === entry.name
                           }
-                          fallback={<>{entry.implemented ? t("common.run") : "—"}</>}
+                          fallback={<>{entry.implemented ? t("common.run") : "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}</>}
                         >
                           <Spinner size={12} />
                         </Show>
@@ -228,20 +228,20 @@ export const Evals: Component = () => {
         </Show>
 
         {/* Run history */}
-        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-tertiary">
+        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-subtle">
           {t("evals.section.recent_runs")}
         </h2>
         <Show
           when={runs.data && (runs.data?.length ?? 0) > 0}
           fallback={
-            <p class="rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm text-text-tertiary">
+            <p class="rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm text-text-subtle">
               {t("common.no_data")}
             </p>
           }
         >
           <div class="overflow-x-auto rounded-lg border border-border-subtle">
             <table class="min-w-full text-sm">
-              <thead class="bg-bg-secondary text-text-tertiary">
+              <thead class="bg-bg-elevated-v25 text-text-subtle">
                 <tr>
                   <th class="px-3 py-2 text-left text-[0.7rem] font-medium uppercase tracking-wider">
                     {t("evals.col.eval")}
@@ -266,7 +266,7 @@ export const Evals: Component = () => {
               <tbody>
                 <For each={runs.data}>
                   {(row) => (
-                    <tr class="border-b border-border-subtle hover:bg-bg-secondary">
+                    <tr class="border-b border-border-subtle hover:bg-bg-elevated-v25">
                       <td class="px-3 py-2">
                         <span class="font-mono text-xs">{row.name}</span>
                       </td>
@@ -277,14 +277,14 @@ export const Evals: Component = () => {
                           size="sm"
                         />
                       </td>
-                      <td class="px-3 py-2 text-right text-text-tertiary text-xs tabular-nums">
+                      <td class="px-3 py-2 text-right text-text-subtle text-xs tabular-nums">
                         {formatTime(row.started_at)}
                       </td>
                       <td class="px-3 py-2 text-right tabular-nums">
                         {formatDuration(row.started_at, row.finished_at)}
                       </td>
-                      <td class="px-3 py-2 text-right text-text-tertiary text-xs">
-                        {row.backend ?? "—"}
+                      <td class="px-3 py-2 text-right text-text-subtle text-xs">
+                        {row.backend ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
                       </td>
                       <td class="px-3 py-2 text-right">
                         <span
@@ -302,7 +302,7 @@ export const Evals: Component = () => {
           </div>
         </Show>
 
-        <p class="mt-4 text-xs text-text-tertiary">
+        <p class="mt-4 text-xs text-text-subtle">
           {t("common.auto_refresh", { seconds: 5 })}.{" "}
           {t("common.sources")}:{" "}
           <code class="font-mono">/api/admin/evals/manifest</code> +{" "}

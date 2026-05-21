@@ -15,7 +15,7 @@ import {
   type Status,
 } from "../components/ui";
 
-// Lazy-loaded so diff2html ships in its own chunk (≈ 90 KB gz)
+// Lazy-loaded so diff2html ships in its own chunk (ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â  90 KB gz)
 // only when the showcase or Build mode renders a diff.
 const DiffBlock = lazy(() =>
   import("../components/chat/DiffBlock").then((m) => ({
@@ -40,11 +40,11 @@ def fib(n: int) -> int:
 >>>>>>> REPLACE`;
 
 /**
- * Component showcase — Storybook-lite preview surface.  Used to
+ * Component showcase ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Storybook-lite preview surface.  Used to
  * verify atom rendering + theme tokens + per-mode accent shifts
  * without spinning up the real chat shell.  Lives at /showcase.
  *
- * Each section corresponds to one atom in the design doc §6 inventory.
+ * Each section corresponds to one atom in the design doc ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§6 inventory.
  * When PR-3+ adds molecules and organisms, those get their own
  * sections.
  */
@@ -67,7 +67,7 @@ const STATUSES: ReadonlyArray<Status> = ["healthy", "warming", "warning", "faile
 export const Showcase: Component = () => {
   const [progress, setProgress] = createSignal(38);
   const [textValue, setTextValue] = createSignal(
-    "Type something to see the autoresize behaviour…",
+    "Type something to see the autoresize behaviourÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦",
   );
 
   const toggleTheme = () => {
@@ -80,17 +80,17 @@ export const Showcase: Component = () => {
   return (
     <main
       data-mode="system"
-      class="min-h-screen bg-bg-primary p-8 text-text-primary"
+      class="min-h-screen bg-bg-canvas p-8 text-text-display"
     >
       <header class="mx-auto mb-8 flex max-w-5xl items-center justify-between border-b border-border-subtle pb-4">
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">Component Showcase</h1>
-          <p class="mt-1 text-sm text-text-secondary">
+          <p class="mt-1 text-sm text-text-body">
             12 atoms &middot; Tailwind v4 @theme &middot; per-mode accents
           </p>
         </div>
         <div class="flex items-center gap-2 text-sm">
-          <a href="/v2" class="text-text-secondary hover:text-text-primary">
+          <a href="/v2" class="text-text-body hover:text-text-display">
             &larr; Back
           </a>
           <Button variant="secondary" size="sm" onClick={toggleTheme}>
@@ -120,8 +120,8 @@ export const Showcase: Component = () => {
                     />
                     <span class="font-medium">{mode.label}</span>
                   </div>
-                  <p class="mt-1 text-xs text-text-tertiary">{mode.subtitle}</p>
-                  <p class="mt-2 font-mono text-xs text-text-secondary">
+                  <p class="mt-1 text-xs text-text-subtle">{mode.subtitle}</p>
+                  <p class="mt-2 font-mono text-xs text-text-body">
                     icon: {mode.glyph}
                   </p>
                 </div>
@@ -131,7 +131,7 @@ export const Showcase: Component = () => {
         </Section>
 
         {/* Buttons */}
-        <Section title="Button" subtitle="primary / secondary / ghost / danger × sm / md">
+        <Section title="Button" subtitle="primary / secondary / ghost / danger ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â sm / md">
           <div class="space-y-3">
             <div class="flex flex-wrap items-center gap-3">
               <Button>Primary</Button>
@@ -154,13 +154,13 @@ export const Showcase: Component = () => {
         <Section title="IconButton" subtitle="aria-label required at type level">
           <div class="flex items-center gap-2">
             <IconButton aria-label="Send" size="sm">
-              <span aria-hidden="true">→</span>
+              <span aria-hidden="true">ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢</span>
             </IconButton>
             <IconButton aria-label="Open menu">
-              <span aria-hidden="true">≡</span>
+              <span aria-hidden="true">ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¡</span>
             </IconButton>
             <IconButton aria-label="Close" disabled>
-              <span aria-hidden="true">×</span>
+              <span aria-hidden="true">ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</span>
             </IconButton>
           </div>
         </Section>
@@ -185,7 +185,7 @@ export const Showcase: Component = () => {
         {/* Textarea */}
         <Section
           title="Textarea"
-          subtitle="autoresize — uses field-sizing where supported, JS fallback elsewhere"
+          subtitle="autoresize ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â uses field-sizing where supported, JS fallback elsewhere"
         >
           <div class="max-w-md">
             <Textarea
@@ -193,9 +193,9 @@ export const Showcase: Component = () => {
               onInput={(e) => setTextValue(e.currentTarget.value)}
               minRows={2}
               maxRows={8}
-              placeholder="Type to grow…"
+              placeholder="Type to growÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"
             />
-            <p class="mt-2 text-xs text-text-tertiary">
+            <p class="mt-2 text-xs text-text-subtle">
               {textValue().length} chars
             </p>
           </div>
@@ -232,11 +232,11 @@ export const Showcase: Component = () => {
           title="Spinner"
           subtitle="motion-safe spins; motion-reduce shows static dot"
         >
-          <div class="flex items-center gap-6 text-text-primary">
+          <div class="flex items-center gap-6 text-text-display">
             <Spinner size={16} />
             <Spinner size={20} />
             <Spinner size={24} />
-            <span class="text-sm text-text-tertiary">Loading…</span>
+            <span class="text-sm text-text-subtle">LoadingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦</span>
           </div>
         </Section>
 
@@ -259,15 +259,15 @@ export const Showcase: Component = () => {
               >
                 +10
               </Button>
-              <span class="text-sm text-text-tertiary">value: {progress()}</span>
+              <span class="text-sm text-text-subtle">value: {progress()}</span>
             </div>
             <ProgressBar value={null} label="indeterminate" />
           </div>
         </Section>
 
         {/* Kbd */}
-        <Section title="Kbd" subtitle="auto-substitutes Mod for ⌘ / Ctrl per platform">
-          <div class="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+        <Section title="Kbd" subtitle="auto-substitutes Mod for ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ / Ctrl per platform">
+          <div class="flex flex-wrap items-center gap-3 text-sm text-text-body">
             <span class="inline-flex items-center gap-1.5">
               Open palette <Kbd>Mod+K</Kbd>
             </span>
@@ -284,7 +284,7 @@ export const Showcase: Component = () => {
         </Section>
 
         {/* Avatar */}
-        <Section title="Avatar" subtitle="initials fallback + 3 variants × 2 sizes">
+        <Section title="Avatar" subtitle="initials fallback + 3 variants ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 2 sizes">
           <div class="flex items-center gap-4">
             <Avatar variant="user" initials="ad" />
             <Avatar variant="system" initials="sy" />
@@ -327,10 +327,10 @@ export const Showcase: Component = () => {
           </div>
         </Section>
 
-        {/* DiffBlock — lazy-loaded diff2html viewer */}
+        {/* DiffBlock ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â lazy-loaded diff2html viewer */}
         <Section
           title="DiffBlock"
-          subtitle="lazy-loaded diff2html — accepts unified diffs OR SEARCH/REPLACE blocks"
+          subtitle="lazy-loaded diff2html ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â accepts unified diffs OR SEARCH/REPLACE blocks"
         >
           <DiffDemo />
         </Section>
@@ -369,7 +369,7 @@ const Section: Component<{
   <section>
     <h2 class="mb-1 text-lg font-medium">{props.title}</h2>
     {props.subtitle ? (
-      <p class="mb-4 text-sm text-text-secondary">{props.subtitle}</p>
+      <p class="mb-4 text-sm text-text-body">{props.subtitle}</p>
     ) : null}
     {props.children}
   </section>

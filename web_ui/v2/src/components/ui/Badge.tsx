@@ -25,7 +25,7 @@ export const Badge: Component<BadgeProps> = (props) => {
         size() === "sm" ? "h-5 px-2 text-xs" : "h-6 px-2.5 text-sm",
         variant() === "accent"
           ? "text-text-inverse"
-          : "border border-border-subtle bg-bg-tertiary text-text-secondary",
+          : "border border-border-subtle bg-bg-elevated-v25 text-text-body",
         local.class ?? "",
       ].join(" ")}
       style={

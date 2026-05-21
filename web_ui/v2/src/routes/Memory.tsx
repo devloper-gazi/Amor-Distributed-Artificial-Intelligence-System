@@ -1,5 +1,5 @@
 /**
- * Cycle C Sprint 7 Day 3 — admin Memory viewer.
+ * Cycle C Sprint 7 Day 3 Ã¢â‚¬â€ admin Memory viewer.
  *
  * Surfaces the Mem0 OSS adapter's stored memories with a status
  * banner that explains how to flip the backend on when it's
@@ -160,7 +160,7 @@ export const Memory: Component = () => {
           <Show
             when={status.data}
             fallback={
-              <div class="flex h-32 items-center justify-center text-sm text-text-tertiary">
+              <div class="flex h-32 items-center justify-center text-sm text-text-subtle">
                 <Spinner size={18} />
               </div>
             }
@@ -172,7 +172,7 @@ export const Memory: Component = () => {
                     {t("memory.status.heading")}
                   </h2>
                   <Badge>
-                    {s().backend}{" · "}
+                    {s().backend}{" Ã‚Â· "}
                     {s().available
                       ? t("memory.status.ready")
                       : t("memory.status.disabled")}
@@ -181,17 +181,17 @@ export const Memory: Component = () => {
                 <Show
                   when={!s().available}
                   fallback={
-                    <p class="mt-2 text-xs text-text-tertiary">
+                    <p class="mt-2 text-xs text-text-subtle">
                       {t("memory.status.detail", {
                         vector: s().vector_store,
-                        llm: s().llm_model ?? "—",
+                        llm: s().llm_model ?? "Ã¢â‚¬â€",
                         ns: s().user_namespace,
                         graph: s().graph_enabled ? "on" : "off",
                       })}
                     </p>
                   }
                 >
-                  <p class="mt-2 text-xs text-text-tertiary">
+                  <p class="mt-2 text-xs text-text-subtle">
                     {t("memory.status.disabled_hint")}
                   </p>
                 </Show>
@@ -227,7 +227,7 @@ export const Memory: Component = () => {
               </Show>
             </form>
             <Show when={activeQuery()}>
-              <p class="text-xs text-text-tertiary">
+              <p class="text-xs text-text-subtle">
                 {t("memory.search.showing", { q: activeQuery() })}
               </p>
             </Show>
@@ -240,7 +240,7 @@ export const Memory: Component = () => {
             <Show
               when={visible() && (visible()!.count > 0)}
               fallback={
-                <p class="px-4 py-6 text-center text-xs text-text-tertiary">
+                <p class="px-4 py-6 text-center text-xs text-text-subtle">
                   <Show
                     when={visible()?.available}
                     fallback={t("memory.list.empty_disabled")}
@@ -260,16 +260,16 @@ export const Memory: Component = () => {
                   {(m) => (
                     <li class="space-y-1 border-b border-border-subtle p-3 text-xs last:border-b-0">
                       <div class="flex items-baseline justify-between gap-2">
-                        <code class="text-[0.65rem] text-text-tertiary">
+                        <code class="text-[0.65rem] text-text-subtle">
                           {m.id.slice(0, 12)}
                         </code>
                         <Show when={m.score !== null}>
-                          <span class="text-[0.65rem] text-text-tertiary tabular-nums">
+                          <span class="text-[0.65rem] text-text-subtle tabular-nums">
                             {t("memory.list.score", { n: Number(m.score).toFixed(3) })}
                           </span>
                         </Show>
                         <Show when={m.created_at}>
-                          <span class="text-[0.65rem] text-text-tertiary">
+                          <span class="text-[0.65rem] text-text-subtle">
                             {new Date(m.created_at!).toLocaleString()}
                           </span>
                         </Show>
@@ -282,7 +282,7 @@ export const Memory: Component = () => {
                           {t("memory.list.delete_button")}
                         </Button>
                       </div>
-                      <p class="text-text-secondary">{m.text}</p>
+                      <p class="text-text-body">{m.text}</p>
                     </li>
                   )}
                 </For>

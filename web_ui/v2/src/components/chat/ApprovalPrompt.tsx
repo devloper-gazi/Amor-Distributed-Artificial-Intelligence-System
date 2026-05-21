@@ -1,5 +1,5 @@
 /**
- * Cycle F Sprint 5 — inline approval card.
+ * Cycle F Sprint 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â inline approval card.
  *
  * Renders an `ApprovalPayload` (see `lib/types.ts`) in the chat
  * thread when an `approval_required` SSE event lands.  Visual
@@ -9,11 +9,11 @@
  *
  * Lifecycle
  * ---------
- * * `pending` — both Approve / Deny buttons enabled; countdown
+ * * `pending` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â both Approve / Deny buttons enabled; countdown
  *   shows remaining seconds.
- * * `in-flight` (Approve or Deny clicked) — buttons disabled,
+ * * `in-flight` (Approve or Deny clicked) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â buttons disabled,
  *   pill says "submitting".
- * * `approved` / `denied` / `timeout` — terminal; pill shows
+ * * `approved` / `denied` / `timeout` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â terminal; pill shows
  *   final state.
  *
  * Accessibility
@@ -39,10 +39,10 @@ export interface ApprovalPromptProps {
 
 
 const STATUS_TONE: Record<ApprovalPayload["status"], string> = {
-  pending: "text-text-secondary",
+  pending: "text-text-body",
   approved: "text-status-success",
   denied: "text-status-error",
-  timeout: "text-text-tertiary",
+  timeout: "text-text-subtle",
   error: "text-status-error",
 };
 
@@ -141,7 +141,7 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
     const cat = (props.payload.category || "unclassified").toLowerCase();
     const key = `approval.category.${cat}`;
     const translated = t(key);
-    // `t()` returns the key itself when missing — surface raw cat in
+    // `t()` returns the key itself when missing ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â surface raw cat in
     // that case so we don't show "approval.category.foo".
     return translated === key ? cat : translated;
   });
@@ -165,23 +165,23 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
             aria-hidden="true"
           >
             {status() === "approved"
-              ? "✓"
+              ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“"
               : status() === "denied"
-                ? "✗"
+                ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€"
                 : status() === "timeout"
-                  ? "⏱"
+                  ? "ÃƒÂ¢Ã‚ÂÃ‚Â±"
                   : status() === "error"
                     ? "!"
                     : "?"}
           </span>
           <div class="flex min-w-0 flex-col gap-0.5">
-            <strong class="truncate text-text-primary">
+            <strong class="truncate text-text-display">
               {t("approval.title")}
             </strong>
-            <code class="truncate font-mono text-[0.7rem] text-text-secondary">
+            <code class="truncate font-mono text-[0.7rem] text-text-body">
               {props.payload.tool_name}
               <Show when={props.payload.actor_role}>
-                <span class="ml-1 text-text-tertiary">
+                <span class="ml-1 text-text-subtle">
                   ({props.payload.actor_role})
                 </span>
               </Show>
@@ -196,7 +196,7 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
           </span>
           <Show when={!isTerminal()}>
             <span
-              class={`text-[0.65rem] ${remaining() <= 10 ? "text-status-warning" : "text-text-tertiary"}`}
+              class={`text-[0.65rem] ${remaining() <= 10 ? "text-status-warning" : "text-text-subtle"}`}
             >
               {t("approval.timeout_warning", { seconds: String(remaining()) })}
             </span>
@@ -204,7 +204,7 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
         </div>
       </header>
 
-      <p class="px-3 pb-1 text-[0.8rem] text-text-secondary">
+      <p class="px-3 pb-1 text-[0.8rem] text-text-body">
         {t("approval.subtitle", {
           category: categoryLabel(),
           tool: props.payload.tool_name,
@@ -218,10 +218,10 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
         }
       >
         <details class="border-t border-border-subtle">
-          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-tertiary hover:text-text-secondary">
+          <summary class="cursor-pointer px-3 py-1.5 text-[0.7rem] text-text-subtle hover:text-text-body">
             {t("approval.arguments")}
           </summary>
-          <pre class="max-h-40 overflow-auto px-3 pb-2 font-mono text-[0.7rem] text-text-secondary">
+          <pre class="max-h-40 overflow-auto px-3 pb-2 font-mono text-[0.7rem] text-text-body">
             {prettyJson(props.payload.arguments)}
           </pre>
         </details>
@@ -237,7 +237,7 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
         <div class="flex items-center justify-end gap-2 border-t border-border-subtle px-3 py-2">
           <button
             type="button"
-            class="amor-touch rounded border border-border-subtle bg-bg-base px-3 py-1 text-xs text-text-secondary hover:bg-bg-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-mode-accent disabled:cursor-not-allowed disabled:opacity-50"
+            class="amor-touch rounded border border-border-subtle bg-bg-base px-3 py-1 text-xs text-text-body hover:bg-bg-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-mode-accent disabled:cursor-not-allowed disabled:opacity-50"
             disabled={buttonsDisabled()}
             onClick={() => void submit(false)}
             data-amor-deny=""

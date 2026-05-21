@@ -21,7 +21,7 @@ export interface ModalProps {
 }
 
 /**
- * Lightweight modal — backdrop + centred card + accessible focus
+ * Lightweight modal ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â backdrop + centred card + accessible focus
  * trap.  Replaces ``window.confirm`` / ``window.prompt`` so we don't
  * surface ugly browser-native dialogs ("localhost:8000 says").
  *
@@ -58,7 +58,7 @@ export const Modal: Component<ModalProps> = (props) => {
       >
         <div
           class={[
-            "w-full overflow-hidden rounded-lg border border-border-default",
+            "w-full overflow-hidden rounded-lg border border-border-strong-v25",
             "bg-bg-elevated shadow-xl",
             props.size === "md" ? "max-w-md" : "max-w-sm",
           ].join(" ")}
@@ -68,7 +68,7 @@ export const Modal: Component<ModalProps> = (props) => {
               {props.title}
             </h2>
             <Show when={props.description}>
-              <p id={descId} class="text-sm text-text-secondary">
+              <p id={descId} class="text-sm text-text-body">
                 {props.description}
               </p>
             </Show>
@@ -76,14 +76,14 @@ export const Modal: Component<ModalProps> = (props) => {
           <Show when={props.children}>
             <div class="px-5 pb-2 pt-3">{props.children}</div>
           </Show>
-          <div class="flex justify-end gap-2 border-t border-border-subtle bg-bg-secondary px-4 py-3">
+          <div class="flex justify-end gap-2 border-t border-border-subtle bg-bg-elevated-v25 px-4 py-3">
             <Show
               when={props.footer}
               fallback={
                 <button
                   type="button"
                   onClick={props.onClose}
-                  class="inline-flex h-8 items-center rounded-md border border-border-default bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
+                  class="inline-flex h-8 items-center rounded-md border border-border-strong-v25 bg-bg-elevated px-3 text-sm hover:bg-bg-hover"
                 >
                   Close
                 </button>

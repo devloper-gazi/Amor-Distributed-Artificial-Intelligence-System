@@ -1,18 +1,18 @@
 /**
- * Cycle C Sprint 6 Day 4 — admin Training UI.
+ * Cycle C Sprint 6 Day 4 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â admin Training UI.
  *
  * Surfaces the preference-pair pool + training-run history + the
  * promote button so an operator can drive the manual gate without
  * dropping into a shell.
  *
  * Sections (top-to-bottom):
- *   1. Pool stats — total / untrained / opt-in counts + a progress
+ *   1. Pool stats ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â total / untrained / opt-in counts + a progress
  *      bar against the 200-pair training threshold.
- *   2. Sample list — last 50 pairs (mode + truncated text + opt-in
+ *   2. Sample list ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â last 50 pairs (mode + truncated text + opt-in
  *      flag); raw text only shows when ``opt_in_raw`` is true.
- *   3. Run button — disabled until 200 untrained pairs accumulate
+ *   3. Run button ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â disabled until 200 untrained pairs accumulate
  *      (matching the API's 409 gate).
- *   4. Run history — every training_runs row, with the eval delta
+ *   4. Run history ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â every training_runs row, with the eval delta
  *      summary + a Promote button when ``promote_ok`` is true.
  *
  * The actual GPU training happens out-of-band (operator runs
@@ -184,7 +184,7 @@ export const Training: Component = () => {
           <Show
             when={stats.data}
             fallback={
-              <div class="flex h-32 items-center justify-center text-sm text-text-tertiary">
+              <div class="flex h-32 items-center justify-center text-sm text-text-subtle">
                 <Spinner size={18} />
               </div>
             }
@@ -201,7 +201,7 @@ export const Training: Component = () => {
                   >
                     {t("training.pool.heading")}
                   </h2>
-                  <span class="text-xs text-text-tertiary tabular-nums">
+                  <span class="text-xs text-text-subtle tabular-nums">
                     {t("training.pool.untrained_of", {
                       n: s().untrained,
                       total: s().train_threshold,
@@ -209,7 +209,7 @@ export const Training: Component = () => {
                   </span>
                 </div>
                 <div
-                  class="h-2 w-full overflow-hidden rounded-full bg-bg-tertiary"
+                  class="h-2 w-full overflow-hidden rounded-full bg-bg-elevated-v25"
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={s().train_threshold}
@@ -293,14 +293,14 @@ export const Training: Component = () => {
               >
                 {t("training.samples.heading")}
               </h2>
-              <span class="text-xs text-text-tertiary">
+              <span class="text-xs text-text-subtle">
                 {t("training.samples.count", { n: pairs.data?.count ?? 0 })}
               </span>
             </div>
             <Show
               when={(pairs.data?.items.length ?? 0) > 0}
               fallback={
-                <p class="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-xs text-text-tertiary">
+                <p class="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-xs text-text-subtle">
                   {t("training.samples.empty")}
                 </p>
               }
@@ -314,34 +314,34 @@ export const Training: Component = () => {
                         <Show when={p.opt_in_raw}>
                           <Badge>{t("training.samples.opt_in_badge")}</Badge>
                         </Show>
-                        <span class="text-text-tertiary tabular-nums">
+                        <span class="text-text-subtle tabular-nums">
                           {new Date(p.created_at).toLocaleString()}
                         </span>
-                        <code class="ml-auto truncate text-[0.65rem] text-text-tertiary">
-                          {p.code_hash.slice(0, 12)}…
+                        <code class="ml-auto truncate text-[0.65rem] text-text-subtle">
+                          {p.code_hash.slice(0, 12)}ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦
                         </code>
                       </div>
                       <Show
                         when={p.opt_in_raw && (p.prompt || p.chosen)}
                         fallback={
-                          <p class="text-text-tertiary italic">
+                          <p class="text-text-subtle italic">
                             {t("training.samples.hash_only")}
                           </p>
                         }
                       >
-                        <p class="line-clamp-2 text-text-secondary">
-                          <span class="text-text-tertiary">{t("training.samples.prompt")}</span>
+                        <p class="line-clamp-2 text-text-body">
+                          <span class="text-text-subtle">{t("training.samples.prompt")}</span>
                           {p.prompt}
                         </p>
                         <Show when={p.chosen}>
-                          <p class="mt-1 line-clamp-2 text-text-secondary">
-                            <span class="text-text-tertiary">{t("training.samples.chosen")}</span>
+                          <p class="mt-1 line-clamp-2 text-text-body">
+                            <span class="text-text-subtle">{t("training.samples.chosen")}</span>
                             {p.chosen}
                           </p>
                         </Show>
                         <Show when={p.rejected}>
-                          <p class="mt-1 line-clamp-2 text-text-secondary">
-                            <span class="text-text-tertiary">{t("training.samples.rejected")}</span>
+                          <p class="mt-1 line-clamp-2 text-text-body">
+                            <span class="text-text-subtle">{t("training.samples.rejected")}</span>
                             {p.rejected}
                           </p>
                         </Show>
@@ -364,14 +364,14 @@ export const Training: Component = () => {
               >
                 {t("training.runs.heading")}
               </h2>
-              <span class="text-xs text-text-tertiary">
+              <span class="text-xs text-text-subtle">
                 {t("training.runs.count", { n: runs.data?.count ?? 0 })}
               </span>
             </div>
             <Show
               when={(runs.data?.items.length ?? 0) > 0}
               fallback={
-                <p class="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-xs text-text-tertiary">
+                <p class="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-xs text-text-subtle">
                   {t("training.runs.empty")}
                 </p>
               }
@@ -383,14 +383,14 @@ export const Training: Component = () => {
                       <div class="flex items-baseline justify-between gap-2">
                         <div class="flex items-baseline gap-2">
                           <Badge>{run.status}</Badge>
-                          <code class="text-text-tertiary">
+                          <code class="text-text-subtle">
                             #{run.id.slice(0, 8)}
                           </code>
-                          <span class="text-text-tertiary">
+                          <span class="text-text-subtle">
                             {new Date(run.started_at).toLocaleString()}
                           </span>
                         </div>
-                        <span class="text-text-tertiary tabular-nums">
+                        <span class="text-text-subtle tabular-nums">
                           {t("training.runs.pair_count", { n: run.pair_count })}
                         </span>
                       </div>
@@ -402,7 +402,7 @@ export const Training: Component = () => {
                               value={
                                 s().mean_judge_delta != null
                                   ? Number(s().mean_judge_delta).toFixed(2)
-                                  : "—"
+                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
                               }
                             />
                             <Stat
@@ -410,7 +410,7 @@ export const Training: Component = () => {
                               value={
                                 s().worst_judge_delta != null
                                   ? Number(s().worst_judge_delta).toFixed(2)
-                                  : "—"
+                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
                               }
                             />
                             <Stat
@@ -418,7 +418,7 @@ export const Training: Component = () => {
                               value={
                                 s().p50_latency_pct != null
                                   ? `${Number(s().p50_latency_pct).toFixed(1)}%`
-                                  : "—"
+                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
                               }
                             />
                             <Stat
@@ -433,7 +433,7 @@ export const Training: Component = () => {
                         )}
                       </Show>
                       <Show when={run.note}>
-                        <p class="text-text-tertiary">{run.note}</p>
+                        <p class="text-text-subtle">{run.note}</p>
                       </Show>
                       <Show when={run.status === "evaluated"}>
                         <Button
@@ -471,11 +471,11 @@ const Stat: Component<{
   label: string;
   value: string | number;
 }> = (props) => (
-  <div class="rounded border border-border-subtle bg-bg-secondary px-2 py-1">
-    <span class="block text-[0.6rem] uppercase tracking-wide text-text-tertiary">
+  <div class="rounded border border-border-subtle bg-bg-elevated-v25 px-2 py-1">
+    <span class="block text-[0.6rem] uppercase tracking-wide text-text-subtle">
       {props.label}
     </span>
-    <span class="block font-mono text-sm text-text-primary">
+    <span class="block font-mono text-sm text-text-display">
       {props.value}
     </span>
   </div>

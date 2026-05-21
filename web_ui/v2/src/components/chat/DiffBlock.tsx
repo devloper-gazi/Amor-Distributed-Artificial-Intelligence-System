@@ -7,11 +7,11 @@ import {
 
 interface DiffBlockProps {
   /** Unified-diff string OR a SEARCH/REPLACE block.  We auto-detect
-   *  and convert SEARCH/REPLACE → unified-diff for diff2html. */
+   *  and convert SEARCH/REPLACE Ã¢â€ â€™ unified-diff for diff2html. */
   diff: string;
   /** Filename hint for the diff header. */
   filename?: string;
-  /** Side-by-side ≥ 768 px, line-by-line below.  Defaults to
+  /** Side-by-side Ã¢â€°Â¥ 768 px, line-by-line below.  Defaults to
    *  side-by-side; the consumer can force one mode if needed. */
   format?: "side-by-side" | "line-by-line";
 }
@@ -23,7 +23,7 @@ interface DiffBlockProps {
  *
  * SEARCH/REPLACE blocks (Aider / Cline / OpenHands convention used
  * by AMOR's diff-mode debugger) get translated into a unified diff
- * before rendering — diff2html doesn't natively understand the
+ * before rendering Ã¢â‚¬â€ diff2html doesn't natively understand the
  * ``<<<<<<< SEARCH / ======= / >>>>>>> REPLACE`` shape.
  */
 export const DiffBlock: Component<DiffBlockProps> = (props) => {
@@ -57,13 +57,13 @@ export const DiffBlock: Component<DiffBlockProps> = (props) => {
           <Show
             when={!error()}
             fallback={
-              <pre class="overflow-x-auto bg-bg-tertiary p-3 text-xs">
+              <pre class="overflow-x-auto bg-bg-elevated-v25 p-3 text-xs">
                 {props.diff}
               </pre>
             }
           >
-            <p class="px-3 py-2 text-xs text-text-tertiary">
-              Loading diff viewer…
+            <p class="px-3 py-2 text-xs text-text-subtle">
+              Loading diff viewerÃ¢â‚¬Â¦
             </p>
           </Show>
         }
@@ -98,7 +98,7 @@ export function toUnifiedDiff(input: string, filename: string): string {
   }
 
   if (blocks.length === 0) {
-    // Best-effort fallback — render input as a single "after" hunk.
+    // Best-effort fallback Ã¢â‚¬â€ render input as a single "after" hunk.
     const lines = input.split("\n");
     const header = `--- a/${filename}\n+++ b/${filename}\n@@ -1,1 +1,${lines.length} @@`;
     return `${header}\n-\n${lines.map((l) => "+" + l).join("\n")}`;

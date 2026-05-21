@@ -57,7 +57,7 @@ interface LLMState {
 }
 
 const formatMs = (ms: number | null | undefined): string => {
-  if (ms == null) return "—";
+  if (ms == null) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
   if (ms < 1000) return `${ms.toFixed(0)} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 };
@@ -133,7 +133,7 @@ export const LLMDashboard: Component = () => {
         <Show
           when={!q.isLoading && q.data}
           fallback={
-            <div class="flex h-64 items-center justify-center text-text-tertiary">
+            <div class="flex h-64 items-center justify-center text-text-subtle">
               <Spinner size={20} />
             </div>
           }
@@ -151,7 +151,7 @@ export const LLMDashboard: Component = () => {
                 />
                 <SummaryCell
                   label={t("llm.card.endpoint")}
-                  value={state().base_url || "—"}
+                  value={state().base_url || "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
                   hint={state().healthy ? t("llm.card.endpoint_sub") : t("llm.card.endpoint_unreachable")}
                 />
                 <SummaryCell
@@ -186,7 +186,7 @@ export const LLMDashboard: Component = () => {
                   label={t("llm.card.output_tokens")}
                   value={
                     state().completions_recent.completion_tokens_p50 == null
-                      ? "—"
+                      ? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
                       : (state().completions_recent.completion_tokens_p50 as number).toFixed(0)
                   }
                   hint={t("llm.card.output_tokens_sub")}
@@ -197,27 +197,27 @@ export const LLMDashboard: Component = () => {
               <Show when={state().probe_error}>
                 <div class="mb-4 rounded-md border border-border-subtle bg-bg-elevated p-3 text-sm">
                   <span class="text-status-failed">Probe error:</span>{" "}
-                  <span class="text-text-secondary">
+                  <span class="text-text-body">
                     {state().probe_error}
                   </span>
                 </div>
               </Show>
 
               {/* Models table */}
-              <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-tertiary">
+              <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-text-subtle">
                 {t("llm.section.models")}
               </h2>
               <Show
                 when={state().declared_models.length > 0}
                 fallback={
-                  <p class="rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm text-text-tertiary">
+                  <p class="rounded-md border border-border-subtle bg-bg-elevated p-4 text-sm text-text-subtle">
                     {t("common.no_data")}
                   </p>
                 }
               >
                 <div class="overflow-x-auto rounded-lg border border-border-subtle">
                   <table class="min-w-full text-sm">
-                    <thead class="bg-bg-secondary text-text-tertiary">
+                    <thead class="bg-bg-elevated-v25 text-text-subtle">
                       <tr>
                         <th class="px-3 py-2 text-left text-[0.7rem] font-medium uppercase tracking-wider">
                           {t("llm.col.model_id")}
@@ -236,16 +236,16 @@ export const LLMDashboard: Component = () => {
                     <tbody>
                       <For each={state().declared_models}>
                         {(m) => (
-                          <tr class="border-b border-border-subtle hover:bg-bg-secondary">
+                          <tr class="border-b border-border-subtle hover:bg-bg-elevated-v25">
                             <td class="px-3 py-2 font-mono text-xs">
-                              {m.id ?? "—"}
+                              {m.id ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
                             </td>
-                            <td class="px-3 py-2">{m.name ?? "—"}</td>
+                            <td class="px-3 py-2">{m.name ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}</td>
                             <td class="px-3 py-2 text-right">
                               <Show
                                 when={isResident(m.id)}
                                 fallback={
-                                  <span class="text-text-tertiary">{t("common.status.on_demand")}</span>
+                                  <span class="text-text-subtle">{t("common.status.on_demand")}</span>
                                 }
                               >
                                 <Badge>{t("llm.card.resident").toLowerCase()}</Badge>
@@ -284,7 +284,7 @@ export const LLMDashboard: Component = () => {
 
               {/* Recent swaps */}
               <Show when={state().swap_events_recent.length > 0}>
-                <h2 class="mb-3 mt-6 text-sm font-medium uppercase tracking-wider text-text-tertiary">
+                <h2 class="mb-3 mt-6 text-sm font-medium uppercase tracking-wider text-text-subtle">
                   Recent swap events
                 </h2>
                 <ul class="space-y-1.5">
@@ -292,10 +292,10 @@ export const LLMDashboard: Component = () => {
                     {(ev) => (
                       <li class="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-xs">
                         <span class="font-mono">
-                          {ev.from ? `${ev.from} → ` : "→ "}
-                          <span class="text-text-primary">{ev.to}</span>
+                          {ev.from ? `${ev.from} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ` : "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ "}
+                          <span class="text-text-display">{ev.to}</span>
                         </span>
-                        <span class="text-text-tertiary">
+                        <span class="text-text-subtle">
                           cold {formatMs(ev.cold_load_ms)}
                           <span class="ml-2 tabular-nums">
                             {formatTime(ev.ts)}
@@ -307,7 +307,7 @@ export const LLMDashboard: Component = () => {
                 </ul>
               </Show>
 
-              <p class="mt-4 text-xs text-text-tertiary">
+              <p class="mt-4 text-xs text-text-subtle">
                 {t("common.auto_refresh", { seconds: 15 })}.{" "}
                 {t("common.source")}:{" "}
                 <code class="font-mono">/api/admin/llm</code>.
@@ -326,14 +326,14 @@ const SummaryCell: Component<{
   hint?: string;
 }> = (props) => (
   <div class="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
-    <p class="text-[0.65rem] uppercase tracking-wider text-text-tertiary">
+    <p class="text-[0.65rem] uppercase tracking-wider text-text-subtle">
       {props.label}
     </p>
-    <p class="mt-1 truncate font-mono text-sm text-text-primary">
+    <p class="mt-1 truncate font-mono text-sm text-text-display">
       {props.value}
     </p>
     <Show when={props.hint}>
-      <p class="mt-0.5 truncate text-[0.65rem] text-text-tertiary">
+      <p class="mt-0.5 truncate text-[0.65rem] text-text-subtle">
         {props.hint}
       </p>
     </Show>

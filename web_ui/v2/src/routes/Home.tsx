@@ -6,17 +6,17 @@ import { Badge } from "../components/ui";
 import { t, modeLabel, modeSubtitle } from "../i18n";
 
 const GLYPH: Record<string, string> = {
-  compass: "◎",
-  hammer: "▲",
-  brain: "◊",
-  "users-round": "❖",
-  "shield-half": "◐",
-  activity: "≈",
+  compass: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€¦Ã‚Â½",
+  hammer: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â²",
+  brain: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€¦Ã‚Â ",
+  "users-round": "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“",
+  "shield-half": "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â",
+  activity: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â ",
 };
 
 /**
  * Welcome / mode picker.  Renders the 6 modes as cards; each card
- * gets the mode accent colour as a top rule.  Cycle D — fully
+ * gets the mode accent colour as a top rule.  Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â fully
  * localised via the i18n primitive (no more hardcoded English).
  */
 export const Home: Component = () => {
@@ -50,7 +50,7 @@ export const Home: Component = () => {
                     aria-hidden="true"
                     style={{ color: "var(--mode-accent)" }}
                   >
-                    {GLYPH[mode.glyph] ?? "•"}
+                    {GLYPH[mode.glyph] ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢"}
                   </span>
                   {mode.wired ? null : (
                     <Badge size="sm">{t("home.soon")}</Badge>
@@ -59,8 +59,8 @@ export const Home: Component = () => {
                 <h2 class="text-base font-semibold tracking-tight">
                   {modeLabel(mode)}
                 </h2>
-                <p class="text-xs text-text-secondary">{modeSubtitle(mode)}</p>
-                <span class="mt-2 text-xs text-text-tertiary group-hover:text-text-secondary">
+                <p class="text-xs text-text-body">{modeSubtitle(mode)}</p>
+                <span class="mt-2 text-xs text-text-subtle group-hover:text-text-body">
                   {t("home.open")}
                 </span>
               </A>
@@ -68,17 +68,17 @@ export const Home: Component = () => {
           </For>
         </div>
 
-        <div class="mx-auto mt-10 max-w-4xl rounded-lg border border-border-subtle bg-bg-secondary p-5 text-sm">
+        <div class="mx-auto mt-10 max-w-4xl rounded-lg border border-border-subtle bg-bg-elevated-v25 p-5 text-sm">
           <p class="font-medium">{t("home.tip.title")}</p>
-          <p class="mt-1 text-text-secondary">
+          <p class="mt-1 text-text-body">
             {t("home.tip.body", {
-              cmdK: "⌘K",
+              cmdK: "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK",
               ctrlK: "Ctrl K",
             })
-              .split(/(⌘K|Ctrl K)/)
+              .split(/(ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK|Ctrl K)/)
               .map((part) =>
-                part === "⌘K" || part === "Ctrl K" ? (
-                  <kbd class="rounded border border-border-subtle bg-bg-tertiary px-1.5 py-0.5 font-mono text-xs">
+                part === "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK" || part === "Ctrl K" ? (
+                  <kbd class="rounded border border-border-subtle bg-bg-elevated-v25 px-1.5 py-0.5 font-mono text-xs">
                     {part}
                   </kbd>
                 ) : (

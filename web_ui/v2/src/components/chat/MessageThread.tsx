@@ -2,7 +2,7 @@ import { type Component, For, Show, createEffect } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { MessageBubble } from "./MessageBubble";
-// Cycle UI v2.5 Phase 2 — Build-engine tool-call card.  Replaces the
+// Cycle UI v2.5 Phase 2 â€” Build-engine tool-call card.  Replaces the
 // previous behaviour of UNIFIED_REDUCER appending markdown fences
 // for code_ready/test_ready/execution_result/review_ready events.
 import { ToolCallCardBuild } from "./ToolCallCardBuild";
@@ -13,7 +13,7 @@ interface MessageThreadProps {
   /** Optional message-action handlers forwarded to every bubble.
    *  Day 3 introduces the hover-actions bar (copy / edit /
    *  regenerate / branch / rate); each handler is independent and
-   *  any can be omitted — the bubble omits the corresponding button. */
+   *  any can be omitted â€” the bubble omits the corresponding button. */
   onEdit?: (turn: ChatTurn) => void;
   onRegenerate?: (turn: ChatTurn) => void;
   onBranch?: (turn: ChatTurn) => void;
@@ -22,13 +22,13 @@ interface MessageThreadProps {
 
 /**
  * Scrollable virtualised-friendly thread.  For PR-4 we use a plain
- * list — turn counts in a single session top out around 50 turns
+ * list â€” turn counts in a single session top out around 50 turns
  * which is fine without virtualisation.  When a session blows past
  * a few hundred turns we'll swap in @tanstack/solid-virtual.
  *
  * Auto-scrolls to the bottom on new turns UNLESS the user has
  * scrolled up.  ``createEffect`` with a ``turns.length`` dependency
- * is enough — Solid's fine-grained reactivity skips work when the
+ * is enough â€” Solid's fine-grained reactivity skips work when the
  * length doesn't change.
  */
 export const MessageThread: Component<MessageThreadProps> = (props) => {
@@ -67,7 +67,7 @@ export const MessageThread: Component<MessageThreadProps> = (props) => {
         fallback={
           <div class="flex h-full items-center justify-center px-8 py-12">
             {props.emptyState ?? (
-              <div class="max-w-md text-center text-sm text-text-tertiary">
+              <div class="max-w-md text-center text-sm text-text-subtle">
                 No messages yet.  Type below to start.
               </div>
             )}
@@ -76,14 +76,14 @@ export const MessageThread: Component<MessageThreadProps> = (props) => {
       >
         <For each={props.turns}>
           {(turn) => {
-            // Cycle UI v2.5 Phase 2 — route to one of three renderers
+            // Cycle UI v2.5 Phase 2 â€” route to one of three renderers
             // depending on the turn's role + payload:
-            //   1. role=="approval" + approval payload → ApprovalPrompt
+            //   1. role=="approval" + approval payload â†’ ApprovalPrompt
             //      (Cycle F Sprint 5 inline approval card; manages own
             //      resolution via POST /api/approval/{request_id}).
-            //   2. role=="tool" + buildCard → ToolCallCardBuild
+            //   2. role=="tool" + buildCard â†’ ToolCallCardBuild
             //      (Build pipeline structured tool-call card).
-            //   3. everything else → MessageBubble (default).
+            //   3. everything else â†’ MessageBubble (default).
             if (turn.role === "approval" && turn.approval) {
               return <ApprovalPrompt payload={turn.approval} />;
             }

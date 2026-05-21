@@ -30,7 +30,7 @@ interface CommandPaletteProps {
 }
 
 /**
- * Hand-rolled Cmd-K command palette — no external cmdk dep.
+ * Hand-rolled Cmd-K command palette ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â no external cmdk dep.
  *
  * Categories: Mode (mode switcher), System (diagnostics, settings,
  * legacy UI, showcase), Theme (light/dark/system), Account (logout).
@@ -59,7 +59,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   };
 
   const items = createMemo<PaletteItem[]>(() => {
-    // ``t()`` reads the locale signal — invoking it inside this memo
+    // ``t()`` reads the locale signal ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â invoking it inside this memo
     // means the palette re-renders on every locale flip without any
     // per-item bookkeeping.
     const cat = {
@@ -187,7 +187,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
     const q = query().trim().toLowerCase();
     if (!q) return items();
     // Tokenize on whitespace + each token must hit somewhere.  Then
-    // SCORE so label-matches outrank hint-only matches — the user
+    // SCORE so label-matches outrank hint-only matches ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the user
     // typing "theme system" wants the "Theme: System" command, not
     // the Settings page (whose hint happens to contain "theme,
     // account").
@@ -263,7 +263,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
     onOpenChange(props.open);
   });
 
-  // Re-focus input every time we transition closed → open.  Solid's
+  // Re-focus input every time we transition closed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ open.  Solid's
   // signals make this a one-line effect via a memo dependency.
   let lastOpen = false;
   createMemo(() => {
@@ -288,7 +288,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
         }}
       >
         <div
-          class="w-full max-w-xl overflow-hidden rounded-lg border border-border-default bg-bg-elevated shadow-xl"
+          class="w-full max-w-xl overflow-hidden rounded-lg border border-border-strong-v25 bg-bg-elevated shadow-xl"
           onKeyDown={onKeyDown}
         >
           <input
@@ -306,7 +306,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
                 ? `${listboxId}-${filtered()[selected()]!.id}`
                 : undefined
             }
-            class="block w-full bg-transparent px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+            class="block w-full bg-transparent px-4 py-3 text-sm text-text-display placeholder:text-text-subtle outline-none"
           />
           <div
             id={listboxId}
@@ -316,7 +316,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
             <Show
               when={filtered().length > 0}
               fallback={
-                <p class="px-4 py-6 text-center text-sm text-text-tertiary">
+                <p class="px-4 py-6 text-center text-sm text-text-subtle">
                   {t("palette.empty")}
                 </p>
               }
@@ -334,21 +334,21 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
                       "flex w-full items-center justify-between gap-3",
                       "px-4 py-2.5 text-left text-sm",
                       i() === selected()
-                        ? "bg-bg-hover text-text-primary"
-                        : "text-text-secondary",
+                        ? "bg-bg-hover text-text-display"
+                        : "text-text-body",
                     ].join(" ")}
                   >
                     <span class="flex min-w-0 flex-col">
-                      <span class="truncate text-text-primary">
+                      <span class="truncate text-text-display">
                         {item.label}
                       </span>
                       <Show when={item.hint}>
-                        <span class="truncate text-xs text-text-tertiary">
+                        <span class="truncate text-xs text-text-subtle">
                           {item.hint}
                         </span>
                       </Show>
                     </span>
-                    <span class="text-[0.65rem] uppercase tracking-wide text-text-tertiary">
+                    <span class="text-[0.65rem] uppercase tracking-wide text-text-subtle">
                       {item.category}
                     </span>
                   </button>
@@ -356,7 +356,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
               </For>
             </Show>
           </div>
-          <div class="flex items-center justify-between gap-2 border-t border-border-subtle bg-bg-secondary px-4 py-2 text-[0.7rem] text-text-tertiary">
+          <div class="flex items-center justify-between gap-2 border-t border-border-subtle bg-bg-elevated-v25 px-4 py-2 text-[0.7rem] text-text-subtle">
             <span class="flex items-center gap-2">
               <Kbd>ArrowUp</Kbd>
               <Kbd>ArrowDown</Kbd>

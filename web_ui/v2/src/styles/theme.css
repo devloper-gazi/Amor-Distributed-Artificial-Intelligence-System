@@ -1,13 +1,13 @@
 @import "tailwindcss";
-/* Cycle UI v2.5 — pure-CSS motion language (keyframes + transitions + reduced-motion). */
+/* Cycle UI v2.5 â€” pure-CSS motion language (keyframes + transitions + reduced-motion). */
 @import "./motion.css";
 
 /* ============================================================================
- * AMOR v2 — design tokens, ported from web_ui/static/css/tokens.css.
+ * AMOR v2 â€” design tokens, ported from web_ui/static/css/tokens.css.
  *
  * Tailwind v4 `@theme` block: every variable here both becomes a CSS
  * custom property AND generates a utility class.  Defining
- * `--color-bg-primary` makes `bg-bg-primary`, `text-bg-primary` etc.
+ * `--color-bg-primary` makes `bg-bg-canvas`, `text-bg-primary` etc.
  * available, which lets us delete most ad-hoc CSS.
  *
  * Theme switching is done by toggling `[data-theme="dark|light"]` on
@@ -20,24 +20,23 @@
  * =========================================================================== */
 
 @theme {
-  /* ── Base palette (light) ───────────────────────────────────────────── */
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #fafafa;
-  --color-bg-tertiary: #f5f5f5;
+  /* Cycle UI v2.5 — bridge-period tokens removed (Phase 3 closing
+     commit).  Legacy --color-bg-primary / --color-text-primary /
+     --color-border-default were deleted after the codemod sweep
+     confirmed zero remaining references in web_ui/v2/src/.
+     Kept for backwards compatibility (consumed by Tailwind v4's
+     bg-bg-elevated + bg-bg-hover utilities still referenced by
+     legacy /home / /build / etc. routes during rollback window): */
   --color-bg-elevated: #ffffff;
   --color-bg-hover: #f0f0f0;
 
-  --color-text-primary: #000000;
-  --color-text-secondary: #666666;
-  --color-text-tertiary: #999999;
   --color-text-inverse: #ffffff;
   --color-text-disabled: #cccccc;
 
   --color-border-subtle: #e5e5e5;
-  --color-border-default: #d4d4d4;
   --color-border-strong: #a3a3a3;
 
-  /* Status pills — 4 states only.  Saturation tuned for AA contrast. */
+  /* Status pills â€” 4 states only.  Saturation tuned for AA contrast. */
   --color-status-healthy: oklch(0.66 0.17 145);  /* emerald */
   --color-status-warming: oklch(0.74 0.16 75);   /* amber */
   --color-status-warning: oklch(0.74 0.16 75);
@@ -52,15 +51,15 @@
   --color-mode-consortium: oklch(0.62 0.16 50);   /* users-round */
   --color-mode-sentinel: oklch(0.55 0.18 25);     /* shield-half */
   --color-mode-system: oklch(0.65 0.02 250);      /* activity */
-  /* Cycle UI v2.5 (2026-05-21) — QuickCode is the auto-classifier's
+  /* Cycle UI v2.5 (2026-05-21) â€” QuickCode is the auto-classifier's
      7th class (Decision 2 in the parent plan).  Hue 175 sits between
-     Build's 145 and Research's 240 — visually "Build family, faster
+     Build's 145 and Research's 240 â€” visually "Build family, faster
      variant".  Chroma 0.13 slightly desaturated vs Build's 0.17 to
-     signal "lighter weight" — matches the Decision 2 brief: "teal
+     signal "lighter weight" â€” matches the Decision 2 brief: "teal
      close to but distinct from Build's aqua". */
   --color-mode-quickcode: oklch(0.62 0.13 175);   /* zap */
 
-  /* ── Cycle UI v2.5 — NEW OKLch token system (bridge period) ──
+  /* â”€â”€ Cycle UI v2.5 â€” NEW OKLch token system (bridge period) â”€â”€
      These names ship ALONGSIDE the legacy --color-bg-* / --color-text-*
      / --color-border-* above.  Phases 2-3 codemod TSX files from the
      legacy names to these new ones one batch at a time.  Phase 3
@@ -68,9 +67,9 @@
      confirms zero remaining references.
 
      OKLch lightness chosen for WCAG AA on the canvas:
-       text-body  (#2b2b2b ≈ L 0.22) on #fff = 14.3:1 ✅ AAA
-       text-subtle(#595959 ≈ L 0.42) on #fff =  7.0:1 ✅ AAA
-       text-mute  (#7a7a7a ≈ L 0.55) on #fff =  4.6:1 ✅ AA (sınırda) */
+       text-body  (#2b2b2b â‰ˆ L 0.22) on #fff = 14.3:1 âœ… AAA
+       text-subtle(#595959 â‰ˆ L 0.42) on #fff =  7.0:1 âœ… AAA
+       text-mute  (#7a7a7a â‰ˆ L 0.55) on #fff =  4.6:1 âœ… AA (sÄ±nÄ±rda) */
   --color-bg-canvas:     oklch(1     0     0);          /* pure white */
   --color-bg-elevated-v25: oklch(0.985 0   0);          /* ~fafafa */
   --color-bg-overlay:    oklch(0.97  0     0 / 0.92);   /* modal/sheet bg */
@@ -85,7 +84,7 @@
 
   --color-focus-ring:    oklch(0.55 0.20 255);          /* vivid blue */
 
-  /* ── Spacing — 8-pt grid ────────────────────────────────────────────── */
+  /* â”€â”€ Spacing â€” 8-pt grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --spacing-1: 0.25rem;   /* 4 */
   --spacing-2: 0.5rem;    /* 8 */
   --spacing-3: 0.75rem;   /* 12 */
@@ -96,13 +95,13 @@
   --spacing-8: 3rem;      /* 48 */
   --spacing-9: 4rem;      /* 64 */
 
-  /* ── Radii ──────────────────────────────────────────────────────────── */
+  /* â”€â”€ Radii â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --radius-sm: 0.375rem;  /* 6 */
-  --radius-md: 0.75rem;   /* 12 — current default in v1 */
+  --radius-md: 0.75rem;   /* 12 â€” current default in v1 */
   --radius-lg: 1rem;      /* 16 */
   --radius-full: 9999px;
 
-  /* ── Typography ─────────────────────────────────────────────────────── */
+  /* â”€â”€ Typography â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
@@ -127,24 +126,24 @@
   --leading-normal: 1.5;
   --leading-relaxed: 1.6;
 
-  /* ── Shadows ─────────────────────────────────────────────────────────── */
+  /* â”€â”€ Shadows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -1px rgb(0 0 0 / 0.06);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.05);
   --shadow-xl:
     0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
 
-  /* ── Layout ─────────────────────────────────────────────────────────── */
+  /* â”€â”€ Layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --layout-topbar: 3rem;          /* 48 */
   --layout-sidebar: 15rem;        /* 240 */
   --layout-sidebar-collapsed: 3.5rem; /* 56 */
 
-  /* ── Transitions ────────────────────────────────────────────────────── */
+  /* â”€â”€ Transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --transition-fast: 100ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* ── Z-index ────────────────────────────────────────────────────────── */
+  /* â”€â”€ Z-index â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   --z-base: 0;
   --z-dropdown: 100;
   --z-sticky: 200;
@@ -154,44 +153,43 @@
   --z-toast: 600;
 }
 
-/* ────────────────────────────────────────────────────────────────────────
- * Dark mode — explicit `data-theme="dark"`.  Same variable names so
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * Dark mode â€” explicit `data-theme="dark"`.  Same variable names so
  * Tailwind utilities don't change; only the underlying values flip.
- * ────────────────────────────────────────────────────────────────────── */
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 [data-theme="dark"] {
-  --color-bg-primary: #000000;
-  --color-bg-secondary: #0a0a0a;
-  --color-bg-tertiary: #121212;
+  /* Cycle UI v2.5 Phase 3 — legacy --color-bg-primary / --color-text-
+     primary / --color-border-default removed.  Kept: --color-bg-
+     elevated + --color-bg-hover + --color-text-inverse + --color-text-
+     disabled + --color-border-subtle + --color-border-strong, all
+     still referenced by legacy /home / /build / etc. chrome during
+     the rollback window. */
   --color-bg-elevated: #1a1a1a;
   --color-bg-hover: #262626;
 
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #a3a3a3;
-  --color-text-tertiary: #666666;
   --color-text-inverse: #000000;
   --color-text-disabled: #404040;
 
   --color-border-subtle: #1f1f1f;
-  --color-border-default: #2e2e2e;
   --color-border-strong: #525252;
 
-  /* Mode accents — slightly brighter for AA on dark backgrounds. */
+  /* Mode accents â€” slightly brighter for AA on dark backgrounds. */
   --color-mode-research: oklch(0.72 0.16 240);
   --color-mode-thinking: oklch(0.72 0.14 290);
   --color-mode-build: oklch(0.70 0.17 145);
   --color-mode-consortium: oklch(0.74 0.16 50);
   --color-mode-sentinel: oklch(0.68 0.18 25);
   --color-mode-system: oklch(0.78 0.02 250);
-  /* Cycle UI v2.5 — QuickCode dark counterpart.  L 0.75 vs Build's
+  /* Cycle UI v2.5 â€” QuickCode dark counterpart.  L 0.75 vs Build's
      0.70 keeps the "lighter weight" semantic in dark mode too. */
   --color-mode-quickcode: oklch(0.75 0.11 175);
 
-  /* ── Cycle UI v2.5 — NEW OKLch token system, dark counterparts ──
+  /* â”€â”€ Cycle UI v2.5 â€” NEW OKLch token system, dark counterparts â”€â”€
      Contrast on bg-canvas (#000):
-       text-body  (#e8e8e8 ≈ L 0.92) on #000 = 17.4:1 ✅ AAA
-       text-subtle(#b0b0b0 ≈ L 0.72) on #000 =  8.0:1 ✅ AAA
-       text-mute  (#7e7e7e ≈ L 0.58) on #000 =  4.6:1 ✅ AA */
+       text-body  (#e8e8e8 â‰ˆ L 0.92) on #000 = 17.4:1 âœ… AAA
+       text-subtle(#b0b0b0 â‰ˆ L 0.72) on #000 =  8.0:1 âœ… AAA
+       text-mute  (#7e7e7e â‰ˆ L 0.58) on #000 =  4.6:1 âœ… AA */
   --color-bg-canvas:        oklch(0     0     0);       /* pure black */
   --color-bg-elevated-v25:  oklch(0.16  0     0);       /* ~#212121 */
   --color-bg-overlay:       oklch(0.10  0     0 / 0.92);
@@ -216,20 +214,16 @@
 /* System preference falls back to dark when no explicit choice. */
 @media (prefers-color-scheme: dark) {
   [data-theme="system"] {
-    --color-bg-primary: #000000;
-    --color-bg-secondary: #0a0a0a;
-    --color-bg-tertiary: #121212;
+    /* Cycle UI v2.5 Phase 3 — legacy primary/secondary/tertiary/
+       default tokens removed; same set kept as the explicit dark
+       block above. */
     --color-bg-elevated: #1a1a1a;
     --color-bg-hover: #262626;
 
-    --color-text-primary: #ffffff;
-    --color-text-secondary: #a3a3a3;
-    --color-text-tertiary: #666666;
     --color-text-inverse: #000000;
     --color-text-disabled: #404040;
 
     --color-border-subtle: #1f1f1f;
-    --color-border-default: #2e2e2e;
     --color-border-strong: #525252;
 
     --color-mode-research: oklch(0.72 0.16 240);
@@ -240,7 +234,7 @@
     --color-mode-system: oklch(0.78 0.02 250);
     --color-mode-quickcode: oklch(0.75 0.11 175);
 
-    /* Cycle UI v2.5 — system-fallback dark must mirror the explicit
+    /* Cycle UI v2.5 â€” system-fallback dark must mirror the explicit
        dark block above so users on `data-theme="system"` get the same
        v2.5 token values. */
     --color-bg-canvas:        oklch(0     0     0);
@@ -260,11 +254,11 @@
   }
 }
 
-/* ────────────────────────────────────────────────────────────────────────
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Per-mode accent.  Components that want the mode colour reference
  * `var(--mode-accent)` directly; chrome-level surfaces use it for the
  * focus ring, the active timeline pill, the header rule.
- * ────────────────────────────────────────────────────────────────────── */
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 :root,
 [data-mode] {
@@ -277,13 +271,13 @@
 [data-mode="consortium"]  { --mode-accent: var(--color-mode-consortium); }
 [data-mode="sentinel"]    { --mode-accent: var(--color-mode-sentinel); }
 [data-mode="system"]      { --mode-accent: var(--color-mode-system); }
-/* Cycle UI v2.5 — 7th classifier class. */
+/* Cycle UI v2.5 â€” 7th classifier class. */
 [data-mode="quickcode"]   { --mode-accent: var(--color-mode-quickcode); }
 
-/* ────────────────────────────────────────────────────────────────────────
- * Reduced motion — drop transitions wholesale.  Spinners switch to
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * Reduced motion â€” drop transitions wholesale.  Spinners switch to
  * static via Tailwind's `motion-reduce:` variant in components.
- * ────────────────────────────────────────────────────────────────────── */
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 @media (prefers-reduced-motion: reduce) {
   :root {

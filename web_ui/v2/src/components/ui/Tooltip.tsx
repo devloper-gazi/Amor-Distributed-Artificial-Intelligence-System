@@ -9,7 +9,7 @@ import {
 export interface TooltipProps {
   /** Content displayed inside the floating tooltip. */
   label: string;
-  /** Anchored child — the trigger element. */
+  /** Anchored child â€” the trigger element. */
   children: JSX.Element;
   /** Where the tooltip appears relative to the anchor. */
   placement?: "top" | "bottom" | "left" | "right";
@@ -77,7 +77,7 @@ export const Tooltip: Component<TooltipProps> = (props) => {
           class={[
             "pointer-events-none absolute z-[var(--z-toast)]",
             "whitespace-nowrap rounded-sm border border-border-subtle",
-            "bg-bg-elevated px-2 py-1 text-xs text-text-primary shadow-md",
+            "bg-bg-elevated px-2 py-1 text-xs text-text-display shadow-md",
             placementClass(),
           ].join(" ")}
         >
