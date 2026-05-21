@@ -307,6 +307,72 @@ async def get_active_branch(
     return {"messages": rendered, "count": len(rendered)}
 
 
+class LeafFlipRequest(BaseModel):
+    """Cycle UI Phase 4 — request body for POST /api/sessions/{id}/leaf.
+
+    Pointing ``message_id`` at one of a parent's siblings switches
+    the active branch.  ``null`` is allowed (sentinel = "no leaf",
+    i.e. an empty conversation).  Ownership of the message is NOT
+    verified here for performance; the auth + session-ownership
+    check on the wrapping endpoint is the protection layer."""
+    message_id: Optional[str] = Field(
+        default=None,
+        description="Target leaf message id (must belong to the same "
+                    "session_id) or null to clear the leaf.",
+    )
+
+
+@router.post("/{session_id}/leaf")
+async def set_current_leaf(
+    session_id: str,
+    req: LeafFlipRequest,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI Phase 4 — Flip the active branch by pointing
+    ``conversations.current_leaf_id`` at a different message.
+
+    Powers BranchNavigator's `< N/M >` UI: clicking an arrow
+    POSTs the sibling's ``_id`` here, after which the next
+    /branch read returns the new chain.
+
+    Validation: the supplied message_id must belong to this
+    session_id (we check by querying chat_messages — cheaper
+    than aggregation; one indexed lookup)."""
+    client_id = _require_client_id(x_client_id)
+    try:
+        session = await chat_store.get_session(
+            client_id=client_id, user_id=user.id,
+            session_id=session_id, include_messages=False,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if req.message_id is not None:
+        # Verify the message belongs to this session.  Avoids the
+        # cross-session leak where a malicious caller could try to
+        # bind another user's message id as their leaf.
+        db = await chat_store._db()
+        msg = await db["chat_messages"].find_one(
+            {"_id": req.message_id, "session_id": session_id},
+            projection={"_id": 1},
+        )
+        if not msg:
+            raise HTTPException(
+                status_code=400,
+                detail="message_id does not belong to this session",
+            )
+
+    await chat_store.set_current_leaf(
+        session_id=session_id, message_id=req.message_id,
+    )
+    return {
+        "session_id": session_id,
+        "current_leaf_id": req.message_id,
+        "previous_leaf_id": session.get("current_leaf_id"),
+    }
+
+
 @router.get("/{session_id}/siblings/{parent_id}")
 async def get_message_siblings(
     session_id: str,

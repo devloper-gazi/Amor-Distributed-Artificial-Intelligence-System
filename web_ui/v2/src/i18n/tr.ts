@@ -253,6 +253,11 @@ export const tr: Record<string, string> = {
   "classifier.thinking":          "düşünüyorum…",
   "classifier.error":             "Sınıflandırıcı hatası",
 
+  // ── Cycle UI Phase 4 — dallanma navigatörü ──
+  "branch.navigator_aria":        "Dal navigatörü",
+  "branch.previous_aria":         "Önceki sürüm",
+  "branch.next_aria":             "Sonraki sürüm",
+
   // ── CommandPalette ──────────────────────────────────────────
   "palette.dialog_label":        "Komut paleti",
   "palette.placeholder":         "Bir komut yaz…",

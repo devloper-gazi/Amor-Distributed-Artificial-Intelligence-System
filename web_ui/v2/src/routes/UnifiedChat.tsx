@@ -221,7 +221,17 @@ export const UnifiedChat: Component = () => {
   });
 
   return (
-    <div class="flex h-dvh flex-col" data-amor-route="unified-chat">
+    <div
+      class="flex h-dvh flex-col overflow-hidden"
+      data-amor-route="unified-chat"
+      style={{
+        // Cycle UI Phase 4.3 — keep the layout glued to the visible
+        // viewport on iOS Safari when the on-screen keyboard pushes
+        // the address bar around.  `100dvh` already adapts; the
+        // safe-area padding handles the home-indicator gap below.
+        "padding-bottom": "env(safe-area-inset-bottom, 0)",
+      }}
+    >
       <TopBar
         title={t("chat.unified_title")}
         subtitle={t("chat.unified_subtitle")}

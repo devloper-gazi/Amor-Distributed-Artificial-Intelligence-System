@@ -253,6 +253,11 @@ export const en: Record<string, string> = {
   "classifier.thinking":          "thinking…",
   "classifier.error":             "Classifier error",
 
+  // ── Cycle UI Phase 4 — branching navigator ──
+  "branch.navigator_aria":        "Branch navigator",
+  "branch.previous_aria":         "Previous version",
+  "branch.next_aria":             "Next version",
+
   // ── CommandPalette ──────────────────────────────────────────
   "palette.dialog_label":        "Command palette",
   "palette.placeholder":         "Type a command…",

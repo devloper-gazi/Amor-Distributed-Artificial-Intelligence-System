@@ -25,6 +25,7 @@ import axe, { type AxeResults, type Result } from "axe-core";
 import { UnifiedComposer } from "./UnifiedComposer";
 import { MessageActions } from "./MessageActions";
 import { ToolCallCard } from "./ToolCallCard";
+import { BranchNavigator } from "./BranchNavigator";
 import type { ToolCallFrame } from "../../lib/tool-stream";
 import type { ChatTurn } from "../../lib/types";
 
@@ -164,5 +165,51 @@ describe("ToolCallCard a11y", () => {
       results.violations,
       describeViolations(results.violations),
     ).toEqual([]);
+  });
+});
+
+
+// Cycle UI Phase 4 — BranchNavigator a11y coverage
+describe("BranchNavigator a11y", () => {
+  it("hidden when total <= 1 (renders nothing → axe-clean by default)", async () => {
+    const { container } = render(() => (
+      <BranchNavigator current={1} total={1} onSelect={() => {}} />
+    ));
+    const results = await runAxe(container);
+    expect(
+      results.violations,
+      describeViolations(results.violations),
+    ).toEqual([]);
+    // Sanity: the role="group" wrapper must NOT have been rendered.
+    expect(container.querySelector("[data-amor-branch-nav]")).toBeNull();
+  });
+  it("multi-branch navigator passes axe with both arrows + counter", async () => {
+    const { container } = render(() => (
+      <BranchNavigator current={2} total={4} onSelect={() => {}} />
+    ));
+    const results = await runAxe(container);
+    expect(
+      results.violations,
+      describeViolations(results.violations),
+    ).toEqual([]);
+    // Sanity: aria-live counter present + both arrows have aria-label.
+    const counter = container.querySelector("[data-amor-branch-counter]");
+    expect(counter?.getAttribute("aria-live")).toBe("polite");
+    const prev = container.querySelector("[data-amor-branch-prev]");
+    const next = container.querySelector("[data-amor-branch-next]");
+    expect(prev?.getAttribute("aria-label")).toBeTruthy();
+    expect(next?.getAttribute("aria-label")).toBeTruthy();
+  });
+  it("disabled state when busy=true", async () => {
+    const { container } = render(() => (
+      <BranchNavigator current={1} total={3} onSelect={() => {}} busy />
+    ));
+    const results = await runAxe(container);
+    expect(
+      results.violations,
+      describeViolations(results.violations),
+    ).toEqual([]);
+    const prev = container.querySelector("[data-amor-branch-prev]");
+    expect((prev as HTMLButtonElement | null)?.disabled).toBe(true);
   });
 });

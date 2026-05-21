@@ -639,11 +639,23 @@ const ModePicker: Component<{
   onPick: (mode: ModeKey) => void;
   onClose: () => void;
 }> = (props) => {
+  // Cycle UI Phase 4.3 — Tailwind responsive variant.  Below `md`
+  // (768 px) the picker becomes a bottom-anchored sheet with
+  // safe-area-inset padding so iOS Safari's home indicator doesn't
+  // crop the last row.  Above `md` it's the same listbox dropdown
+  // as before.
   return (
     <div
       role="listbox"
       aria-label="Pick mode"
-      class="absolute bottom-[100%] left-5 z-[var(--z-dropdown)] mb-2 grid grid-cols-1 gap-0.5 rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md sm:grid-cols-2"
+      class={[
+        "z-[var(--z-dropdown)] gap-0.5 rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md",
+        // Mobile (default): fixed bottom-sheet spanning width.
+        "fixed inset-x-0 bottom-0 grid grid-cols-2 gap-1 rounded-b-none pb-[max(env(safe-area-inset-bottom),0.5rem)]",
+        // Desktop: absolutely positioned just above the pill.
+        "md:absolute md:inset-x-auto md:bottom-[100%] md:left-5 md:mb-2 md:grid-cols-2 md:rounded-md md:pb-1",
+      ].join(" ")}
+      data-amor-mode-picker=""
     >
       {MODES.map((meta: ModeMeta) => (
         <button
