@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Cycle UI v2.5 — pure-CSS motion language (keyframes + transitions + reduced-motion). */
+@import "./motion.css";
 
 /* ============================================================================
  * AMOR v2 — design tokens, ported from web_ui/static/css/tokens.css.
@@ -50,6 +52,38 @@
   --color-mode-consortium: oklch(0.62 0.16 50);   /* users-round */
   --color-mode-sentinel: oklch(0.55 0.18 25);     /* shield-half */
   --color-mode-system: oklch(0.65 0.02 250);      /* activity */
+  /* Cycle UI v2.5 (2026-05-21) — QuickCode is the auto-classifier's
+     7th class (Decision 2 in the parent plan).  Hue 175 sits between
+     Build's 145 and Research's 240 — visually "Build family, faster
+     variant".  Chroma 0.13 slightly desaturated vs Build's 0.17 to
+     signal "lighter weight" — matches the Decision 2 brief: "teal
+     close to but distinct from Build's aqua". */
+  --color-mode-quickcode: oklch(0.62 0.13 175);   /* zap */
+
+  /* ── Cycle UI v2.5 — NEW OKLch token system (bridge period) ──
+     These names ship ALONGSIDE the legacy --color-bg-* / --color-text-*
+     / --color-border-* above.  Phases 2-3 codemod TSX files from the
+     legacy names to these new ones one batch at a time.  Phase 3
+     closing commit deletes the legacy definitions after a grep
+     confirms zero remaining references.
+
+     OKLch lightness chosen for WCAG AA on the canvas:
+       text-body  (#2b2b2b ≈ L 0.22) on #fff = 14.3:1 ✅ AAA
+       text-subtle(#595959 ≈ L 0.42) on #fff =  7.0:1 ✅ AAA
+       text-mute  (#7a7a7a ≈ L 0.55) on #fff =  4.6:1 ✅ AA (sınırda) */
+  --color-bg-canvas:     oklch(1     0     0);          /* pure white */
+  --color-bg-elevated-v25: oklch(0.985 0   0);          /* ~fafafa */
+  --color-bg-overlay:    oklch(0.97  0     0 / 0.92);   /* modal/sheet bg */
+
+  --color-text-display:  oklch(0     0     0);          /* pure black */
+  --color-text-body:     oklch(0.22  0     0);          /* ~#2b2b2b */
+  --color-text-subtle:   oklch(0.42  0     0);          /* ~#595959 */
+  --color-text-mute:     oklch(0.55  0     0);          /* ~#7a7a7a */
+
+  --color-border-subtle-v25: oklch(0.92 0   0);         /* ~#e8e8e8 */
+  --color-border-strong-v25: oklch(0.78 0   0);         /* ~#c4c4c4 */
+
+  --color-focus-ring:    oklch(0.55 0.20 255);          /* vivid blue */
 
   /* ── Spacing — 8-pt grid ────────────────────────────────────────────── */
   --spacing-1: 0.25rem;   /* 4 */
@@ -149,6 +183,28 @@
   --color-mode-consortium: oklch(0.74 0.16 50);
   --color-mode-sentinel: oklch(0.68 0.18 25);
   --color-mode-system: oklch(0.78 0.02 250);
+  /* Cycle UI v2.5 — QuickCode dark counterpart.  L 0.75 vs Build's
+     0.70 keeps the "lighter weight" semantic in dark mode too. */
+  --color-mode-quickcode: oklch(0.75 0.11 175);
+
+  /* ── Cycle UI v2.5 — NEW OKLch token system, dark counterparts ──
+     Contrast on bg-canvas (#000):
+       text-body  (#e8e8e8 ≈ L 0.92) on #000 = 17.4:1 ✅ AAA
+       text-subtle(#b0b0b0 ≈ L 0.72) on #000 =  8.0:1 ✅ AAA
+       text-mute  (#7e7e7e ≈ L 0.58) on #000 =  4.6:1 ✅ AA */
+  --color-bg-canvas:        oklch(0     0     0);       /* pure black */
+  --color-bg-elevated-v25:  oklch(0.16  0     0);       /* ~#212121 */
+  --color-bg-overlay:       oklch(0.10  0     0 / 0.92);
+
+  --color-text-display:     oklch(1     0     0);       /* pure white */
+  --color-text-body:        oklch(0.92  0     0);       /* ~#e8e8e8 */
+  --color-text-subtle:      oklch(0.72  0     0);       /* ~#b0b0b0 */
+  --color-text-mute:        oklch(0.58  0     0);       /* ~#7e7e7e */
+
+  --color-border-subtle-v25: oklch(0.22 0    0);        /* ~#3a3a3a */
+  --color-border-strong-v25: oklch(0.38 0    0);        /* ~#606060 */
+
+  --color-focus-ring:       oklch(0.78 0.16 255);       /* lifted blue */
 
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
@@ -182,6 +238,21 @@
     --color-mode-consortium: oklch(0.74 0.16 50);
     --color-mode-sentinel: oklch(0.68 0.18 25);
     --color-mode-system: oklch(0.78 0.02 250);
+    --color-mode-quickcode: oklch(0.75 0.11 175);
+
+    /* Cycle UI v2.5 — system-fallback dark must mirror the explicit
+       dark block above so users on `data-theme="system"` get the same
+       v2.5 token values. */
+    --color-bg-canvas:        oklch(0     0     0);
+    --color-bg-elevated-v25:  oklch(0.16  0     0);
+    --color-bg-overlay:       oklch(0.10  0     0 / 0.92);
+    --color-text-display:     oklch(1     0     0);
+    --color-text-body:        oklch(0.92  0     0);
+    --color-text-subtle:      oklch(0.72  0     0);
+    --color-text-mute:        oklch(0.58  0     0);
+    --color-border-subtle-v25: oklch(0.22 0    0);
+    --color-border-strong-v25: oklch(0.38 0    0);
+    --color-focus-ring:       oklch(0.78 0.16 255);
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
@@ -206,6 +277,8 @@
 [data-mode="consortium"]  { --mode-accent: var(--color-mode-consortium); }
 [data-mode="sentinel"]    { --mode-accent: var(--color-mode-sentinel); }
 [data-mode="system"]      { --mode-accent: var(--color-mode-system); }
+/* Cycle UI v2.5 — 7th classifier class. */
+[data-mode="quickcode"]   { --mode-accent: var(--color-mode-quickcode); }
 
 /* ────────────────────────────────────────────────────────────────────────
  * Reduced motion — drop transitions wholesale.  Spinners switch to

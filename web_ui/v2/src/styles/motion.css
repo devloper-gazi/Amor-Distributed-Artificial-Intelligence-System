@@ -1,0 +1,150 @@
+/* ============================================================================
+ * AMOR Cycle UI v2.5 — motion language.
+ *
+ * Pure CSS keyframes + transitions.  No JS animation library (Decision 2 in
+ * the parent plan).  All entries ≤200 ms; ease-out for entries, ease-in
+ * for exits.  prefers-reduced-motion honoured at the bottom of this file.
+ *
+ * Imported once from theme.css after Phase 1.  Components reference these
+ * via class names (.streaming-caret, .amor-enter) — no per-component CSS
+ * duplication.
+ *
+ * Why a separate file?  theme.css is the Tailwind v4 @theme source-of-truth;
+ * keeping @keyframes in their own file keeps theme.css scannable + lets
+ * future v2.6 motion polish edit only this file.
+ * ===========================================================================*/
+
+/* ── Streaming caret ────────────────────────────────────────────────────────
+ * Per Cycle UI v2.5 Research J.3: DOM-node `<span class="streaming-caret">`
+ * appended inside the assistant's content while turn.streaming === true.
+ * NOT a `::after` pseudo — Safari has occasional repaint issues with
+ * pseudo-element animations during SSE delta append.
+ *
+ * Animation curve:
+ *   * 0-45%   visible
+ *   * 50-95%  hidden
+ *   * 100%    visible (loop reset)
+ *   * Each toggle takes ~5% of the cycle in transition — feels "physical"
+ *     rather than the binary steps(2) typewriter blink.  Custom cubic-
+ *     bezier (0.4, 0, 0.6, 1) shapes the fade transition.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-caret {
+  0%, 45%   { opacity: 1; }
+  50%, 95%  { opacity: 0; }
+  100%      { opacity: 1; }
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  background: var(--color-text-body, currentColor);
+  animation: amor-caret 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ── Message / approval enter ───────────────────────────────────────────────
+ * Used by MessageThread when a new turn is pushed + by ApprovalPrompt when
+ * the approval card mounts.  200 ms ease-out via opacity + translateY (12 →
+ * 0).  Apply with class `.amor-enter` on the wrapping element; the keyframe
+ * runs once then settles.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.amor-enter {
+  animation: amor-enter 200ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+/* ── Mode-pill flip pulse ──────────────────────────────────────────────────
+ * When the classifier flips its suggestion (top1 mode changes while the
+ * user is still typing), the ModePill's "auto" badge pulses once to draw
+ * the eye.  Applied via `data-flip-pulse="1"` on the badge element.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-pulse-once {
+  0%   { opacity: 0;    transform: scale(0.92); }
+  40%  { opacity: 1;    transform: scale(1.04); }
+  100% { opacity: 1;    transform: scale(1.00); }
+}
+
+[data-flip-pulse="1"] {
+  animation: amor-pulse-once 180ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+/* ── Branch navigator rotate ───────────────────────────────────────────────
+ * Used by BranchNavigator's expand/collapse caret.  Targets a child
+ * element with `[aria-expanded="true"]` parent.
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-rotate-target {
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+[aria-expanded="true"] .amor-rotate-target,
+[data-expanded="true"] .amor-rotate-target {
+  transform: rotate(180deg);
+}
+
+/* ── Composer focus glow ───────────────────────────────────────────────────
+ * Applied via `:focus-within` on the composer wrapper.  Tailwind's
+ * `focus-within:ring-2 focus-within:ring-focus-ring` handles the ring;
+ * this rule shapes the timing.  200 ms ease-in-out — focus arrival
+ * should feel slightly heavier than focus departure (deliberate weight).
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-composer {
+  transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.amor-composer:focus-within {
+  /* box-shadow / ring applied via Tailwind utilities on the JSX. */
+  transition-duration: 150ms;
+}
+
+/* ── Hover-reveal helper ───────────────────────────────────────────────────
+ * MessageBubble's mode pill, action bar, etc. opacity-0 by default and
+ * opacity-1 on `:hover` of the group parent.  Tailwind covers the rule;
+ * this file standardises the transition curve so every hover-reveal feels
+ * consistent across the surface.  Use class `.amor-hover-reveal` on the
+ * child element.
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-hover-reveal {
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.group:hover .amor-hover-reveal,
+.group:focus-within .amor-hover-reveal {
+  opacity: 1;
+}
+
+/* ── prefers-reduced-motion ────────────────────────────────────────────────
+ * Extends the rule in theme.css.  Disable all amor-* animations + zero out
+ * transition durations.  Streaming caret falls back to a static 70% opacity
+ * block so the user still knows the assistant is generating.
+ * ────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .streaming-caret {
+    animation: none;
+    opacity: 0.7;
+  }
+  .amor-enter,
+  [data-flip-pulse="1"] {
+    animation: none;
+  }
+  .amor-rotate-target,
+  .amor-composer,
+  .amor-hover-reveal {
+    transition: none;
+  }
+  /* Hover-reveal items become always-visible under reduced motion so
+     users with reduced-motion preferences don't lose the affordance. */
+  .amor-hover-reveal {
+    opacity: 1;
+  }
+}
