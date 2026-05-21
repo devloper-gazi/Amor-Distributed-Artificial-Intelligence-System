@@ -135,4 +135,22 @@ export interface ChatTurn {
    *  MessageThread switches to ApprovalPrompt.tsx for these turns
    *  instead of MessageBubble. */
   approval?: ApprovalPayload;
+  /** Cycle UI Phase 3 — which chat mode handled this turn (when
+   *  known).  Populated by UnifiedChat when it dispatches to a
+   *  mode-specific endpoint.  MessageBubble renders this as a
+   *  small color-coded pill so users can see at a glance which
+   *  pipeline produced each assistant message. */
+  mode?: ModeKey;
+  /** Cycle UI Phase 3 — classifier confidence snapshot from the
+   *  moment this turn was submitted.  Optional; when present
+   *  MessageBubble's hover surfaces top1/top2 scores for debug
+   *  visibility during alpha. */
+  classifierMeta?: {
+    top1: string;
+    top1_score: number;
+    top2: string;
+    top2_score: number;
+    confidence: number;
+    low_confidence: boolean;
+  };
 }

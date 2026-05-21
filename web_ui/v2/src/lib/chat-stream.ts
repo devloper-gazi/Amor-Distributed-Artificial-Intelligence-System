@@ -78,12 +78,21 @@ export interface ChatStreamConfig<StartReq> {
   chatSessionMode?: string;
 }
 
+/** Cycle UI Phase 3 — Per-submission metadata threaded into the
+ *  user + assistant turn so MessageBubble can render the mode pill
+ *  + classifier confidence on hover.  Optional — legacy per-mode
+ *  routes (Build/Research/Thinking) don't need to pass it. */
+export interface StartMetadata {
+  mode?: ChatTurn["mode"];
+  classifierMeta?: ChatTurn["classifierMeta"];
+}
+
 export interface ChatStreamApi {
   turns: Accessor<ChatTurn[]>;
   busy: Accessor<boolean>;
   status: Accessor<StreamStatus>;
   sessionId: Accessor<string | null>;
-  start: (prompt: string) => Promise<void>;
+  start: (prompt: string, meta?: StartMetadata) => Promise<void>;
   cancel: () => Promise<void>;
   /** Manually append a system / tool turn (e.g. "phase X complete"). */
   pushTurn: (turn: Omit<ChatTurn, "id">) => void;
@@ -262,14 +271,29 @@ export function createChatStream<StartReq>(
     }
   };
 
-  const start = async (prompt: string): Promise<void> => {
+  const start = async (
+    prompt: string,
+    meta?: StartMetadata,
+  ): Promise<void> => {
     cleanup();
     buffer = "";
     setBusy(true);
     setStatus("connecting");
     persistingSetTurns((prev) => [
       ...prev,
-      { id: newId(), role: "user", content: prompt, ts: Date.now() },
+      {
+        id: newId(),
+        role: "user",
+        content: prompt,
+        ts: Date.now(),
+        // Cycle UI Phase 3 — propagate the submission's mode +
+        // classifier confidence so MessageBubble can render the
+        // pill on both the user turn (which mode the user was
+        // routed to) and the assistant turn (which pipeline
+        // produced the reply).
+        mode: meta?.mode,
+        classifierMeta: meta?.classifierMeta,
+      },
     ]);
     assistantTurnId = newId();
     persistingSetTurns((prev) => [
@@ -281,6 +305,8 @@ export function createChatStream<StartReq>(
         streaming: true,
         tag: "starting",
         ts: Date.now(),
+        mode: meta?.mode,
+        classifierMeta: meta?.classifierMeta,
       },
     ]);
 
@@ -663,5 +689,163 @@ export const RESEARCH_REDUCER: EventReducer = (ev) => {
 
   // ── unknown — quietly drop (don't pollute the markdown trail
   //    with raw event JSON).
+  return null;
+};
+
+
+// ─── Cycle UI Phase 3 — UNIFIED_REDUCER ─────────────────────────────
+
+import {
+  extractText,
+  getEventCategory,
+  isCrossCutting,
+  isFinalDeliverable,
+  isTerminator,
+  isTextChunk,
+} from "./chat/event_registry";
+
+/**
+ * Cycle UI Phase 3 — Mode-aware reducer that powers UnifiedChat.
+ *
+ * Dispatches by event_type via the event_registry: cross-cutting
+ * events (approval, snapshot, generic phase_*, done/error) handled
+ * uniformly; per-mode events (Build's code_ready, Research's
+ * source_added, Consortium's artifact_ready, etc.) route to the
+ * existing SIMPLE_TEXT_REDUCER / RESEARCH_REDUCER logic via a thin
+ * wrapper.
+ *
+ * Why not in-line every mode's handling here?  Build's reducer
+ * (in routes/Build.tsx, ~290 LOC) is heavy with phase-progress
+ * UI state that doesn't belong in a pure SSE → StreamPatch reducer.
+ * UNIFIED_REDUCER covers the chat-thread side; Build.tsx's inline
+ * reducer keeps its progress-bar / phase-ticker concerns separate.
+ *
+ * Coverage map:
+ *   * Cross-cutting (approval, snapshot, done, error, cancelled,
+ *     generic phase_*) — handled directly.
+ *   * Research-specific events (sub_question, source_added,
+ *     analyzing_source, report_ready, ...) — delegated to
+ *     RESEARCH_REDUCER which already knows the italic-trail UI.
+ *   * Build / QuickCode / Thinking / Consortium / Sentinel
+ *     specifics that overlap SIMPLE_TEXT_REDUCER's vocabulary
+ *     (chunk/delta/deliverable_ready/*_completed) — delegated to
+ *     SIMPLE_TEXT_REDUCER.
+ *   * Build-only events (code_ready, test_ready, execution_result,
+ *     review_ready) — handled inline below (Phase 4 will move
+ *     these into rich ToolCallCard renders).
+ *   * Unknown events — silent drop with debug-friendly tag.
+ *
+ * Tests in event_registry.test.ts cover category classification;
+ * chat-stream.test.ts dispatch tests cover end-to-end reducer
+ * routing per mode.
+ */
+export const UNIFIED_REDUCER: EventReducer = (ev) => {
+  const type = String(ev.type ?? "");
+
+  // ── 1. Cross-cutting (mode-agnostic) events first ──
+  if (isCrossCutting(type)) {
+    // Approval requests + generic phase markers + snapshots + done /
+    // error / cancelled all share the SIMPLE_TEXT_REDUCER's existing
+    // handling.  Don't re-implement — call through.
+    return SIMPLE_TEXT_REDUCER(ev);
+  }
+
+  // ── 2. Per-mode dispatch via event_registry ──
+  const category = getEventCategory(type);
+
+  if (category === "research") {
+    return RESEARCH_REDUCER(ev);
+  }
+
+  // Build + QuickCode share the same event taxonomy.  Inline
+  // handling for the typed-deliverable events the SIMPLE reducer
+  // doesn't know about.  Phase 4 will replace these append-strings
+  // with structured ToolCallCard pushTurns.
+  if (category === "build") {
+    if (type === "code_ready") {
+      const code = typeof ev.code === "string" ? ev.code : extractText(ev);
+      const lang = typeof ev.language === "string" ? ev.language : "";
+      const fence = lang ? `\`\`\`${lang}\n${code}\n\`\`\`` : code;
+      return code ? { append: `\n${fence}\n`, tag: "code" } : null;
+    }
+    if (type === "test_ready") {
+      const tests = typeof ev.tests === "string" ? ev.tests : extractText(ev);
+      const lang = typeof ev.language === "string" ? ev.language : "";
+      const fence = lang ? `\`\`\`${lang}\n${tests}\n\`\`\`` : tests;
+      return tests ? { append: `\n_— Tests —_\n${fence}\n`, tag: "test" } : null;
+    }
+    if (type === "execution_result") {
+      const passed = ev.passed === true;
+      const stderr = typeof ev.stderr === "string" ? ev.stderr : "";
+      const stdout = typeof ev.stdout === "string" ? ev.stdout : "";
+      const line = passed
+        ? `_✓ Execution passed_\n`
+        : `_✗ Execution failed_\n` +
+          (stdout ? `\`\`\`\n${stdout.slice(0, 1500)}\n\`\`\`\n` : "") +
+          (stderr ? `\`\`\`\n${stderr.slice(0, 1500)}\n\`\`\`\n` : "");
+      return { append: line, tag: passed ? "executed" : "execution_failed" };
+    }
+    if (type === "review_ready") {
+      const verdict = typeof ev.verdict === "string" ? ev.verdict : "";
+      const md = typeof ev.markdown === "string" ? ev.markdown : extractText(ev);
+      if (md) {
+        return { replace: md, tag: `review: ${verdict || "complete"}`, done: false };
+      }
+      return verdict ? { tag: `review: ${verdict}` } : null;
+    }
+    if (type === "model_download_progress") {
+      const pct = typeof ev.percent === "number" ? ev.percent : 0;
+      const model = typeof ev.model === "string" ? ev.model : "";
+      return { tag: `downloading ${model} ${pct.toFixed(0)}%` };
+    }
+    // Build's small metadata events — render as silent tag updates
+    // so the user sees "language: html" / "fallback: stage" etc.
+    // without polluting the message bubble.
+    if (
+      type === "language_corrected" ||
+      type === "planner_fallback" ||
+      type === "install_packages_filtered"
+    ) {
+      const detail =
+        typeof ev.label === "string" ? ev.label :
+        typeof ev.message === "string" ? ev.message : type;
+      return { tag: detail };
+    }
+    if (type === "diff_block") {
+      // Phase 4 will swap these for ToolCallCard pushTurns.
+      const md = extractText(ev);
+      return md ? { append: `\n${md}\n`, tag: "diff" } : null;
+    }
+    if (type === "deliverable_ready") {
+      // Build's deliverable_ready replaces the buffer with the final
+      // assembled response (intersection w/ SIMPLE_TEXT_REDUCER —
+      // safe to delegate).
+      return SIMPLE_TEXT_REDUCER(ev);
+    }
+  }
+
+  if (category === "thinking" || category === "consortium" || category === "sentinel") {
+    // These modes' typed events (artifact_ready, finding_ready,
+    // thinking_chunk, *_completed) all map cleanly to
+    // SIMPLE_TEXT_REDUCER's chunk/deliverable/done branches.
+    return SIMPLE_TEXT_REDUCER(ev);
+  }
+
+  // ── 3. Untyped chunk fallback (forward-compat) ──
+  if (isTextChunk(type)) {
+    return SIMPLE_TEXT_REDUCER(ev);
+  }
+  if (isFinalDeliverable(type)) {
+    return SIMPLE_TEXT_REDUCER(ev);
+  }
+  if (isTerminator(type)) {
+    return SIMPLE_TEXT_REDUCER(ev);
+  }
+
+  // ── 4. Unknown event — try text salvage, otherwise drop ──
+  const salvaged = extractText(ev);
+  if (salvaged) {
+    return { append: salvaged };
+  }
   return null;
 };

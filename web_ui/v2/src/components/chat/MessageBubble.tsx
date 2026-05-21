@@ -75,6 +75,36 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
           <span class="text-xs font-semibold tracking-tight">
             {ROLE_LABEL[props.turn.role]}
           </span>
+          <Show when={props.turn.mode}>
+            {(mode) => {
+              const tooltip = (): string => {
+                const m = props.turn.classifierMeta;
+                if (!m) return `mode: ${mode()}`;
+                const flag = m.low_confidence ? " (low confidence)" : "";
+                return (
+                  `mode: ${mode()}${flag}\n` +
+                  `top1: ${m.top1} ${m.top1_score.toFixed(3)}\n` +
+                  `top2: ${m.top2} ${m.top2_score.toFixed(3)}`
+                );
+              };
+              return (
+                <span
+                  class="inline-flex items-center rounded px-1.5 py-px text-[0.6rem] font-medium uppercase tracking-wide"
+                  style={{
+                    "background-color": `var(--color-mode-${mode()}, var(--bg-elevated))`,
+                    color: "var(--color-mode-fg, var(--text-secondary))",
+                  }}
+                  title={tooltip()}
+                  data-amor-turn-mode={mode()}
+                  data-amor-turn-low-confidence={
+                    props.turn.classifierMeta?.low_confidence ? "1" : "0"
+                  }
+                >
+                  {mode()}
+                </span>
+              );
+            }}
+          </Show>
           <Show when={props.turn.tag}>
             <span class="text-[0.65rem] text-text-tertiary">
               {props.turn.tag}

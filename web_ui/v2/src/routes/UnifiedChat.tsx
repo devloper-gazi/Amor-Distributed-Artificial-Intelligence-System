@@ -35,12 +35,14 @@ import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { MessageThread } from "../components/chat/MessageThread";
 import { UnifiedComposer } from "../components/chat/UnifiedComposer";
 import {
-  SIMPLE_TEXT_REDUCER,
-  RESEARCH_REDUCER,
+  UNIFIED_REDUCER,
   createChatStream,
   type ChatStreamApi,
 } from "../lib/chat-stream";
-import { createDebouncedClassifier } from "../lib/intent-classifier";
+import {
+  createDebouncedClassifier,
+  classifyPrompt,
+} from "../lib/intent-classifier";
 import type { ModeKey } from "../lib/types";
 import { t } from "../i18n";
 
@@ -51,19 +53,20 @@ interface ModeAdapter {
   eventsPath: (sid: string) => string;
   cancelPath: (sid: string) => string | null;
   buildStartBody: (prompt: string) => Record<string, unknown>;
-  /** Which reducer interprets this mode's SSE event stream. */
-  reducer: typeof SIMPLE_TEXT_REDUCER | typeof RESEARCH_REDUCER;
   /** Backend chat_session ``mode`` value the sidebar groups by. */
   chatSessionMode: string;
 }
 
+// Cycle UI Phase 3 — Mode → endpoint map.  Reducer field dropped; the
+// single UNIFIED_REDUCER (imported above) dispatches via event_registry
+// so every mode shares the same dispatch core + the same approval /
+// snapshot / terminator handling.
 const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
   build: {
     startPath: "/api/code/start",
     eventsPath: (sid) => `/api/code/${sid}/events`,
     cancelPath: (sid) => `/api/code/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, effort: "medium" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "code",
   },
   research: {
@@ -71,7 +74,6 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     eventsPath: (sid) => `/api/local-ai/research/${sid}/events`,
     cancelPath: (sid) => `/api/local-ai/research/${sid}/cancel`,
     buildStartBody: (prompt) => ({ topic: prompt, depth: "medium" }),
-    reducer: RESEARCH_REDUCER,
     chatSessionMode: "research",
   },
   thinking: {
@@ -79,7 +81,6 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     eventsPath: (sid) => `/api/thinking/${sid}/events`,
     cancelPath: (sid) => `/api/thinking/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, effort: "medium" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "thinking",
   },
   consortium: {
@@ -87,7 +88,6 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     eventsPath: (sid) => `/api/consortium/${sid}/events`,
     cancelPath: (sid) => `/api/consortium/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, depth: "medium" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "consortium",
   },
   sentinel: {
@@ -95,7 +95,6 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     eventsPath: (sid) => `/api/sentinel/${sid}/events`,
     cancelPath: (sid) => `/api/sentinel/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, scan_profile: "standard" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "sentinel",
   },
   quickcode: {
@@ -103,18 +102,16 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     eventsPath: (sid) => `/api/quick-code/${sid}/events`,
     cancelPath: (sid) => `/api/quick-code/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, mode: "quick" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "code",  // backed by code_intelligence storage
   },
   system: {
-    // Legacy-only; the 7-class classifier never returns "system",
+    // Legacy-only; the 6-class classifier never returns "system",
     // but slash command /system can.  Falls back to thinking endpoint
     // (no dedicated system backend exists per Decision 3).
     startPath: "/api/thinking/think",
     eventsPath: (sid) => `/api/thinking/${sid}/events`,
     cancelPath: (sid) => `/api/thinking/${sid}/cancel`,
     buildStartBody: (prompt) => ({ prompt, effort: "medium" }),
-    reducer: SIMPLE_TEXT_REDUCER,
     chatSessionMode: "thinking",
   },
 };
@@ -154,6 +151,8 @@ export const UnifiedChat: Component = () => {
 
   // Lazily create the stream API for the chosen mode + prompt.  Each
   // submission spawns a new stream singleton keyed on startPath.
+  // All 6 modes share UNIFIED_REDUCER — per-mode dispatch happens
+  // inside the reducer via event_registry.
   const ensureStream = (mode: ModeKey): ChatStreamApi => {
     const adapter = MODE_ADAPTERS[mode];
     // createChatStream is cached at module level by startPath, so
@@ -163,7 +162,7 @@ export const UnifiedChat: Component = () => {
       buildStartBody: adapter.buildStartBody,
       eventsPath: adapter.eventsPath,
       cancelPath: adapter.cancelPath,
-      reduce: adapter.reducer,
+      reduce: UNIFIED_REDUCER,
       chatSessionMode: adapter.chatSessionMode,
     });
     setStreamApi(stream);
@@ -173,8 +172,21 @@ export const UnifiedChat: Component = () => {
 
   const onSubmit = async (text: string, mode: ModeKey) => {
     const stream = ensureStream(mode);
+    // Snapshot the classifier result BEFORE cancelling so we can
+    // thread it into the turn for MessageBubble's hover tooltip.
+    const cm = classifier.result();
+    const classifierMeta = cm
+      ? {
+          top1: cm.alternatives[0]?.[0] ?? cm.mode,
+          top1_score: cm.top1_score,
+          top2: cm.alternatives[1]?.[0] ?? cm.alternatives[0]?.[0] ?? "",
+          top2_score: cm.top2_score,
+          confidence: cm.confidence,
+          low_confidence: cm.low_confidence,
+        }
+      : undefined;
     classifier.cancel();
-    await stream.start(text);
+    await stream.start(text, { mode, classifierMeta });
   };
 
   const onCancel = async () => {
@@ -198,6 +210,14 @@ export const UnifiedChat: Component = () => {
       // Future: const branch = await fetch(`/api/sessions/${cid}/branch`)
       //        and seed the turns from the branch payload.
     }
+
+    // Cycle UI Phase 3.4 — eager-prefetch the classifier on mount so
+    // the user's first real prompt doesn't trigger the 3-5 s MiniLM
+    // first-load.  Fire-and-forget: swallow any error (network /
+    // auth / cold-start) — the actual classifier path retries on
+    // every user keystroke, so a failed prefetch only loses the
+    // warmup benefit, not functionality.
+    void classifyPrompt("warmup").catch(() => undefined);
   });
 
   return (

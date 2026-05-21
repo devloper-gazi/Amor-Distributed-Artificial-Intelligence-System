@@ -17,7 +17,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { RESEARCH_REDUCER, SIMPLE_TEXT_REDUCER } from "./chat-stream";
+import {
+  RESEARCH_REDUCER,
+  SIMPLE_TEXT_REDUCER,
+  UNIFIED_REDUCER,
+} from "./chat-stream";
 
 
 // ─── progress events ────────────────────────────────────────
@@ -307,5 +311,171 @@ describe("SIMPLE_TEXT_REDUCER — approval_required", () => {
       arguments: "not a dict",
     });
     expect(out!.pushTurn!.approval!.arguments).toEqual({});
+  });
+});
+
+
+// ─── Cycle UI Phase 3 — UNIFIED_REDUCER dispatch tests ───────────────
+
+
+describe("UNIFIED_REDUCER — cross-cutting events", () => {
+  it("approval_required → pushes an approval turn (delegates to SIMPLE)", () => {
+    const out = UNIFIED_REDUCER({
+      type: "approval_required",
+      request_id: "req-1",
+      tool_name: "file.write",
+      category: "write",
+      arguments: { path: "/tmp/foo" },
+      actor_role: "coder",
+      timeout_s: 60,
+    });
+    expect(out).not.toBeNull();
+    expect(out!.pushTurn).toBeDefined();
+    expect(out!.pushTurn!.role).toBe("approval");
+    expect(out!.pushTurn!.approval!.request_id).toBe("req-1");
+  });
+  it("done → terminator with done=true", () => {
+    const out = UNIFIED_REDUCER({ type: "done" });
+    expect(out!.done).toBe(true);
+    expect(out!.tag).toBe("done");
+  });
+  it("error → carries the error message", () => {
+    const out = UNIFIED_REDUCER({ type: "error", message: "boom" });
+    expect(out!.error).toBe("boom");
+  });
+  it("cancelled → terminator with cancelled tag", () => {
+    const out = UNIFIED_REDUCER({ type: "cancelled" });
+    expect(out!.tag).toBe("cancelled");
+    expect(out!.done).toBe(true);
+  });
+  it("generic phase_start → updates tag, no content", () => {
+    const out = UNIFIED_REDUCER({ type: "phase_start", phase: "implement" });
+    expect(out!.tag).toBe("phase: implement");
+    expect(out!.append).toBeUndefined();
+  });
+});
+
+describe("UNIFIED_REDUCER — Build-specific dispatches", () => {
+  it("code_ready → appends fenced code block with language tag", () => {
+    const out = UNIFIED_REDUCER({
+      type: "code_ready",
+      code: "console.log('hi');",
+      language: "javascript",
+    });
+    expect(out).not.toBeNull();
+    expect(out!.append).toContain("```javascript");
+    expect(out!.append).toContain("console.log");
+    expect(out!.tag).toBe("code");
+  });
+  it("test_ready → appends a Tests block", () => {
+    const out = UNIFIED_REDUCER({
+      type: "test_ready",
+      tests: "assert(1 === 1);",
+      language: "javascript",
+    });
+    expect(out).not.toBeNull();
+    expect(out!.append).toContain("_— Tests —_");
+    expect(out!.append).toContain("assert(1 === 1);");
+    expect(out!.tag).toBe("test");
+  });
+  it("execution_result(passed=true) → renders the passed marker", () => {
+    const out = UNIFIED_REDUCER({
+      type: "execution_result",
+      passed: true,
+      stdout: "ok",
+    });
+    expect(out!.append).toContain("Execution passed");
+    expect(out!.tag).toBe("executed");
+  });
+  it("execution_result(passed=false) → renders stdout + stderr", () => {
+    const out = UNIFIED_REDUCER({
+      type: "execution_result",
+      passed: false,
+      stdout: "trace",
+      stderr: "ImportError: foo",
+    });
+    expect(out!.append).toContain("Execution failed");
+    expect(out!.append).toContain("ImportError: foo");
+    expect(out!.tag).toBe("execution_failed");
+  });
+  it("review_ready → replaces buffer with markdown verdict", () => {
+    const out = UNIFIED_REDUCER({
+      type: "review_ready",
+      verdict: "approved",
+      markdown: "# Review\n\nLGTM",
+    });
+    expect(out!.replace).toContain("LGTM");
+    expect(out!.tag).toContain("approved");
+  });
+  it("model_download_progress → tag-only update", () => {
+    const out = UNIFIED_REDUCER({
+      type: "model_download_progress",
+      model: "qwen2.5-coder:7b",
+      percent: 42,
+    });
+    expect(out!.tag).toContain("downloading");
+    expect(out!.tag).toContain("qwen2.5-coder:7b");
+    expect(out!.append).toBeUndefined();
+  });
+  it("language_corrected → silent tag update", () => {
+    const out = UNIFIED_REDUCER({
+      type: "language_corrected",
+      label: "rust → python",
+    });
+    expect(out!.tag).toBe("rust → python");
+    expect(out!.append).toBeUndefined();
+  });
+});
+
+describe("UNIFIED_REDUCER — delegates to RESEARCH_REDUCER for Research events", () => {
+  it("source_added → appends italic source line", () => {
+    const out = UNIFIED_REDUCER({
+      type: "source_added",
+      title: "Paper X",
+      url: "https://example.com",
+    });
+    expect(out).not.toBeNull();
+    expect(out!.append).toContain("Source:");
+    expect(out!.append).toContain("Paper X");
+    expect(out!.tag).toBe("research");
+  });
+  it("report_ready → replaces buffer with markdown report", () => {
+    const out = UNIFIED_REDUCER({
+      type: "report_ready",
+      markdown: "## Final report",
+    });
+    expect(out!.replace).toContain("Final report");
+    expect(out!.tag).toBe("report");
+  });
+});
+
+describe("UNIFIED_REDUCER — text-chunk fallback works across modes", () => {
+  it("thinking_chunk → appends content", () => {
+    const out = UNIFIED_REDUCER({
+      type: "thinking_chunk",
+      text: "step 1: ",
+    });
+    expect(out!.append).toBe("step 1: ");
+  });
+  it("consortium chunk → appends content", () => {
+    const out = UNIFIED_REDUCER({
+      type: "chunk",
+      content: "agent says hi",
+    });
+    expect(out!.append).toBe("agent says hi");
+  });
+});
+
+describe("UNIFIED_REDUCER — unknown event handling", () => {
+  it("unknown type with no payload → null (silent drop)", () => {
+    const out = UNIFIED_REDUCER({ type: "completely_made_up_event_xyz" });
+    expect(out).toBeNull();
+  });
+  it("unknown type with text payload → salvages it", () => {
+    const out = UNIFIED_REDUCER({
+      type: "future_event",
+      text: "hi from the future",
+    });
+    expect(out!.append).toBe("hi from the future");
   });
 });
