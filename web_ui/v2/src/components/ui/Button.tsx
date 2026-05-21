@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps, Show } from "solid-js";
+﻿import { type Component, type JSX, splitProps, Show } from "solid-js";
 import { Spinner } from "./Spinner";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -59,7 +59,7 @@ export const Button: Component<ButtonProps> = (props) => {
         "font-medium transition-[background-color,opacity] duration-100",
         "focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed",
-        // Sprint 11 Day 4 Ã¢â‚¬â€ guarantee 44Ãƒâ€”44 hit area on coarse-pointer
+        // Sprint 11 Day 4 — guarantee 44×44 hit area on coarse-pointer
         // devices.  Visual size stays whatever ``SIZE_CLASS`` set; the
         // utility only enlarges when @media (pointer: coarse) hits.
         "amor-touch",

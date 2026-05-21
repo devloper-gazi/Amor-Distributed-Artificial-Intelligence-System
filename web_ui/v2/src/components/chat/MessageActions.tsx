@@ -1,24 +1,24 @@
-/**
- * Cycle C Sprint 4 Day 3 Ã¢â‚¬â€ message hover-actions bar.
+﻿/**
+ * Cycle C Sprint 4 Day 3 — message hover-actions bar.
  *
  * Rendered inside ``MessageBubble``; visible on hover/focus, hidden
- * by default.  Five actions, all optional Ã¢â‚¬â€ the bubble parent decides
+ * by default.  Five actions, all optional — the bubble parent decides
  * which to wire up:
  *
- *   * copy        Ã¢â‚¬â€ writes ``turn.content`` to ``navigator.clipboard``
+ *   * copy        — writes ``turn.content`` to ``navigator.clipboard``
  *                   then flashes a short "copied" indicator.
- *   * edit        Ã¢â‚¬â€ emits ``onEdit(turn)``; only sensible on user turns.
- *   * regenerate  Ã¢â‚¬â€ emits ``onRegenerate(turn)``; only sensible on
+ *   * edit        — emits ``onEdit(turn)``; only sensible on user turns.
+ *   * regenerate  — emits ``onRegenerate(turn)``; only sensible on
  *                   assistant turns.
- *   * branch      Ã¢â‚¬â€ emits ``onBranch(turn)``; opens a new chat from
+ *   * branch      — emits ``onBranch(turn)``; opens a new chat from
  *                   the turn's history (Day 4 wires the dispatch).
- *   * rate Ã‚Â±      Ã¢â‚¬â€ emits ``onRate(turn, 1 | -1)``; persists the rating
+ *   * rate ±      — emits ``onRate(turn, 1 | -1)``; persists the rating
  *                   in ``localStorage["amor.rate.<turn.id>"]`` so a
  *                   refresh re-paints the indicator and Sprint 6's
  *                   ORPO collector can pick the pairs up.
  *
  * Hidden by default via the ``opacity-0 group-hover:opacity-100`` Tailwind
- * pattern Ã¢â‚¬â€ no Solid signal needed for the show/hide.  The wrapper
+ * pattern — no Solid signal needed for the show/hide.  The wrapper
  * ``MessageBubble`` already has ``class="group"`` (Day 3 change).
  *
  * Accessibility
@@ -44,7 +44,7 @@ import { t } from "../../i18n";
 
 const RATE_LS_PREFIX = "amor.rate.";
 
-/** Read a saved Ã‚Â±1 rating for ``turn.id`` from localStorage. */
+/** Read a saved ±1 rating for ``turn.id`` from localStorage. */
 function loadRate(id: string): 0 | 1 | -1 {
   try {
     const raw = localStorage.getItem(`${RATE_LS_PREFIX}${id}`);
@@ -100,7 +100,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
       copyTimer = window.setTimeout(() => setCopied(false), 1500);
     } catch {
       // Browsers can deny clipboard writes when not focused.  We
-      // intentionally swallow Ã¢â‚¬â€ the visible state simply doesn't
+      // intentionally swallow — the visible state simply doesn't
       // flip.  Day 5 a11y audit will flag the missing announcement.
     }
   };
@@ -110,11 +110,11 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
     setRating(final);
     saveRate(props.turn.id, final);
     props.onRate?.(props.turn, final);
-    // Cycle C Sprint 6 Day 1 Ã¢â‚¬â€ record the (chosen, rejected) pair so
+    // Cycle C Sprint 6 Day 1 — record the (chosen, rejected) pair so
     // the weekly ORPO trainer has data to consume.  Privacy-by-default:
     // raw text is NOT sent (opt_in_raw=false).  Only the turn id +
     // hash + mode are persisted server-side.  Errors are silently
-    // swallowed Ã¢â‚¬â€ telemetry must NEVER block the UI.
+    // swallowed — telemetry must NEVER block the UI.
     if (final === 0) return;
     const isUp = final === 1;
     const body = {
@@ -134,12 +134,12 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).catch(() => {
-      // ignore Ã¢â‚¬â€ the rate button still flips locally even if the
+      // ignore — the rate button still flips locally even if the
       // backend can't capture it (e.g. user signed out, network down).
     });
   };
 
-  // Cycle UI v2.5 Phase 2 Ã¢â‚¬â€ mobile Ã¢â€¹Â¯ menu split.  Below `md` the
+  // Cycle UI v2.5 Phase 2 — mobile ⋯ menu split.  Below `md` the
   // hover-reveal pattern is meaningless (no hover on touch); collapse
   // the action toolbar into a native <details>/<summary> menu instead.
   // Same buttons + callbacks; just a different visual chrome.  No
@@ -157,7 +157,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
         title={copied() ? t("message.copied_status") : t("message.copy")}
         data-amor-action="copy"
       >
-        <span aria-hidden="true">{copied() ? "Ã¢Å“â€œ" : "Ã¢Â§â€°"}</span>
+        <span aria-hidden="true">{copied() ? "✓" : "⧉"}</span>
       </IconButton>
       <Show when={isUser() && props.onEdit}>
         <IconButton
@@ -167,7 +167,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           title={t("message.edit")}
           data-amor-action="edit"
         >
-          <span aria-hidden="true">Ã¢Å“Å½</span>
+          <span aria-hidden="true">✎</span>
         </IconButton>
       </Show>
       <Show when={isAssistant() && props.onRegenerate}>
@@ -178,7 +178,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           title={t("message.regenerate")}
           data-amor-action="regenerate"
         >
-          <span aria-hidden="true">Ã¢â€ Â»</span>
+          <span aria-hidden="true">↻</span>
         </IconButton>
       </Show>
       <Show when={props.onBranch}>
@@ -189,7 +189,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           title={t("message.branch")}
           data-amor-action="branch"
         >
-          <span aria-hidden="true">Ã¢Å½â€¡</span>
+          <span aria-hidden="true">⎇</span>
         </IconButton>
       </Show>
       <Show when={isAssistant()}>
@@ -207,7 +207,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           data-amor-action="rate-up"
           data-amor-rate-state={rating() === 1 ? "on" : "off"}
         >
-          <span aria-hidden="true">Ã¢â€“Â²</span>
+          <span aria-hidden="true">▲</span>
         </IconButton>
         <IconButton
           size="sm"
@@ -219,7 +219,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           data-amor-action="rate-down"
           data-amor-rate-state={rating() === -1 ? "on" : "off"}
         >
-          <span aria-hidden="true">Ã¢â€“Â¼</span>
+          <span aria-hidden="true">▼</span>
         </IconButton>
       </Show>
     </>
@@ -227,7 +227,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
 
   return (
     <div data-amor-message-actions="">
-      {/* Mobile: Ã¢â€¹Â¯ menu Ã¢â‚¬â€ visible below md only. */}
+      {/* Mobile: ⋯ menu — visible below md only. */}
       <details
         class="amor-touch md:hidden mt-2 inline-block align-middle"
         data-amor-mobile-actions=""
@@ -236,7 +236,7 @@ export const MessageActions: Component<MessageActionsProps> = (props) => {
           class="amor-touch inline-flex h-9 w-9 items-center justify-center rounded text-text-subtle hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 list-none cursor-pointer"
           aria-label={t("message.toolbar_label", { role: props.turn.role })}
         >
-          <span aria-hidden="true">Ã¢â€¹Â¯</span>
+          <span aria-hidden="true">⋯</span>
         </summary>
         <div
           role="toolbar"

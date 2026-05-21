@@ -1,4 +1,4 @@
-import { type Component, For } from "solid-js";
+﻿import { type Component, For } from "solid-js";
 import { A } from "@solidjs/router";
 import { MODES } from "../lib/types";
 import { TopBar } from "../components/shell/TopBar";
@@ -6,17 +6,17 @@ import { Badge } from "../components/ui";
 import { t, modeLabel, modeSubtitle } from "../i18n";
 
 const GLYPH: Record<string, string> = {
-  compass: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€¦Ã‚Â½",
-  hammer: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â²",
-  brain: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€¦Ã‚Â ",
-  "users-round": "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“",
-  "shield-half": "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â",
-  activity: "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â ",
+  compass: "◎",
+  hammer: "▲",
+  brain: "◊",
+  "users-round": "❖",
+  "shield-half": "◐",
+  activity: "≈",
 };
 
 /**
  * Welcome / mode picker.  Renders the 6 modes as cards; each card
- * gets the mode accent colour as a top rule.  Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â fully
+ * gets the mode accent colour as a top rule.  Cycle D — fully
  * localised via the i18n primitive (no more hardcoded English).
  */
 export const Home: Component = () => {
@@ -50,7 +50,7 @@ export const Home: Component = () => {
                     aria-hidden="true"
                     style={{ color: "var(--mode-accent)" }}
                   >
-                    {GLYPH[mode.glyph] ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢"}
+                    {GLYPH[mode.glyph] ?? "•"}
                   </span>
                   {mode.wired ? null : (
                     <Badge size="sm">{t("home.soon")}</Badge>
@@ -72,12 +72,12 @@ export const Home: Component = () => {
           <p class="font-medium">{t("home.tip.title")}</p>
           <p class="mt-1 text-text-body">
             {t("home.tip.body", {
-              cmdK: "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK",
+              cmdK: "⌘K",
               ctrlK: "Ctrl K",
             })
-              .split(/(ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK|Ctrl K)/)
+              .split(/(⌘K|Ctrl K)/)
               .map((part) =>
-                part === "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œK" || part === "Ctrl K" ? (
+                part === "⌘K" || part === "Ctrl K" ? (
                   <kbd class="rounded border border-border-subtle bg-bg-elevated-v25 px-1.5 py-0.5 font-mono text-xs">
                     {part}
                   </kbd>

@@ -1,18 +1,18 @@
-/**
- * Cycle UI v2.5 Phase 2 Ã¢â‚¬â€ Build-engine tool-call card.
+﻿/**
+ * Cycle UI v2.5 Phase 2 — Build-engine tool-call card.
  *
  * Renders one ``BuildToolCard`` payload (see ``lib/types.ts``) from
  * the Build pipeline's code_ready / test_ready / execution_result /
  * review_ready events.  Replaces the previous behaviour of appending
  * markdown fences inline into the assistant bubble.
  *
- * Visual conventions (see Research v2.5 Ã‚Â§L):
+ * Visual conventions (see Research v2.5 §L):
  *   * Header: kind icon + truncated file path + status chip
  *   * Body: collapsible <details>; DiffBlock when language="diff",
  *     fenced markdown otherwise via renderMarkdown
  *   * Footer: status + duration_ms (tabular-nums) + extra meta keys
  *
- * The card sits inside MessageThread as a ``role: "tool"`` turn Ã¢â‚¬â€
+ * The card sits inside MessageThread as a ``role: "tool"`` turn —
  * MessageThread routes the rendering (sibling to ApprovalPrompt
  * for approval turns).  No avatar / no role label header; the card
  * IS the chrome.
@@ -20,7 +20,7 @@
  * Accessibility:
  *   * role="region" + aria-label so screen readers announce it as
  *     a discrete block.
- *   * Native <details>/<summary> for collapse Ã¢â‚¬â€ keyboard works
+ *   * Native <details>/<summary> for collapse — keyboard works
  *     out-of-box, no custom ARIA bookkeeping.
  */
 
@@ -36,7 +36,7 @@ import type { BuildToolCard } from "../../lib/types";
 import { renderMarkdown } from "../../lib/sanitise";
 import { t } from "../../i18n";
 
-// DiffBlock is lazy-loaded Ã¢â‚¬â€ only Build payloads that emit a diff
+// DiffBlock is lazy-loaded — only Build payloads that emit a diff
 // body (language=="diff") pull in the diff2html bundle.
 const DiffBlock = lazy(
   () => import("./DiffBlock").then((m) => ({ default: m.DiffBlock })),
@@ -58,7 +58,7 @@ function kindLabelKey(kind: BuildToolCard["kind"]): string {
 }
 
 /** Tiny status-chip colour-mapper.  All values land in the global
- *  status palette (theme.css Ã‚Â§status pills). */
+ *  status palette (theme.css §status pills). */
 const STATUS_TONE: Record<NonNullable<BuildToolCard["status"]>, string> = {
   ok:               "var(--color-status-healthy)",
   approved:         "var(--color-status-healthy)",
@@ -68,10 +68,10 @@ const STATUS_TONE: Record<NonNullable<BuildToolCard["status"]>, string> = {
 };
 
 const KIND_GLYPH: Record<BuildToolCard["kind"], string> = {
-  code_ready:        "Ã¢â€“Â²",
-  test_ready:        "Ã¢â€”â€¡",
-  execution_result:  "Ã¢â€“Â¶",
-  review_ready:      "Ã¢â€”Â",
+  code_ready:        "▲",
+  test_ready:        "◇",
+  execution_result:  "▶",
+  review_ready:      "◐",
 };
 
 export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
@@ -91,7 +91,7 @@ export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
     return card.body;
   });
 
-  // Light-weight inline status chip Ã¢â‚¬â€ saves importing StatusPill.
+  // Light-weight inline status chip — saves importing StatusPill.
   const statusChip = () => {
     const s = props.card.status;
     if (!s) return null;
@@ -147,7 +147,7 @@ export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
               onClick={() => setOpen((o) => !o)}
             >
               <span class="amor-rotate-target leading-none" aria-hidden="true">
-                Ã¢â€“Â¾
+                ▾
               </span>
             </button>
           </Show>
@@ -195,7 +195,7 @@ export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
                 {Object.entries(meta())
                   .slice(0, 3)
                   .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                  .join(" Ã‚Â· ")}
+                  .join(" · ")}
               </span>
             )}
           </Show>

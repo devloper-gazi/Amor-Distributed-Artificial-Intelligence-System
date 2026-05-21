@@ -66,6 +66,8 @@ export const en: Record<string, string> = {
   "mode.sentinel.subtitle":      "governance, ledger",
   "mode.system.label":           "System",
   "mode.system.subtitle":        "diagnostics, memory",
+  "mode.quickcode.label":        "QuickCode",
+  "mode.quickcode.subtitle":     "fast targeted edits",
 
   // ── Sidebar chrome ──────────────────────────────────────────
   "sidebar.brand":               "AMOR",

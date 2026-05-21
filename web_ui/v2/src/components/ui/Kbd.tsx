@@ -1,8 +1,8 @@
-import { type Component, type JSX, splitProps } from "solid-js";
+﻿import { type Component, type JSX, splitProps } from "solid-js";
 
 export interface KbdProps extends JSX.HTMLAttributes<HTMLElement> {
   /** Auto-substitutes ``Mod`` for the platform-correct meta key glyph
-   *  (``Ã¢Å’Ëœ`` on macOS, ``Ctrl`` everywhere else). */
+   *  (``⌘`` on macOS, ``Ctrl`` everywhere else). */
   children: string;
 }
 
@@ -11,29 +11,29 @@ const isMac = () =>
   /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 const SUBSTITUTIONS_MAC: Array<[RegExp, string]> = [
-  [/\bMod\b/g, "Ã¢Å’Ëœ"],
-  [/\bCmd\b/g, "Ã¢Å’Ëœ"],
-  [/\bShift\b/g, "Ã¢â€¡Â§"],
-  [/\bAlt\b/g, "Ã¢Å’Â¥"],
-  [/\bCtrl\b/g, "Ã¢Å’Æ’"],
-  [/\bEnter\b/g, "Ã¢â€ Âµ"],
+  [/\bMod\b/g, "⌘"],
+  [/\bCmd\b/g, "⌘"],
+  [/\bShift\b/g, "⇧"],
+  [/\bAlt\b/g, "⌥"],
+  [/\bCtrl\b/g, "⌃"],
+  [/\bEnter\b/g, "↵"],
   [/\bEsc\b/g, "Esc"],
-  [/\bArrowUp\b/g, "Ã¢â€ â€˜"],
-  [/\bArrowDown\b/g, "Ã¢â€ â€œ"],
-  [/\bArrowLeft\b/g, "Ã¢â€ Â"],
-  [/\bArrowRight\b/g, "Ã¢â€ â€™"],
+  [/\bArrowUp\b/g, "↑"],
+  [/\bArrowDown\b/g, "↓"],
+  [/\bArrowLeft\b/g, "←"],
+  [/\bArrowRight\b/g, "→"],
 ];
 
 const SUBSTITUTIONS_OTHER: Array<[RegExp, string]> = [
   [/\bMod\b/g, "Ctrl"],
   [/\bShift\b/g, "Shift"],
   [/\bAlt\b/g, "Alt"],
-  [/\bEnter\b/g, "Ã¢â€ Âµ"],
+  [/\bEnter\b/g, "↵"],
   [/\bEsc\b/g, "Esc"],
-  [/\bArrowUp\b/g, "Ã¢â€ â€˜"],
-  [/\bArrowDown\b/g, "Ã¢â€ â€œ"],
-  [/\bArrowLeft\b/g, "Ã¢â€ Â"],
-  [/\bArrowRight\b/g, "Ã¢â€ â€™"],
+  [/\bArrowUp\b/g, "↑"],
+  [/\bArrowDown\b/g, "↓"],
+  [/\bArrowLeft\b/g, "←"],
+  [/\bArrowRight\b/g, "→"],
 ];
 
 const formatGlyphs = (s: string): string => {
@@ -44,8 +44,8 @@ const formatGlyphs = (s: string): string => {
 /**
  * Keyboard glyph atom.
  *
- *   <Kbd>Mod+K</Kbd>            Ã¢â€ â€™ Ã¢Å’ËœK (mac) or Ctrl+K (others)
- *   <Kbd>Shift+Enter</Kbd>      Ã¢â€ â€™ Ã¢â€¡Â§Ã¢â€ Âµ
+ *   <Kbd>Mod+K</Kbd>            → ⌘K (mac) or Ctrl+K (others)
+ *   <Kbd>Shift+Enter</Kbd>      → ⇧↵
  *
  * The token "Mod" auto-resolves to the platform meta key.  Use it when
  * a shortcut is meant to be portable.

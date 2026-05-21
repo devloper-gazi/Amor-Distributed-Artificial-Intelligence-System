@@ -1,4 +1,4 @@
-import { type Component, createMemo, Show } from "solid-js";
+﻿import { type Component, createMemo, Show } from "solid-js";
 import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
@@ -22,7 +22,7 @@ interface SentinelRequest {
 }
 
 /**
- * Sentinel mode Ã¢â‚¬â€ security + governance scan.  Multi-agent swarm
+ * Sentinel mode — security + governance scan.  Multi-agent swarm
  * over a 7-layer ML pipeline.  Same chat shape as the others;
  * outputs a SARIF-shaped summary at the end.
  */
@@ -50,7 +50,7 @@ export const Sentinel: Component = () => {
     eventsPath: (sid) => `/api/sentinel/${sid}/events`,
     cancelPath: (sid) => `/api/sentinel/${sid}/cancel`,
     reduce: reducer,
-    // Cycle D Sessions polish Ã¢â‚¬â€ register the sentinel audit in the
+    // Cycle D Sessions polish — register the sentinel audit in the
     // sidebar so the user can revisit it from the session list.
     chatSessionMode: "sentinel",
   });

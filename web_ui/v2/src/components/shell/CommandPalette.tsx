@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   createSignal,
   createMemo,
@@ -30,7 +30,7 @@ interface CommandPaletteProps {
 }
 
 /**
- * Hand-rolled Cmd-K command palette ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â no external cmdk dep.
+ * Hand-rolled Cmd-K command palette — no external cmdk dep.
  *
  * Categories: Mode (mode switcher), System (diagnostics, settings,
  * legacy UI, showcase), Theme (light/dark/system), Account (logout).
@@ -59,7 +59,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   };
 
   const items = createMemo<PaletteItem[]>(() => {
-    // ``t()`` reads the locale signal ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â invoking it inside this memo
+    // ``t()`` reads the locale signal — invoking it inside this memo
     // means the palette re-renders on every locale flip without any
     // per-item bookkeeping.
     const cat = {
@@ -187,7 +187,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
     const q = query().trim().toLowerCase();
     if (!q) return items();
     // Tokenize on whitespace + each token must hit somewhere.  Then
-    // SCORE so label-matches outrank hint-only matches ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the user
+    // SCORE so label-matches outrank hint-only matches — the user
     // typing "theme system" wants the "Theme: System" command, not
     // the Settings page (whose hint happens to contain "theme,
     // account").
@@ -263,7 +263,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
     onOpenChange(props.open);
   });
 
-  // Re-focus input every time we transition closed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ open.  Solid's
+  // Re-focus input every time we transition closed → open.  Solid's
   // signals make this a one-line effect via a memo dependency.
   let lastOpen = false;
   createMemo(() => {

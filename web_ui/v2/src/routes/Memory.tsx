@@ -1,5 +1,5 @@
-/**
- * Cycle C Sprint 7 Day 3 Ã¢â‚¬â€ admin Memory viewer.
+﻿/**
+ * Cycle C Sprint 7 Day 3 — admin Memory viewer.
  *
  * Surfaces the Mem0 OSS adapter's stored memories with a status
  * banner that explains how to flip the backend on when it's
@@ -172,7 +172,7 @@ export const Memory: Component = () => {
                     {t("memory.status.heading")}
                   </h2>
                   <Badge>
-                    {s().backend}{" Ã‚Â· "}
+                    {s().backend}{" · "}
                     {s().available
                       ? t("memory.status.ready")
                       : t("memory.status.disabled")}
@@ -184,7 +184,7 @@ export const Memory: Component = () => {
                     <p class="mt-2 text-xs text-text-subtle">
                       {t("memory.status.detail", {
                         vector: s().vector_store,
-                        llm: s().llm_model ?? "Ã¢â‚¬â€",
+                        llm: s().llm_model ?? "—",
                         ns: s().user_namespace,
                         graph: s().graph_enabled ? "on" : "off",
                       })}

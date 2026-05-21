@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   For,
   Show,
@@ -98,13 +98,13 @@ const STATUS_TO_PILL: Record<BaselineRow["status"], Status> = {
 };
 
 const formatMs = (ms: number | null | undefined): string => {
-  if (ms == null) return "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â";
+  if (ms == null) return "—";
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 };
 
 const formatVram = (mb: number | null | undefined): string => {
-  if (mb == null) return "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â";
+  if (mb == null) return "—";
   if (mb < 1024) return `${mb} MB`;
   return `${(mb / 1024).toFixed(1)} GB`;
 };
@@ -211,7 +211,7 @@ export const Baselines: Component = () => {
 
   const sortIndicator = (k: SortKey) => {
     if (sortKey() !== k) return "";
-    return sortDir() === "asc" ? " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²" : " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼";
+    return sortDir() === "asc" ? " ▲" : " ▼";
   };
 
   return (
@@ -290,7 +290,7 @@ export const Baselines: Component = () => {
                 label={t("baselines.card.judge_mean")}
                 value={
                   summary().judge_mean == null
-                    ? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
+                    ? "—"
                     : (summary().judge_mean as number).toFixed(2)
                 }
                 hint={t("baselines.card.judge_mean_sub", {
@@ -300,12 +300,12 @@ export const Baselines: Component = () => {
               />
               <SummaryCell
                 label={t("baselines.card.backend")}
-                value={q.data?.meta?.backend ?? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"}
+                value={q.data?.meta?.backend ?? "—"}
                 hint={q.data?.meta?.judge?.method ?? t("baselines.card.no_judge")}
               />
               <SummaryCell
                 label={t("baselines.card.host")}
-                value={q.data?.meta?.host ?? "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"}
+                value={q.data?.meta?.host ?? "—"}
                 hint={q.data?.meta?.git_sha?.slice(0, 7) ?? t("baselines.card.no_git_sha")}
               />
             </div>
@@ -420,7 +420,7 @@ const Row: Component<{ row: BaselineRow }> = (props) => {
         {formatMs(r().metrics.first_token_ms)}
       </td>
       <td class="px-3 py-2 text-right tabular-nums">
-        <span title={`prompt: ${r().metrics.prompt_tokens} ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· completion: ${r().metrics.completion_tokens}`}>
+        <span title={`prompt: ${r().metrics.prompt_tokens} · completion: ${r().metrics.completion_tokens}`}>
           {r().metrics.prompt_tokens + r().metrics.completion_tokens}
         </span>
       </td>
@@ -459,7 +459,7 @@ const JudgeBadge: Component<{ judge: JudgeScore | null }> = (props) => {
   return (
     <Show
       when={props.judge}
-      fallback={<span class="text-text-subtle">ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â</span>}
+      fallback={<span class="text-text-subtle">—</span>}
     >
       {(judge) => (
         <Show

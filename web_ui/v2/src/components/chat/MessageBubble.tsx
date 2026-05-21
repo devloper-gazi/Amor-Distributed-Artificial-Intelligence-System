@@ -1,4 +1,4 @@
-import { type Component, Show } from "solid-js";
+﻿import { type Component, Show } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
 import { renderMarkdown, escapeText } from "../../lib/sanitise";
 import { Avatar } from "../ui";
@@ -7,7 +7,7 @@ import { t } from "../../i18n";
 
 interface MessageBubbleProps {
   turn: ChatTurn;
-  /** Optional action handlers ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â see MessageActions.tsx.  When all
+  /** Optional action handlers — see MessageActions.tsx.  When all
    *  handlers are undefined, the action bar still renders the copy
    *  button (always available) so users can still grab the text. */
   onEdit?: (turn: ChatTurn) => void;
@@ -57,7 +57,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const showActions = () =>
     props.turn.role === "user" || props.turn.role === "assistant";
 
-  // Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â 3 px sol mode-accent rule color.  For user turns we
+  // Cycle UI v2.5 — 3 px sol mode-accent rule color.  For user turns we
   // use --color-text-subtle (mode is the COMPOSER's chosen mode at
   // submit time; the user themselves doesn't carry a mode identity).
   // For assistant/tool turns we reach for --color-mode-{mode}; falls
@@ -80,7 +80,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
       data-role={props.turn.role}
       data-amor-turn-mode={props.turn.mode}
     >
-      {/* Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â 3 px sol mode-accent rule.  Identifies the
+      {/* Cycle UI v2.5 — 3 px sol mode-accent rule.  Identifies the
           turn's mode without a always-visible pill (the pill moves to
           hover-reveal below).  Absolute-positioned so it doesn't push
           the avatar; rounded-full so it reads as a soft accent rather
@@ -113,7 +113,7 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
                   `top2: ${m.top2} ${m.top2_score.toFixed(3)}`
                 );
               };
-              // Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â hover-reveal: the pill was always-
+              // Cycle UI v2.5 — hover-reveal: the pill was always-
               // visible in Phase 3.  Now the 3 px sol rule carries the
               // mode-identity affordance; the pill surfaces classifier
               // confidence on hover for debug visibility.
@@ -140,12 +140,12 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
               {props.turn.tag}
             </span>
           </Show>
-          {/* Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â keep the "streamingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦" header label too:
+          {/* Cycle UI v2.5 — keep the "streaming…" header label too:
               it tells the user what's happening BEFORE the first token
               arrives; the in-content DOM-node caret then takes over. */}
           <Show when={props.turn.streaming}>
             <span class="text-[0.65rem] text-text-subtle motion-safe:animate-pulse">
-              streamingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦
+              streaming…
             </span>
           </Show>
           <Show
@@ -160,19 +160,19 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
                 class="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-bg-elevated px-1.5 py-px text-[0.6rem] text-text-body"
                 title={
                   remembered().snippets && remembered().snippets!.length > 0
-                    ? `${t("message.remembered.short", { count: remembered().count })}: ${remembered().snippets!.slice(0, 3).join(" ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ")}`
+                    ? `${t("message.remembered.short", { count: remembered().count })}: ${remembered().snippets!.slice(0, 3).join(" · ")}`
                     : t("message.remembered.short", { count: remembered().count })
                 }
                 data-amor-remembered=""
                 aria-label={t("message.remembered.aria", { count: remembered().count })}
               >
-                <span aria-hidden="true">ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â</span>
+                <span aria-hidden="true">●</span>
                 {t("message.remembered.short", { count: remembered().count })}
               </span>
             )}
           </Show>
         </div>
-        {/* Cycle UI v2.5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â wrap content + streaming caret in a single
+        {/* Cycle UI v2.5 — wrap content + streaming caret in a single
             container.  The caret is a real DOM node (not ::after) so
             SSE delta-append re-renders don't trigger pseudo-element
             repaint quirks on Safari (Research J.3). */}

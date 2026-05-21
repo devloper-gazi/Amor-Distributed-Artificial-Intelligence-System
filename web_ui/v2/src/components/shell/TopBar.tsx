@@ -1,9 +1,9 @@
-import { type Component, type JSX, Show } from "solid-js";
+﻿import { type Component, type JSX, Show } from "solid-js";
 
 export interface TopBarProps {
   title: string;
   subtitle?: string;
-  /** Right-side action slot Ã¢â‚¬â€ typically a button or action group. */
+  /** Right-side action slot — typically a button or action group. */
   actions?: JSX.Element;
 }
 

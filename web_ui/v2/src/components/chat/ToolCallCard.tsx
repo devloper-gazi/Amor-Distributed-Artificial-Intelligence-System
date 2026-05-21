@@ -1,16 +1,16 @@
-/**
- * Cycle C Sprint 4 Day 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â animated tool-call card.
+﻿/**
+ * Cycle C Sprint 4 Day 4 — animated tool-call card.
  *
  * Renders one ``ToolCallFrame`` (see ``../../lib/tool-stream.ts``) with
- * the canonical pending ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ running ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ complete | error state machine.
+ * the canonical pending → running → complete | error state machine.
  * Input + output payloads live behind a native ``<details>`` so the
  * default rendered surface is small.
  *
  * Visual conventions
  * ------------------
- * * 2 px mode-accent left border ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â keeps the card threaded with the
+ * * 2 px mode-accent left border — keeps the card threaded with the
  *   surrounding mode (Build/Research/etc.).
- * * Status pill: spinner while ``running``, "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“" on complete, "!" on
+ * * Status pill: spinner while ``running``, "✓" on complete, "!" on
  *   error.  Matches existing StatusPill but inline so we don't import
  *   the larger primitive twice on every card.
  * * Monospace input/output blocks; arbitrary JSON is pretty-printed.
@@ -18,7 +18,7 @@
  * Accessibility
  * -------------
  * * Card root is ``role="status"`` so screen readers announce
- *   transitions (input-streaming ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ complete).
+ *   transitions (input-streaming → complete).
  * * Native ``<details>`` keeps keyboard navigation working without
  *   custom ARIA bookkeeping.
  */
@@ -35,9 +35,9 @@ export interface ToolCallCardProps {
 }
 
 const STATUS_ICON: Record<ToolCallFrame["status"], string> = {
-  pending: "ÃƒÂ¢Ã¢â‚¬â€Ã¢â‚¬Â¹",
-  running: "ÃƒÂ¢Ã¢â‚¬â€Ã¢â‚¬Â",
-  complete: "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“",
+  pending: "○",
+  running: "◔",
+  complete: "✓",
   error: "!",
 };
 

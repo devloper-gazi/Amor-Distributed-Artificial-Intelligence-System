@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps, Show } from "solid-js";
+﻿import { type Component, type JSX, splitProps, Show } from "solid-js";
 
 export interface ProgressBarProps
   extends JSX.HTMLAttributes<HTMLDivElement> {
@@ -54,7 +54,7 @@ export const ProgressBar: Component<ProgressBarProps> = (props) => {
           />
         </Show>
       </div>
-      {/* Inline keyframes for indeterminate stripe â€” small enough to
+      {/* Inline keyframes for indeterminate stripe — small enough to
           live next to the component instead of leaking into theme.css. */}
       <style>{`
         @keyframes progress {

@@ -1,5 +1,5 @@
-/**
- * Cycle UI Phase 4 â€” BranchNavigator: `< N/M >` sibling arrows
+﻿/**
+ * Cycle UI Phase 4 — BranchNavigator: `< N/M >` sibling arrows
  * under user messages that have multiple regeneration branches.
  *
  * Backed by GET /api/sessions/{id}/siblings/{parent_id} and
@@ -8,16 +8,16 @@
  * conversation case).
  *
  * Keyboard:
- *   * ArrowLeft  â†’ previous sibling (wraps)
- *   * ArrowRight â†’ next sibling (wraps)
- *   * Enter / Space on the counter â†’ no-op (counter is informational)
+ *   * ArrowLeft  → previous sibling (wraps)
+ *   * ArrowRight → next sibling (wraps)
+ *   * Enter / Space on the counter → no-op (counter is informational)
  *
  * Accessibility:
  *   * Buttons have aria-label so screen readers announce them as
  *     "Previous version" / "Next version".
  *   * The counter has role="status" + aria-live="polite" so the
  *     position update is announced.
- *   * 44Ã—44 touch targets via the .amor-touch utility (Sprint 11).
+ *   * 44×44 touch targets via the .amor-touch utility (Sprint 11).
  */
 
 import {
@@ -36,7 +36,7 @@ export interface BranchNavigatorProps {
    *  1-based target index.  Caller is responsible for the
    *  POST /api/sessions/{id}/leaf round-trip + thread refresh. */
   onSelect: (targetIndex: number) => void | Promise<void>;
-  /** Optional â€” when true, the navigator renders but its buttons
+  /** Optional — when true, the navigator renders but its buttons
    *  are disabled (e.g. while a flip is in flight). */
   busy?: boolean;
 }
@@ -89,7 +89,7 @@ export const BranchNavigator: Component<BranchNavigatorProps> = (props) => {
           onClick={() => void go(-1)}
           data-amor-branch-prev=""
         >
-          â—‚
+          ◂
         </button>
         <span
           role="status"
@@ -107,7 +107,7 @@ export const BranchNavigator: Component<BranchNavigatorProps> = (props) => {
           onClick={() => void go(1)}
           data-amor-branch-next=""
         >
-          â–¸
+          ▸
         </button>
       </div>
     </Show>

@@ -1,4 +1,4 @@
-import { type Component, createMemo, Show } from "solid-js";
+﻿import { type Component, createMemo, Show } from "solid-js";
 import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { ChatComposer } from "../components/chat/ChatComposer";
@@ -19,9 +19,9 @@ interface ConsortiumRequest {
 }
 
 /**
- * Consortium mode Ã¢â‚¬â€ meta-orchestrator running Research, Thinking,
+ * Consortium mode — meta-orchestrator running Research, Thinking,
  * and Build sequentially against a single goal.  Wall-clock can run
- * 8Ã¢â‚¬â€œ15 min for deep depth, so the ConnectionBanner + Cancel
+ * 8–15 min for deep depth, so the ConnectionBanner + Cancel
  * affordance matter.
  */
 export const Consortium: Component = () => {
@@ -48,7 +48,7 @@ export const Consortium: Component = () => {
     eventsPath: (sid) => `/api/consortium/${sid}/events`,
     cancelPath: (sid) => `/api/consortium/${sid}/cancel`,
     reduce: reducer,
-    // Cycle D Sessions polish Ã¢â‚¬â€ register the consortium run in the
+    // Cycle D Sessions polish — register the consortium run in the
     // sidebar so the user sees their goal listed immediately.
     chatSessionMode: "consortium",
   });

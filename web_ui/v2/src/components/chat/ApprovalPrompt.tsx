@@ -1,5 +1,5 @@
-/**
- * Cycle F Sprint 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â inline approval card.
+﻿/**
+ * Cycle F Sprint 5 — inline approval card.
  *
  * Renders an `ApprovalPayload` (see `lib/types.ts`) in the chat
  * thread when an `approval_required` SSE event lands.  Visual
@@ -9,11 +9,11 @@
  *
  * Lifecycle
  * ---------
- * * `pending` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â both Approve / Deny buttons enabled; countdown
+ * * `pending` — both Approve / Deny buttons enabled; countdown
  *   shows remaining seconds.
- * * `in-flight` (Approve or Deny clicked) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â buttons disabled,
+ * * `in-flight` (Approve or Deny clicked) — buttons disabled,
  *   pill says "submitting".
- * * `approved` / `denied` / `timeout` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â terminal; pill shows
+ * * `approved` / `denied` / `timeout` — terminal; pill shows
  *   final state.
  *
  * Accessibility
@@ -141,7 +141,7 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
     const cat = (props.payload.category || "unclassified").toLowerCase();
     const key = `approval.category.${cat}`;
     const translated = t(key);
-    // `t()` returns the key itself when missing ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â surface raw cat in
+    // `t()` returns the key itself when missing — surface raw cat in
     // that case so we don't show "approval.category.foo".
     return translated === key ? cat : translated;
   });
@@ -165,11 +165,11 @@ export const ApprovalPrompt: Component<ApprovalPromptProps> = (props) => {
             aria-hidden="true"
           >
             {status() === "approved"
-              ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“"
+              ? "✓"
               : status() === "denied"
-                ? "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€"
+                ? "✗"
                 : status() === "timeout"
-                  ? "ÃƒÂ¢Ã‚ÂÃ‚Â±"
+                  ? "⏱"
                   : status() === "error"
                     ? "!"
                     : "?"}

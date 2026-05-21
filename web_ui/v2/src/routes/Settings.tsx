@@ -1,4 +1,4 @@
-import { type Component, createSignal, onMount, For } from "solid-js";
+﻿import { type Component, createSignal, onMount, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { TopBar } from "../components/shell/TopBar";
 import { Button } from "../components/ui";
@@ -88,7 +88,7 @@ export const Settings: Component = () => {
             </div>
           </section>
 
-          {/* Language ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Sprint 10 Day 1 */}
+          {/* Language — Sprint 10 Day 1 */}
           <section>
             <h2 class="text-base font-semibold tracking-tight">
               {t("settings.language.heading")}
@@ -132,7 +132,7 @@ export const Settings: Component = () => {
               <p class="text-text-body">
                 {t("settings.account.signed_in_as")}{" "}
                 <span class="font-medium text-text-display">
-                  {auth.user()?.username ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
+                  {auth.user()?.username ?? "—"}
                 </span>
               </p>
               <p class="mt-1 text-xs text-text-subtle">

@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   createSignal,
   onMount,
@@ -7,11 +7,11 @@ import {
 
 interface DiffBlockProps {
   /** Unified-diff string OR a SEARCH/REPLACE block.  We auto-detect
-   *  and convert SEARCH/REPLACE Ã¢â€ â€™ unified-diff for diff2html. */
+   *  and convert SEARCH/REPLACE → unified-diff for diff2html. */
   diff: string;
   /** Filename hint for the diff header. */
   filename?: string;
-  /** Side-by-side Ã¢â€°Â¥ 768 px, line-by-line below.  Defaults to
+  /** Side-by-side ≥ 768 px, line-by-line below.  Defaults to
    *  side-by-side; the consumer can force one mode if needed. */
   format?: "side-by-side" | "line-by-line";
 }
@@ -23,7 +23,7 @@ interface DiffBlockProps {
  *
  * SEARCH/REPLACE blocks (Aider / Cline / OpenHands convention used
  * by AMOR's diff-mode debugger) get translated into a unified diff
- * before rendering Ã¢â‚¬â€ diff2html doesn't natively understand the
+ * before rendering — diff2html doesn't natively understand the
  * ``<<<<<<< SEARCH / ======= / >>>>>>> REPLACE`` shape.
  */
 export const DiffBlock: Component<DiffBlockProps> = (props) => {
@@ -63,7 +63,7 @@ export const DiffBlock: Component<DiffBlockProps> = (props) => {
             }
           >
             <p class="px-3 py-2 text-xs text-text-subtle">
-              Loading diff viewerÃ¢â‚¬Â¦
+              Loading diff viewer…
             </p>
           </Show>
         }
@@ -98,7 +98,7 @@ export function toUnifiedDiff(input: string, filename: string): string {
   }
 
   if (blocks.length === 0) {
-    // Best-effort fallback Ã¢â‚¬â€ render input as a single "after" hunk.
+    // Best-effort fallback — render input as a single "after" hunk.
     const lines = input.split("\n");
     const header = `--- a/${filename}\n+++ b/${filename}\n@@ -1,1 +1,${lines.length} @@`;
     return `${header}\n-\n${lines.map((l) => "+" + l).join("\n")}`;

@@ -1,5 +1,5 @@
-/**
- * Cycle C Sprint 4 Day 1+4 Ã¢â‚¬â€ unified chat surface (preview).
+﻿/**
+ * Cycle C Sprint 4 Day 1+4 — unified chat surface (preview).
  *
  * Single-page chat that hosts UnifiedComposer + a readback panel
  * showing the parsed mode, attachment count, and a Day-4 ToolCallCard
@@ -44,7 +44,7 @@ interface SubmittedTurn {
 
 /**
  * Synthesize a minimal canned tool-call trace for the resolved mode
- * so the user sees ToolCallCards animate end-to-end.  Pure local Ã¢â‚¬â€
+ * so the user sees ToolCallCards animate end-to-end.  Pure local —
  * no network.
  */
 function synthFrames(mode: ModeKey): ToolCallFrame[] {
@@ -56,7 +56,7 @@ function synthFrames(mode: ModeKey): ToolCallFrame[] {
       iteration: 0,
       language: mode === "build" ? "python" : "text",
       exit_code: 0,
-      stdout: `(synthetic preview Ã¢â‚¬â€ Day 4 tool-card rendering for ${mode} mode)`,
+      stdout: `(synthetic preview — Day 4 tool-card rendering for ${mode} mode)`,
       stderr: "",
       duration_ms: 12,
     },
@@ -64,7 +64,7 @@ function synthFrames(mode: ModeKey): ToolCallFrame[] {
       type: "review_ready",
       iteration: 0,
       score: 88,
-      summary: "Stubbed Ã¢â‚¬â€ live review awaits chat-stream wiring.",
+      summary: "Stubbed — live review awaits chat-stream wiring.",
       findings: [],
     },
   ];
@@ -141,7 +141,7 @@ export const Chat: Component = () => {
                         {new Date(turn.ts).toLocaleTimeString()}
                       </span>
                       <Show when={turn.attachments > 0}>
-                        <span>Ã‚Â· {turn.attachments} attachment{turn.attachments === 1 ? "" : "s"}</span>
+                        <span>· {turn.attachments} attachment{turn.attachments === 1 ? "" : "s"}</span>
                       </Show>
                     </div>
                     <pre class="whitespace-pre-wrap font-mono text-xs text-text-display">

@@ -1,4 +1,4 @@
-/* @refresh reload */
+﻿/* @refresh reload */
 import { render } from "solid-js/web";
 import {
   Router,
@@ -33,27 +33,27 @@ import { Settings } from "./routes/Settings";
 import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Showcase } from "./routes/Showcase";
-// Cycle C Sprint 0 Day 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â admin baselines dashboard.
+// Cycle C Sprint 0 Day 3 — admin baselines dashboard.
 import { Baselines } from "./routes/Baselines";
-// Cycle C Sprint 1 Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â admin LLM dashboard.
+// Cycle C Sprint 1 Day 4 — admin LLM dashboard.
 import { LLMDashboard } from "./routes/LLM";
-// Cycle C Sprint 2 Day 5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â admin Evals dashboard.
+// Cycle C Sprint 2 Day 5 — admin Evals dashboard.
 import { Evals } from "./routes/Evals";
-// Cycle C Sprint 4 Day 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â mode-agnostic chat surface (legacy).
+// Cycle C Sprint 4 Day 1 — mode-agnostic chat surface (legacy).
 import { Chat } from "./routes/Chat";
-// Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Unified chat single-page route at `/`.
+// Cycle UI 2026-05-20 — Unified chat single-page route at `/`.
 // Replaces the 6-route mode-segregated SPA as the primary surface.
 // Legacy /build /research /thinking /consortium /sentinel routes
 // stay mounted below for rollback (?ui=v1 query param navigates
 // back to /home when needed).
 import { UnifiedChat } from "./routes/UnifiedChat";
-// Cycle C Sprint 6 Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â admin Training surface.
+// Cycle C Sprint 6 Day 4 — admin Training surface.
 import { Training } from "./routes/Training";
-// Cycle C Sprint 7 Day 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â admin Memory viewer (Mem0 OSS).
+// Cycle C Sprint 7 Day 3 — admin Memory viewer (Mem0 OSS).
 import { Memory } from "./routes/Memory";
-// Cycle C Sprint 8 Day 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â agentic ReAct loop UI.
+// Cycle C Sprint 8 Day 4 — agentic ReAct loop UI.
 import { Agent } from "./routes/Agent";
-// Cycle C Sprint 12 Day 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â PWA service-worker registration.
+// Cycle C Sprint 12 Day 1 — PWA service-worker registration.
 import { registerServiceWorker } from "./lib/pwa";
 
 const root = document.getElementById("root");
@@ -71,7 +71,7 @@ const queryClient = new QueryClient({
   },
 });
 
-// Cycle D ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â expose the client so module-scoped code (Build/Research/
+// Cycle D — expose the client so module-scoped code (Build/Research/
 // Thinking ``start`` functions, defined outside any component) can
 // invalidate the Sessions sidebar query as soon as a new chat session
 // is created.
@@ -92,13 +92,13 @@ const applyInitialTheme = () => {
 };
 applyInitialTheme();
 
-// Cycle C Sprint 12 Day 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â register the service worker.  No-op
+// Cycle C Sprint 12 Day 1 — register the service worker.  No-op
 // in dev, no-op when the operator set ``localStorage["amor.pwa"]
 // = "off"``, no-op when navigator.serviceWorker is missing.
 // Errors are swallowed so a registration hiccup never blocks boot.
 void registerServiceWorker();
 
-/** Auth gate ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â wraps every route under AppShell.  When auth.user()
+/** Auth gate — wraps every route under AppShell.  When auth.user()
  *  is null AFTER bootstrap, redirect to /login.  The AppShell only
  *  mounts inside this gate. */
 const Protected: Component<RouteSectionProps> = (props) => {
@@ -163,18 +163,18 @@ render(
   () => (
     <ErrorBoundary fallback={(err, reset) => <ErrorFallback err={err} reset={reset} />}>
       <QueryClientProvider client={queryClient}>
-        {/* No base ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â FastAPI's catch-all SPA fallback at
+        {/* No base — FastAPI's catch-all SPA fallback at
             ``/{spa_path:path}`` serves the same shell for every
             non-API URL, so SolidJS Router routes match on the full
-            pathname (e.g. ``/research`` ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Research). */}
+            pathname (e.g. ``/research`` → Research). */}
         <Router root={App}>
           {/* Public */}
           <Route path="/login" component={Login} />
           <Route path="/showcase" component={Showcase} />
 
-          {/* Protected ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â every route here mounts inside AppShell */}
+          {/* Protected — every route here mounts inside AppShell */}
           <Route path="/" component={Protected}>
-            {/* Cycle UI 2026-05-20 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â UnifiedChat replaces Home at /.
+            {/* Cycle UI 2026-05-20 — UnifiedChat replaces Home at /.
                 Legacy welcome page moves to /home for operator
                 override / rollback. */}
             <Route path="/" component={UnifiedChat} />

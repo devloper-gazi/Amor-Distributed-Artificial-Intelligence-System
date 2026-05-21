@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   For,
   Show,
@@ -25,14 +25,14 @@ export interface ChatComposerProps {
   busy?: boolean;
   onCancel?: () => void;
   placeholder?: string;
-  /** Shown next to the send button ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â usually "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ+Enter to send". */
+  /** Shown next to the send button — usually "⌘+Enter to send". */
   hint?: string;
-  /** Cycle C polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â segmented control above the textarea.  When
+  /** Cycle C polish — segmented control above the textarea.  When
    *  ``effortTiers`` is provided, the composer renders a row of
    *  buttons (one per tier) that call ``onEffortChange`` on click.
    *  Pass-through pattern: the route owns the signal so persistence
    *  + default selection live there.  When omitted, the composer
-   *  renders exactly the same as before ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â backward compatible. */
+   *  renders exactly the same as before — backward compatible. */
   effortTiers?: ReadonlyArray<EffortTierOption>;
   effortValue?: string;
   onEffortChange?: (next: string) => void;
@@ -43,10 +43,10 @@ export interface ChatComposerProps {
 
 /**
  * Chat composer.  Cmd/Ctrl-Enter sends; Shift-Enter newline; plain
- * Enter newline (chat convention ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â accidental sends are worse than
+ * Enter newline (chat convention — accidental sends are worse than
  * an extra keystroke).
  *
- * Cycle C polish ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â optional effort segmented control above the
+ * Cycle C polish — optional effort segmented control above the
  * textarea, rendered when ``effortTiers`` is provided.  Used by
  * Research today; Build/Thinking can opt in by passing the same
  * three props (``effortTiers`` / ``effortValue`` / ``onEffortChange``).
@@ -120,7 +120,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
         value={text()}
         onInput={(e) => setText(e.currentTarget.value)}
         onKeyDown={onKeyDown}
-        placeholder={props.placeholder ?? "Ask anythingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"}
+        placeholder={props.placeholder ?? "Ask anything…"}
         minRows={2}
         maxRows={10}
         class="bg-bg-elevated"
@@ -128,7 +128,7 @@ export const ChatComposer: Component<ChatComposerProps> = (props) => {
       />
       <div class="flex items-center justify-between gap-2">
         <span class="text-xs text-text-subtle">
-          {props.hint ?? "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€¹Ã…â€œ+Enter to send ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Shift+Enter for newline"}
+          {props.hint ?? "⌘+Enter to send · Shift+Enter for newline"}
         </span>
         <Show
           when={!props.busy}

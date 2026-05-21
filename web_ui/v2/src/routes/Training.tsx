@@ -1,18 +1,18 @@
-/**
- * Cycle C Sprint 6 Day 4 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â admin Training UI.
+﻿/**
+ * Cycle C Sprint 6 Day 4 — admin Training UI.
  *
  * Surfaces the preference-pair pool + training-run history + the
  * promote button so an operator can drive the manual gate without
  * dropping into a shell.
  *
  * Sections (top-to-bottom):
- *   1. Pool stats ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â total / untrained / opt-in counts + a progress
+ *   1. Pool stats — total / untrained / opt-in counts + a progress
  *      bar against the 200-pair training threshold.
- *   2. Sample list ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â last 50 pairs (mode + truncated text + opt-in
+ *   2. Sample list — last 50 pairs (mode + truncated text + opt-in
  *      flag); raw text only shows when ``opt_in_raw`` is true.
- *   3. Run button ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â disabled until 200 untrained pairs accumulate
+ *   3. Run button — disabled until 200 untrained pairs accumulate
  *      (matching the API's 409 gate).
- *   4. Run history ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â every training_runs row, with the eval delta
+ *   4. Run history — every training_runs row, with the eval delta
  *      summary + a Promote button when ``promote_ok`` is true.
  *
  * The actual GPU training happens out-of-band (operator runs
@@ -318,7 +318,7 @@ export const Training: Component = () => {
                           {new Date(p.created_at).toLocaleString()}
                         </span>
                         <code class="ml-auto truncate text-[0.65rem] text-text-subtle">
-                          {p.code_hash.slice(0, 12)}ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦
+                          {p.code_hash.slice(0, 12)}…
                         </code>
                       </div>
                       <Show
@@ -402,7 +402,7 @@ export const Training: Component = () => {
                               value={
                                 s().mean_judge_delta != null
                                   ? Number(s().mean_judge_delta).toFixed(2)
-                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
+                                  : "—"
                               }
                             />
                             <Stat
@@ -410,7 +410,7 @@ export const Training: Component = () => {
                               value={
                                 s().worst_judge_delta != null
                                   ? Number(s().worst_judge_delta).toFixed(2)
-                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
+                                  : "—"
                               }
                             />
                             <Stat
@@ -418,7 +418,7 @@ export const Training: Component = () => {
                               value={
                                 s().p50_latency_pct != null
                                   ? `${Number(s().p50_latency_pct).toFixed(1)}%`
-                                  : "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"
+                                  : "—"
                               }
                             />
                             <Stat

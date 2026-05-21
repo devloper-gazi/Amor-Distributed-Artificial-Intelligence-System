@@ -1,4 +1,4 @@
-import { type Component, For, Show } from "solid-js";
+﻿import { type Component, For, Show } from "solid-js";
 import { createQuery } from "@tanstack/solid-query";
 import { TopBar } from "../components/shell/TopBar";
 import {
@@ -28,7 +28,7 @@ interface Diagnostics {
     samples: number;
     recent_failures: Array<{ ts: string; where: string; detail: string }>;
     docker_available?: boolean | null;
-    /** Cycle C Sprint 5 Ã¢â‚¬â€ sandbox hardening posture. */
+    /** Cycle C Sprint 5 — sandbox hardening posture. */
     security?: {
       docker_host: string;
       via_proxy: boolean;
@@ -136,7 +136,7 @@ export const Diagnostics: Component = () => {
                   }
                   secondary={
                     d().sandbox.cold_start_p95_ms !== null
-                      ? `${d().sandbox.cold_start_p95_ms} ms p95 Ã‚Â· ${d().sandbox.samples} runs`
+                      ? `${d().sandbox.cold_start_p95_ms} ms p95 · ${d().sandbox.samples} runs`
                       : t("diagnostics.value.run_to_populate")
                   }
                 />
@@ -145,7 +145,7 @@ export const Diagnostics: Component = () => {
                   title={t("diagnostics.card.ledger")}
                   primary={d().ledger.intact ? t("diagnostics.value.intact") : "broken"}
                   secondary={t("diagnostics.value.tail", {
-                    tail: d().ledger.tail_hash.slice(0, 12) + "Ã¢â‚¬Â¦",
+                    tail: d().ledger.tail_hash.slice(0, 12) + "…",
                     n: d().ledger.entries,
                   })}
                 />
@@ -170,7 +170,7 @@ export const Diagnostics: Component = () => {
                     d().rag.reranker_enabled ? "reranker on" : null,
                   ]
                     .filter(Boolean)
-                    .join(" Ã‚Â· ")}
+                    .join(" · ")}
                 />
                 <Card
                   status="healthy"
@@ -261,7 +261,7 @@ export const Diagnostics: Component = () => {
                             #{(s.session_id ?? s.sid ?? "?").slice(0, 8)}
                           </code>
                           <span class="flex-1 text-text-body">
-                            {s.status ?? "Ã¢â‚¬â€"}
+                            {s.status ?? "—"}
                           </span>
                           <span class="text-xs text-text-subtle">
                             {s.duration_ms

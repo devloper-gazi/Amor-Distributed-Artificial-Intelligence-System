@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   type JSX,
   createSignal,
@@ -9,7 +9,7 @@ import {
 export interface TooltipProps {
   /** Content displayed inside the floating tooltip. */
   label: string;
-  /** Anchored child â€” the trigger element. */
+  /** Anchored child — the trigger element. */
   children: JSX.Element;
   /** Where the tooltip appears relative to the anchor. */
   placement?: "top" | "bottom" | "left" | "right";

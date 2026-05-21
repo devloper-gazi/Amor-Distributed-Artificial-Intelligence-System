@@ -66,6 +66,8 @@ export const tr: Record<string, string> = {
   "mode.sentinel.subtitle":      "yönetişim, defter",
   "mode.system.label":           "Sistem",
   "mode.system.subtitle":        "tanılama, bellek",
+  "mode.quickcode.label":        "Hızlı Kod",
+  "mode.quickcode.subtitle":     "hızlı hedefli düzenleme",
 
   // ── Sidebar krom ────────────────────────────────────────────
   "sidebar.brand":               "AMOR",

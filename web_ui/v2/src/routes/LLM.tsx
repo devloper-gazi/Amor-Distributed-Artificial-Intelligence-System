@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   For,
   Show,
@@ -57,7 +57,7 @@ interface LLMState {
 }
 
 const formatMs = (ms: number | null | undefined): string => {
-  if (ms == null) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+  if (ms == null) return "—";
   if (ms < 1000) return `${ms.toFixed(0)} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 };
@@ -151,7 +151,7 @@ export const LLMDashboard: Component = () => {
                 />
                 <SummaryCell
                   label={t("llm.card.endpoint")}
-                  value={state().base_url || "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
+                  value={state().base_url || "—"}
                   hint={state().healthy ? t("llm.card.endpoint_sub") : t("llm.card.endpoint_unreachable")}
                 />
                 <SummaryCell
@@ -186,7 +186,7 @@ export const LLMDashboard: Component = () => {
                   label={t("llm.card.output_tokens")}
                   value={
                     state().completions_recent.completion_tokens_p50 == null
-                      ? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
+                      ? "—"
                       : (state().completions_recent.completion_tokens_p50 as number).toFixed(0)
                   }
                   hint={t("llm.card.output_tokens_sub")}
@@ -238,9 +238,9 @@ export const LLMDashboard: Component = () => {
                         {(m) => (
                           <tr class="border-b border-border-subtle hover:bg-bg-elevated-v25">
                             <td class="px-3 py-2 font-mono text-xs">
-                              {m.id ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
+                              {m.id ?? "—"}
                             </td>
-                            <td class="px-3 py-2">{m.name ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}</td>
+                            <td class="px-3 py-2">{m.name ?? "—"}</td>
                             <td class="px-3 py-2 text-right">
                               <Show
                                 when={isResident(m.id)}
@@ -292,7 +292,7 @@ export const LLMDashboard: Component = () => {
                     {(ev) => (
                       <li class="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-xs">
                         <span class="font-mono">
-                          {ev.from ? `${ev.from} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ` : "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ "}
+                          {ev.from ? `${ev.from} → ` : "→ "}
                           <span class="text-text-display">{ev.to}</span>
                         </span>
                         <span class="text-text-subtle">

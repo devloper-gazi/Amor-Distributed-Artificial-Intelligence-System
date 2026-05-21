@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   For,
   Show,
@@ -48,7 +48,7 @@ const STATUS_TO_PILL: Record<EvalRun["status"], Status> = {
 };
 
 const formatTime = (iso: string | null): string => {
-  if (!iso) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+  if (!iso) return "—";
   try {
     return new Date(iso).toLocaleString();
   } catch {
@@ -57,19 +57,19 @@ const formatTime = (iso: string | null): string => {
 };
 
 const formatDuration = (start: string | null, end: string | null): string => {
-  if (!start || !end) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+  if (!start || !end) return "—";
   try {
     const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 0 || !Number.isFinite(ms)) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+    if (ms < 0 || !Number.isFinite(ms)) return "—";
     if (ms < 60_000) return `${(ms / 1000).toFixed(0)}s`;
     return `${(ms / 60_000).toFixed(1)}m`;
   } catch {
-    return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+    return "—";
   }
 };
 
 const formatSummary = (summary: Record<string, unknown>): string => {
-  if (!summary || Object.keys(summary).length === 0) return "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â";
+  if (!summary || Object.keys(summary).length === 0) return "—";
   if (typeof summary.error === "string") return `err: ${summary.error.slice(0, 60)}`;
   // Pull the most-meaningful key.
   if ("pass_at_1" in summary) {
@@ -214,7 +214,7 @@ export const Evals: Component = () => {
                           when={
                             kickMutation.isPending && pendingKick() === entry.name
                           }
-                          fallback={<>{entry.implemented ? t("common.run") : "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}</>}
+                          fallback={<>{entry.implemented ? t("common.run") : "—"}</>}
                         >
                           <Spinner size={12} />
                         </Show>
@@ -284,7 +284,7 @@ export const Evals: Component = () => {
                         {formatDuration(row.started_at, row.finished_at)}
                       </td>
                       <td class="px-3 py-2 text-right text-text-subtle text-xs">
-                        {row.backend ?? "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"}
+                        {row.backend ?? "—"}
                       </td>
                       <td class="px-3 py-2 text-right">
                         <span

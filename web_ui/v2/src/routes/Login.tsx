@@ -1,4 +1,4 @@
-import { type Component, createSignal, Show } from "solid-js";
+﻿import { type Component, createSignal, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { auth } from "../lib/auth";
 import { Button, Input } from "../components/ui";
@@ -20,7 +20,7 @@ function humanReadableError(err: unknown): string {
     const d = (body as { detail: unknown }).detail;
     if (typeof d === "string") return d;
     if (Array.isArray(d) && d.length > 0) {
-      // Array ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ take the first validation error and format as
+      // Array → take the first validation error and format as
       // "field: message".
       const first = d[0] as Partial<PydanticValidationError>;
       const field = Array.isArray(first.loc)
@@ -122,7 +122,7 @@ export const Login: Component = () => {
           />
           <Show when={mode() === "register"}>
             <p class="-mt-1 text-[0.65rem] text-text-subtle">
-              At least 10 chars ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· upper + lower + 1 digit.
+              At least 10 chars · upper + lower + 1 digit.
             </p>
           </Show>
         </label>

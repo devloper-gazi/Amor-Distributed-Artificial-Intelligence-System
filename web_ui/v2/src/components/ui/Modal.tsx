@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   type JSX,
   Show,
@@ -21,7 +21,7 @@ export interface ModalProps {
 }
 
 /**
- * Lightweight modal ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â backdrop + centred card + accessible focus
+ * Lightweight modal — backdrop + centred card + accessible focus
  * trap.  Replaces ``window.confirm`` / ``window.prompt`` so we don't
  * surface ugly browser-native dialogs ("localhost:8000 says").
  *
