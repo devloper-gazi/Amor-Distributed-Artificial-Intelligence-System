@@ -161,11 +161,12 @@ export const tr: Record<string, string> = {
   // ── Oturum listesi (Cycle D Sessions parlatma) ─────────────
   "sessions.title":               "Oturumlar",
   "sessions.loading":             "Yükleniyor…",
-  "sessions.empty":               "Henüz oturum yok.",
+  "sessions.empty":               "Henüz oturum yok",
+  "sessions.empty.cta":           "Başlamak için yeni bir sohbet aç",
   "sessions.unnamed":             "Adsız oturum",
   "sessions.actions_label":       "Oturum işlemleri",
   "sessions.action.rename":       "Yeniden adlandır",
-  "sessions.action.pin":          "Sabitle",
+  "sessions.action.pin":          "Üste sabitle",
   "sessions.action.unpin":        "Sabiti kaldır",
   "sessions.action.archive":      "Arşivle",
   "sessions.action.restore":      "Geri yükle",
@@ -176,6 +177,14 @@ export const tr: Record<string, string> = {
   "sessions.rename.save":         "Kaydet",
   "sessions.delete.title":        "Bu oturum silinsin mi?",
   "sessions.delete.description":  "\"{{title}}\" kalıcı olarak silinecek.  Bu işlem geri alınamaz.",
+  // Cycle UI v2.8.3 — satır içi arama + yoğunluk değiştirici
+  "sessions.search.placeholder":  "Oturumları filtrele… (/ tuşu)",
+  "sessions.search.aria":         "Başlık veya moda göre oturumları filtrele",
+  "sessions.search.clear":        "Filtreyi temizle",
+  "sessions.search.no_results":   "Eşleşen oturum yok",
+  "sessions.density.toggle_aria": "Yoğunluğu değiştir",
+  "sessions.density.switch_to_compact":      "Yoğun moda geç",
+  "sessions.density.switch_to_comfortable":  "Rahat moda geç",
   // Durum taksonomisi (updated_at/archived/pinned'dan türetilir)
   "sessions.status.active":       "Aktif",
   "sessions.status.recent":       "Yeni",
@@ -183,10 +192,14 @@ export const tr: Record<string, string> = {
   "sessions.status.stale":        "Eski",
   "sessions.status.archived":     "Arşivli",
   "sessions.status.pinned":       "Sabit",
-  // Tazelik grup başlıkları
+  // Tazelik grup başlıkları — Cycle UI v2.8.3 dün + son_7_gün +
+  // son_30_gün eklendi (3 grup → 5 grup, sabit+arşiv hariç).
   "sessions.group.now":           "Şimdi",
   "sessions.group.today":         "Bugün",
+  "sessions.group.yesterday":     "Dün",
   "sessions.group.this_week":     "Bu hafta",
+  "sessions.group.past_week":     "Son 7 gün",
+  "sessions.group.past_month":    "Son 30 gün",
   "sessions.group.older":         "Daha eski",
   "sessions.group.archived":      "Arşivli",
   // Göreceli zaman ifadeleri

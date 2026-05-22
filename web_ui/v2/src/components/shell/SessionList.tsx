@@ -119,20 +119,10 @@ function modeShortLabel(mode: string | undefined): string {
   }
 }
 
-function modeHref(mode: string | undefined): string {
-  switch (mode) {
-    case "research":
-    case "thinking":
-    case "build":
-    case "consortium":
-    case "sentinel":
-      return `/${mode}`;
-    case "code":
-      return "/build";
-    default:
-      return "/";
-  }
-}
+// Cycle UI v2.8.1 — `modeHref()` removed.  All session rows now
+// route to /?c=<session_id>; UnifiedChat hydrates the transcript
+// from the backend.  Mode-specific routes (/build, /research, …)
+// can't accept ?c= since the v2.5 cutover.
 
 
 // ─── Localized relative-time ──────────────────────────────────────
@@ -155,7 +145,20 @@ export function relativeTime(iso: string | undefined, now: number = Date.now()):
 // ─── Recency grouping ─────────────────────────────────────────────
 
 
-type GroupKey = "pinned" | "today" | "this_week" | "older" | "archived";
+// Cycle UI v2.8.3 — refined recency taxonomy.  Was: pinned / today /
+// this_week / older / archived (5 groups).  Now: pinned / today /
+// yesterday / past_week / past_month / older / archived (7 groups).
+// The yesterday + past_month groups produce finer-grained intuition
+// — operators can tell "I worked on this 4 days ago" without doing
+// the mental arithmetic on a relative timestamp.
+type GroupKey =
+  | "pinned"
+  | "today"
+  | "yesterday"
+  | "past_week"
+  | "past_month"
+  | "older"
+  | "archived";
 
 interface SessionGroup {
   key: GroupKey;
@@ -163,12 +166,16 @@ interface SessionGroup {
   items: ChatSession[];
 }
 
-function groupSessions(items: ChatSession[], now: number = Date.now()): SessionGroup[] {
+export function groupSessions(items: ChatSession[], now: number = Date.now()): SessionGroup[] {
   const pinned: ChatSession[] = [];
   const today: ChatSession[] = [];
-  const week: ChatSession[] = [];
+  const yesterday: ChatSession[] = [];
+  const pastWeek: ChatSession[] = [];
+  const pastMonth: ChatSession[] = [];
   const older: ChatSession[] = [];
   const archived: ChatSession[] = [];
+
+  const DAY = 24 * 60 * 60 * 1000;
 
   for (const s of items) {
     if (s.archived) {
@@ -185,8 +192,10 @@ function groupSessions(items: ChatSession[], now: number = Date.now()): SessionG
       continue;
     }
     const delta = now - ts;
-    if (delta < 24 * 60 * 60 * 1000) today.push(s);
-    else if (delta < 7 * 24 * 60 * 60 * 1000) week.push(s);
+    if (delta < DAY) today.push(s);
+    else if (delta < 2 * DAY) yesterday.push(s);
+    else if (delta < 7 * DAY) pastWeek.push(s);
+    else if (delta < 30 * DAY) pastMonth.push(s);
     else older.push(s);
   }
 
@@ -197,7 +206,9 @@ function groupSessions(items: ChatSession[], now: number = Date.now()): SessionG
   };
   pinned.sort(byTime);
   today.sort(byTime);
-  week.sort(byTime);
+  yesterday.sort(byTime);
+  pastWeek.sort(byTime);
+  pastMonth.sort(byTime);
   older.sort(byTime);
   archived.sort(byTime);
 
@@ -206,13 +217,78 @@ function groupSessions(items: ChatSession[], now: number = Date.now()): SessionG
     out.push({ key: "pinned", label: t("sessions.status.pinned"), items: pinned });
   if (today.length)
     out.push({ key: "today", label: t("sessions.group.today"), items: today });
-  if (week.length)
-    out.push({ key: "this_week", label: t("sessions.group.this_week"), items: week });
+  if (yesterday.length)
+    out.push({ key: "yesterday", label: t("sessions.group.yesterday"), items: yesterday });
+  if (pastWeek.length)
+    out.push({ key: "past_week", label: t("sessions.group.past_week"), items: pastWeek });
+  if (pastMonth.length)
+    out.push({ key: "past_month", label: t("sessions.group.past_month"), items: pastMonth });
   if (older.length)
     out.push({ key: "older", label: t("sessions.group.older"), items: older });
   if (archived.length)
     out.push({ key: "archived", label: t("sessions.group.archived"), items: archived });
   return out;
+}
+
+
+// ─── Density (compact ↔ comfortable) ─────────────────────────────
+
+
+/** Cycle UI v2.8.3 — sessions density toggle.  "comfortable" is the
+ *  v2.8.x baseline (2-line row, mode chip + timestamp).  "compact"
+ *  is a Linear-style power-user mode that hides the secondary row
+ *  and tightens vertical padding.  Persisted to localStorage; the
+ *  signal lives at module scope so the SessionList header toggle and
+ *  the rows share state without prop-drilling. */
+export type SessionDensity = "compact" | "comfortable";
+
+function loadDensity(): SessionDensity {
+  if (typeof localStorage === "undefined") return "comfortable";
+  try {
+    return localStorage.getItem("amor.sessions.density") === "compact"
+      ? "compact"
+      : "comfortable";
+  } catch {
+    return "comfortable";
+  }
+}
+
+function saveDensity(d: SessionDensity): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem("amor.sessions.density", d);
+  } catch {
+    /* ignore quota / disabled storage */
+  }
+}
+
+const [sessionDensity, setSessionDensity] = createSignal<SessionDensity>(
+  loadDensity(),
+);
+
+function toggleSessionDensity(): void {
+  const next: SessionDensity =
+    sessionDensity() === "comfortable" ? "compact" : "comfortable";
+  setSessionDensity(next);
+  saveDensity(next);
+}
+
+
+// ─── Session title matcher (inline search filter) ─────────────────
+
+
+export function matchSession(s: ChatSession, query: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const title = (s.title ?? "").toLowerCase();
+  if (title.includes(q)) return true;
+  const mode = (s.mode ?? "").toLowerCase();
+  if (mode.includes(q)) return true;
+  // ID partial match — operators occasionally remember the first 4-6
+  // characters of a session id from a CLI log.
+  const id = (s.id ?? "").toLowerCase();
+  if (id.startsWith(q)) return true;
+  return false;
 }
 
 
@@ -295,26 +371,142 @@ export const SessionList: Component<SessionListProps> = (props) => {
     return path;
   });
 
+  // Cycle UI v2.8.3 — inline session search.  Filters in-memory by
+  // title / mode / id-prefix BEFORE grouping so each group's count
+  // reflects post-filter cardinality, not the raw list.
+  const [searchQuery, setSearchQuery] = createSignal<string>("");
+  let searchInputRef: HTMLInputElement | undefined;
+
+  /** "/" keyboard shortcut → focus search input.  Skipped when the
+   *  user is already typing in another field (composer, modal etc.)
+   *  to avoid hijacking text input. */
+  onMount(() => {
+    if (typeof window === "undefined") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (searchInputRef && !props.collapsed) {
+        e.preventDefault();
+        searchInputRef.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
+  const filteredSessions = createMemo<ChatSession[]>(() => {
+    const all = q.data?.sessions ?? [];
+    const query = searchQuery().trim();
+    if (!query) return all;
+    return all.filter((s) => matchSession(s, query));
+  });
+
   const groups = createMemo<SessionGroup[]>(() => {
     void tickNow(); // re-group when the clock ticks
-    const list = q.data?.sessions ?? [];
-    return groupSessions(list);
+    return groupSessions(filteredSessions());
   });
 
   const total = createMemo<number>(() => q.data?.sessions?.length ?? 0);
+  const filteredCount = createMemo<number>(() => filteredSessions().length);
+  const isSearching = createMemo<boolean>(() => searchQuery().trim().length > 0);
 
   return (
     <Show when={!props.collapsed && auth.user()}>
-      <div class="mt-6 flex items-center justify-between px-2 mb-1.5">
+      {/* Cycle UI v2.8.3 — section header with inline density toggle.
+          Density button is a tiny chip (40 → 44 px wide depending on
+          locale).  Count chip moves to the right of density so the
+          two share the trailing rail. */}
+      <div class="mt-6 flex items-center justify-between gap-2 px-2 mb-1.5">
         <p class="text-[0.65rem] font-semibold tracking-widest text-text-subtle">
           {localeUpper(t("sessions.title"))}
         </p>
-        <Show when={total() > 0}>
-          <span class="text-[0.6rem] text-text-subtle tabular-nums">
-            {total()}
-          </span>
-        </Show>
+        <div class="flex items-center gap-1.5">
+          <Show when={total() > 0}>
+            <button
+              type="button"
+              aria-label={t("sessions.density.toggle_aria")}
+              title={
+                sessionDensity() === "comfortable"
+                  ? t("sessions.density.switch_to_compact")
+                  : t("sessions.density.switch_to_comfortable")
+              }
+              onClick={toggleSessionDensity}
+              data-amor-density-toggle={sessionDensity()}
+              class="inline-flex h-5 w-5 items-center justify-center rounded text-[0.7rem] leading-none text-text-subtle hover:bg-bg-hover hover:text-text-display focus-visible:outline-2 focus-visible:outline-offset-1"
+            >
+              <span aria-hidden="true">
+                {sessionDensity() === "comfortable" ? "≣" : "≡"}
+              </span>
+            </button>
+          </Show>
+          <Show when={total() > 0 && !isSearching()}>
+            <span class="text-[0.6rem] text-text-subtle tabular-nums">
+              {total()}
+            </span>
+          </Show>
+          <Show when={isSearching()}>
+            <span class="text-[0.6rem] text-text-subtle tabular-nums">
+              {filteredCount()}/{total()}
+            </span>
+          </Show>
+        </div>
       </div>
+
+      {/* Cycle UI v2.8.3 — inline session search.  Visible when the
+          list has ≥4 sessions (small libraries don't need a filter
+          and the empty input is visual noise).  Submit "/" anywhere
+          to focus.  Esc clears + blurs. */}
+      <Show when={total() >= 4}>
+        <div class="px-2 mb-1.5">
+          <div class="relative">
+            <span
+              class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[0.7rem] text-text-mute"
+              aria-hidden="true"
+            >
+              ⌕
+            </span>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setSearchQuery("");
+                  (e.currentTarget as HTMLInputElement).blur();
+                }
+              }}
+              placeholder={t("sessions.search.placeholder")}
+              aria-label={t("sessions.search.aria")}
+              data-amor-session-search=""
+              class="w-full rounded-md border border-border-subtle/60 bg-bg-elevated-v25/40 pl-6 pr-2 py-1 text-[0.75rem] text-text-body placeholder:text-text-mute focus:border-border-strong focus:bg-bg-elevated/80 focus:outline-none transition-colors"
+            />
+            <Show when={isSearching()}>
+              <button
+                type="button"
+                aria-label={t("sessions.search.clear")}
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef?.focus();
+                }}
+                class="absolute right-1 top-1/2 -translate-y-1/2 inline-flex h-5 w-5 items-center justify-center rounded text-[0.65rem] text-text-subtle hover:bg-bg-hover hover:text-text-display"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
       <Show
         when={!q.isLoading}
         fallback={
@@ -326,48 +518,67 @@ export const SessionList: Component<SessionListProps> = (props) => {
         <Show
           when={total() > 0}
           fallback={
-            <p class="px-2 text-xs text-text-subtle">
-              {t("sessions.empty")}
-            </p>
+            <div class="px-2 py-5 text-center">
+              <div
+                class="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-bg-elevated-v25/60 text-[1rem] text-text-subtle"
+                aria-hidden="true"
+              >
+                ✎
+              </div>
+              <p class="text-xs text-text-body">{t("sessions.empty")}</p>
+              <p class="mt-0.5 text-[0.65rem] text-text-mute">
+                {t("sessions.empty.cta")}
+              </p>
+            </div>
           }
         >
-          <div class="max-h-[44vh] overflow-y-auto pr-0.5 space-y-2">
-            <For each={groups()}>
-              {(group) => (
-                <section
-                  data-amor-session-group={group.key}
-                  aria-label={group.label}
-                >
-                  <h3 class="px-2 pb-0.5 text-[0.55rem] font-semibold tracking-wider text-text-subtle/80">
-                    {localeUpper(group.label)}
-                  </h3>
-                  <ul class="space-y-0.5">
-                    <For each={group.items}>
-                      {(s) => (
-                        <SessionRow
-                          session={s}
-                          isCurrentMode={
-                            currentMode() === (s.mode === "code" ? "build" : s.mode)
-                          }
-                          onRename={() => setPending({ kind: "rename", session: s })}
-                          onArchive={() =>
-                            archiveMutation.mutate({
-                              id: s.id,
-                              archived: !s.archived,
-                            })
-                          }
-                          onPin={() =>
-                            pinMutation.mutate({ id: s.id, pinned: !s.pinned })
-                          }
-                          onDelete={() => setPending({ kind: "delete", session: s })}
-                        />
-                      )}
-                    </For>
-                  </ul>
-                </section>
-              )}
-            </For>
-          </div>
+          <Show
+            when={groups().length > 0}
+            fallback={
+              <p class="px-2 py-1 text-xs italic text-text-subtle">
+                {t("sessions.search.no_results")}
+              </p>
+            }
+          >
+            <div class="max-h-[50vh] overflow-y-auto pr-0.5 space-y-2">
+              <For each={groups()}>
+                {(group) => (
+                  <section
+                    data-amor-session-group={group.key}
+                    aria-label={group.label}
+                  >
+                    <h3 class="px-2 pb-0.5 text-[0.55rem] font-semibold tracking-wider text-text-subtle/80">
+                      {localeUpper(group.label)}
+                    </h3>
+                    <ul class="space-y-0.5">
+                      <For each={group.items}>
+                        {(s) => (
+                          <SessionRow
+                            session={s}
+                            density={sessionDensity()}
+                            isCurrentMode={
+                              currentMode() === (s.mode === "code" ? "build" : s.mode)
+                            }
+                            onRename={() => setPending({ kind: "rename", session: s })}
+                            onArchive={() =>
+                              archiveMutation.mutate({
+                                id: s.id,
+                                archived: !s.archived,
+                              })
+                            }
+                            onPin={() =>
+                              pinMutation.mutate({ id: s.id, pinned: !s.pinned })
+                            }
+                            onDelete={() => setPending({ kind: "delete", session: s })}
+                          />
+                        )}
+                      </For>
+                    </ul>
+                  </section>
+                )}
+              </For>
+            </div>
+          </Show>
         </Show>
       </Show>
 
@@ -404,6 +615,7 @@ export const SessionList: Component<SessionListProps> = (props) => {
 
 interface SessionRowProps {
   session: ChatSession;
+  density: SessionDensity;
   isCurrentMode: boolean;
   onRename: () => void;
   onArchive: () => void;
@@ -413,6 +625,7 @@ interface SessionRowProps {
 
 const SessionRow: Component<SessionRowProps> = (props) => {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const isCompact = (): boolean => props.density === "compact";
 
   const title = (): string => {
     const tt = props.session.title?.trim();
@@ -457,7 +670,7 @@ const SessionRow: Component<SessionRowProps> = (props) => {
   };
 
   return (
-    <li class="group relative">
+    <li class="group relative" data-amor-density={props.density}>
       <A
         // Cycle UI v2.8.1 — Bug fix: session click no longer routes to
         // /build, /research, etc (those mode pages don't accept ?c=
@@ -466,17 +679,17 @@ const SessionRow: Component<SessionRowProps> = (props) => {
         // param + hydrates via GET /api/sessions/{id}/branch.  Single
         // route = single state machine = no "click my chat, get a
         // blank composer" regression.
+        //
+        // Cycle UI v2.8.3 — density-aware padding.  Compact mode:
+        // py-1 + single-line layout (no mode chip / timestamp row).
+        // Comfortable: py-2.5 + 2-line layout (v2.8.x baseline).
         href={`/?c=${encodeURIComponent(props.session.id)}`}
         data-amor-session-row=""
         data-amor-session-status={status()}
         data-amor-session-mode={modeKey()}
         class={[
-          // Cycle UI v2.8.1 — typography polish: explicit text-sm
-          // (was inheriting text-xs from parent), font-medium on the
-          // title row, line-height tightened.  Hover state crispier
-          // with mode-tinted left rail when the row is the active
-          // session (URL ?c= match).
-          "relative flex items-start gap-2.5 rounded-md px-2 py-2.5 pr-7",
+          "relative flex items-start gap-2.5 rounded-md px-2 pr-12",
+          isCompact() ? "py-1.5" : "py-2.5",
           "border border-transparent",
           "text-text-body hover:bg-bg-hover hover:text-text-display",
           "transition-colors duration-150",
@@ -491,32 +704,30 @@ const SessionRow: Component<SessionRowProps> = (props) => {
         )}`}
         aria-current={isActiveSession() ? "page" : undefined}
       >
-        {/* Mode-tinted left accent bar — visible only on the
-            currently-selected mode, gives "you are here" cue. */}
         {/* Cycle UI v2.8.1 — mode-tinted left rail visible on the
-            ACTIVE session (URL ?c= match), not the active mode.
-            Was bound to props.isCurrentMode which is a different
-            signal (composer's currently-selected mode, not URL). */}
+            ACTIVE session (URL ?c= match), not the active mode. */}
         <Show when={isActiveSession()}>
           <span
-            class="absolute left-0 top-2 bottom-2 w-[2px] rounded-full"
+            class={[
+              "absolute left-0 w-[2px] rounded-full",
+              isCompact() ? "top-1.5 bottom-1.5" : "top-2 bottom-2",
+            ].join(" ")}
             style={{ background: modeColorVar(modeKey()) }}
             aria-hidden="true"
             data-amor-session-mode-rule=""
           />
         </Show>
 
-        {/* Cycle UI v2.5 — status dot removed.  The 2 px sol mode
-            rule (above) carries the identity affordance; activity
-            level is now reflected only via italic timestamp + an
-            sr-only label so screen readers still announce the
-            "active / recent / stale" state. */}
         <span class="sr-only" data-amor-session-status={status()}>
           {statusLabel()}
         </span>
 
         <span class="flex min-w-0 flex-1 flex-col">
           <span class="flex items-center gap-1.5">
+            {/* Cycle UI v2.8.3 — pinned glyph still shown inline on
+                pinned rows.  The clickable hover-pin button lives in
+                the trailing action rail (right of the title cell) so
+                the title column stays clean. */}
             <Show when={props.session.pinned}>
               <span
                 class="text-[0.7rem] leading-none"
@@ -527,54 +738,125 @@ const SessionRow: Component<SessionRowProps> = (props) => {
                 ★
               </span>
             </Show>
-            {/* Cycle UI v2.8.1 — typography polish: text-[13px] +
-                font-medium + tight leading (was text-xs inherited).
-                Title is the primary identifying surface; needs to
-                read at conversational legibility. */}
-            <span class="truncate text-[13px] font-medium leading-snug">{title()}</span>
-          </span>
-          <span class="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-text-subtle">
-            {/* Mode chip */}
-            <Show when={modeKey()}>
+            {/* Cycle UI v2.8.3 — compact mode inlines the mode chip
+                into the title row (saves a line); comfortable mode
+                keeps it on the second row. */}
+            <Show when={isCompact() && modeKey()}>
               <span
-                class="inline-flex items-center gap-1 rounded px-1 py-px text-[0.55rem] font-medium tracking-wide"
+                class="inline-flex items-center rounded px-1 py-px text-[0.55rem] font-medium tracking-wide"
                 style={{
-                  background: "color-mix(in oklch, " + modeColorVar(modeKey()) + " 14%, transparent)",
+                  background:
+                    "color-mix(in oklch, " +
+                    modeColorVar(modeKey()) +
+                    " 14%, transparent)",
                   color: modeColorVar(modeKey()),
                 }}
+                aria-hidden="true"
               >
                 {localeUpper(modeShortLabel(modeKey()))}
               </span>
             </Show>
-            <span class="truncate italic tabular-nums" data-amor-session-timestamp="">
-              {relativeTime(
-                props.session.updated_at ?? props.session.created_at,
-              )}
-            </span>
+            <span class="truncate text-[13px] font-medium leading-snug">{title()}</span>
           </span>
+          {/* Cycle UI v2.8.3 — second row only shown in comfortable
+              density.  Compact omits the mode chip + timestamp to
+              save vertical space. */}
+          <Show when={!isCompact()}>
+            <span class="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-text-subtle">
+              <Show when={modeKey()}>
+                <span
+                  class="inline-flex items-center gap-1 rounded px-1 py-px text-[0.55rem] font-medium tracking-wide"
+                  style={{
+                    background:
+                      "color-mix(in oklch, " +
+                      modeColorVar(modeKey()) +
+                      " 14%, transparent)",
+                    color: modeColorVar(modeKey()),
+                  }}
+                >
+                  {localeUpper(modeShortLabel(modeKey()))}
+                </span>
+              </Show>
+              <span
+                class="truncate italic tabular-nums"
+                data-amor-session-timestamp=""
+              >
+                {relativeTime(
+                  props.session.updated_at ?? props.session.created_at,
+                )}
+              </span>
+            </span>
+          </Show>
         </span>
       </A>
-      <button
-        type="button"
+
+      {/* Cycle UI v2.8.3 — trailing action rail.  Two buttons:
+          (a) one-click pin/unpin (hover-revealed when unpinned, always
+              visible + gold when pinned),
+          (b) ⋯ menu (rename / archive / delete).
+          Compact rows shrink the rail vertically; comfortable rows
+          give it more breathing room. */}
+      <div
         class={[
-          "absolute right-1 top-1.5 flex h-6 w-6 items-center justify-center",
-          "rounded text-text-subtle hover:bg-bg-elevated-v25 hover:text-text-display",
-          "focus-visible:outline-2 focus-visible:outline-offset-1",
-          menuOpen()
-            ? "bg-bg-elevated-v25 text-text-display opacity-100"
-            : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+          "absolute right-1 flex items-center gap-0.5",
+          isCompact() ? "top-1" : "top-1.5",
         ].join(" ")}
-        aria-label={t("sessions.actions_label")}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen()}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setMenuOpen((o) => !o);
-        }}
       >
-        <span aria-hidden="true">⋯</span>
-      </button>
+        <button
+          type="button"
+          aria-label={
+            props.session.pinned
+              ? t("sessions.action.unpin")
+              : t("sessions.action.pin")
+          }
+          title={
+            props.session.pinned
+              ? t("sessions.action.unpin")
+              : t("sessions.action.pin")
+          }
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onPin();
+          }}
+          data-amor-quick-pin={props.session.pinned ? "on" : "off"}
+          class={[
+            "inline-flex h-6 w-6 items-center justify-center rounded text-[0.75rem]",
+            "focus-visible:outline-2 focus-visible:outline-offset-1",
+            props.session.pinned
+              ? "text-[var(--color-status-warming)] hover:bg-bg-hover"
+              : [
+                  "text-text-mute hover:bg-bg-hover hover:text-text-body",
+                  // Hover-revealed when not pinned — keeps the rail
+                  // clean for "you've never pinned this" rows.
+                  "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                ].join(" "),
+          ].join(" ")}
+        >
+          <span aria-hidden="true">{props.session.pinned ? "★" : "☆"}</span>
+        </button>
+        <button
+          type="button"
+          class={[
+            "inline-flex h-6 w-6 items-center justify-center rounded text-text-subtle",
+            "hover:bg-bg-elevated-v25 hover:text-text-display",
+            "focus-visible:outline-2 focus-visible:outline-offset-1",
+            menuOpen()
+              ? "bg-bg-elevated-v25 text-text-display opacity-100"
+              : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+          ].join(" ")}
+          aria-label={t("sessions.actions_label")}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuOpen((o) => !o);
+          }}
+        >
+          <span aria-hidden="true">⋯</span>
+        </button>
+      </div>
       <Show when={menuOpen()}>
         <SessionMenu
           archived={!!props.session.archived}

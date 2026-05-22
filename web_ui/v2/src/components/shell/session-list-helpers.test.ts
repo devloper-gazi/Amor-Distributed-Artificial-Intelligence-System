@@ -18,6 +18,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   deriveActivityStatus,
   relativeTime,
+  groupSessions,
+  matchSession,
 } from "./SessionList";
 import { setLocale } from "../../i18n";
 import type { ChatSession } from "../../lib/sessions";
@@ -164,5 +166,123 @@ describe("relativeTime()", () => {
     const tsDay = new Date(NOW - 2 * 24 * 60 * 60_000).toISOString();
     expect(relativeTime(tsDay, NOW)).toBe("2g önce");
     setLocale("en");
+  });
+});
+
+
+// ─── groupSessions (Cycle UI v2.8.3 — refined taxonomy) ──────────
+
+
+describe("groupSessions() — v2.8.3 refined recency", () => {
+  const DAY = 24 * 60 * 60_000;
+
+  function group(items: ChatSession[]) {
+    return groupSessions(items, NOW);
+  }
+
+  it("returns empty array for empty input", () => {
+    expect(group([])).toEqual([]);
+  });
+
+  it("places pinned session at the top regardless of age", () => {
+    const out = group([
+      s({ id: "p", pinned: true, updated_at: new Date(NOW - 60 * DAY).toISOString() }),
+      s({ id: "t", updated_at: new Date(NOW - 1000).toISOString() }),
+    ]);
+    expect(out[0]?.key).toBe("pinned");
+    expect(out[0]?.items[0]?.id).toBe("p");
+  });
+
+  it("splits today vs yesterday using a 24h cutoff", () => {
+    const out = group([
+      s({ id: "today", updated_at: new Date(NOW - 6 * 60 * 60_000).toISOString() }),
+      s({ id: "yest",  updated_at: new Date(NOW - 30 * 60 * 60_000).toISOString() }),
+    ]);
+    const keys = out.map((g) => g.key);
+    expect(keys).toContain("today");
+    expect(keys).toContain("yesterday");
+    const today = out.find((g) => g.key === "today");
+    const yest = out.find((g) => g.key === "yesterday");
+    expect(today?.items[0]?.id).toBe("today");
+    expect(yest?.items[0]?.id).toBe("yest");
+  });
+
+  it("routes 3-7 day old sessions into 'past_week'", () => {
+    const out = group([
+      s({ id: "5d", updated_at: new Date(NOW - 5 * DAY).toISOString() }),
+    ]);
+    expect(out[0]?.key).toBe("past_week");
+  });
+
+  it("routes 8-30 day old sessions into 'past_month'", () => {
+    const out = group([
+      s({ id: "15d", updated_at: new Date(NOW - 15 * DAY).toISOString() }),
+    ]);
+    expect(out[0]?.key).toBe("past_month");
+  });
+
+  it("routes sessions >30 days old into 'older'", () => {
+    const out = group([
+      s({ id: "60d", updated_at: new Date(NOW - 60 * DAY).toISOString() }),
+    ]);
+    expect(out[0]?.key).toBe("older");
+  });
+
+  it("separates archived sessions into their own group", () => {
+    const out = group([
+      s({ id: "a", archived: true, updated_at: new Date(NOW - 1000).toISOString() }),
+      s({ id: "t", updated_at: new Date(NOW - 1000).toISOString() }),
+    ]);
+    const keys = out.map((g) => g.key);
+    expect(keys).toContain("archived");
+    expect(keys).toContain("today");
+  });
+
+  it("preserves descending recency within a group", () => {
+    const out = group([
+      s({ id: "older", updated_at: new Date(NOW - 12 * 60 * 60_000).toISOString() }),
+      s({ id: "newer", updated_at: new Date(NOW - 1 * 60 * 60_000).toISOString() }),
+    ]);
+    const today = out.find((g) => g.key === "today");
+    expect(today?.items.map((x) => x.id)).toEqual(["newer", "older"]);
+  });
+});
+
+
+// ─── matchSession (Cycle UI v2.8.3 — inline search filter) ───────
+
+
+describe("matchSession() — v2.8.3 inline filter", () => {
+  it("returns true for empty query (no filtering)", () => {
+    expect(matchSession(s({ title: "Anything" }), "")).toBe(true);
+  });
+
+  it("matches by partial title (case-insensitive)", () => {
+    expect(matchSession(s({ title: "Snake Game Design" }), "snake")).toBe(true);
+    expect(matchSession(s({ title: "Snake Game Design" }), "SNAKE")).toBe(true);
+    expect(matchSession(s({ title: "Snake Game Design" }), "game")).toBe(true);
+  });
+
+  it("returns false when no field matches", () => {
+    expect(matchSession(s({ title: "Snake Game", mode: "build" }), "xyz")).toBe(false);
+  });
+
+  it("matches by mode key", () => {
+    expect(matchSession(s({ title: "X", mode: "research" }), "research")).toBe(true);
+    expect(matchSession(s({ title: "X", mode: "research" }), "RES")).toBe(true);
+  });
+
+  it("matches by id prefix (CLI-style lookup)", () => {
+    expect(matchSession(s({ id: "abc123-foo", title: "X" }), "abc12")).toBe(true);
+    expect(matchSession(s({ id: "abc123-foo", title: "X" }), "ABC")).toBe(true);
+  });
+
+  it("does not match by id substring (only prefix)", () => {
+    expect(matchSession(s({ id: "abc123-foo", title: "X" }), "23-fo")).toBe(false);
+  });
+
+  it("handles missing title / mode gracefully", () => {
+    expect(matchSession(s({ id: "test-id" }), "test")).toBe(true);
+    expect(matchSession(s({ id: "test-id" }), "nope")).toBe(false);
   });
 });

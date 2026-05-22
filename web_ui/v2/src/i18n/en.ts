@@ -161,11 +161,12 @@ export const en: Record<string, string> = {
   // ── Session list (Cycle D Sessions polish) ─────────────────
   "sessions.title":               "Sessions",
   "sessions.loading":             "Loading…",
-  "sessions.empty":               "No sessions yet.",
+  "sessions.empty":               "No sessions yet",
+  "sessions.empty.cta":           "Start a new chat to begin",
   "sessions.unnamed":             "Untitled session",
   "sessions.actions_label":       "Session actions",
   "sessions.action.rename":       "Rename",
-  "sessions.action.pin":          "Pin",
+  "sessions.action.pin":          "Pin to top",
   "sessions.action.unpin":        "Unpin",
   "sessions.action.archive":      "Archive",
   "sessions.action.restore":      "Restore",
@@ -176,6 +177,14 @@ export const en: Record<string, string> = {
   "sessions.rename.save":         "Save",
   "sessions.delete.title":        "Delete this session?",
   "sessions.delete.description":  "\"{{title}}\" will be removed permanently.  This cannot be undone.",
+  // Cycle UI v2.8.3 — inline search + density toggle
+  "sessions.search.placeholder":  "Filter sessions… (press /)",
+  "sessions.search.aria":         "Filter sessions by title or mode",
+  "sessions.search.clear":        "Clear filter",
+  "sessions.search.no_results":   "No matching sessions",
+  "sessions.density.toggle_aria": "Toggle density",
+  "sessions.density.switch_to_compact":      "Switch to compact rows",
+  "sessions.density.switch_to_comfortable":  "Switch to comfortable rows",
   // Status taxonomy (frontend-derived from updated_at/archived/pinned)
   "sessions.status.active":       "Active",
   "sessions.status.recent":       "Recent",
@@ -183,10 +192,15 @@ export const en: Record<string, string> = {
   "sessions.status.stale":        "Older",
   "sessions.status.archived":     "Archived",
   "sessions.status.pinned":       "Pinned",
-  // Recency group headers
+  // Recency group headers — Cycle UI v2.8.3 added yesterday +
+  // past_week + past_month (was 3 groups, now 5 between pinned and
+  // archived).
   "sessions.group.now":           "Now",
   "sessions.group.today":         "Today",
+  "sessions.group.yesterday":     "Yesterday",
   "sessions.group.this_week":     "This week",
+  "sessions.group.past_week":     "Past 7 days",
+  "sessions.group.past_month":    "Past 30 days",
   "sessions.group.older":         "Older",
   "sessions.group.archived":      "Archived",
   // Relative time strings
