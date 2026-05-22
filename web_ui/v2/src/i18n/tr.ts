@@ -185,6 +185,10 @@ export const tr: Record<string, string> = {
   "sessions.density.toggle_aria": "Yoğunluğu değiştir",
   "sessions.density.switch_to_compact":      "Yoğun moda geç",
   "sessions.density.switch_to_comfortable":  "Rahat moda geç",
+  // Cycle UI v2.8.4 — mod filtre çipleri + satır içi yeniden adlandırma
+  "sessions.filter.clear":        "Temizle",
+  "sessions.filter.clear_all":    "Tüm filtreleri temizle",
+  "sessions.rename.hint":         "Yeniden adlandırmak için çift tıkla",
   // Durum taksonomisi (updated_at/archived/pinned'dan türetilir)
   "sessions.status.active":       "Aktif",
   "sessions.status.recent":       "Yeni",

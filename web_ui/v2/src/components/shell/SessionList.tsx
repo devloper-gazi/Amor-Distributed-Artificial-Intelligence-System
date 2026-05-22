@@ -274,6 +274,21 @@ function toggleSessionDensity(): void {
 }
 
 
+// ─── Mode filter chips (Cycle UI v2.8.4) ──────────────────────────
+
+
+/** Modes that participate in the chip filter bar.  Order matches the
+ *  composer's mode pill order so muscle memory carries over. */
+export const FILTERABLE_MODES: readonly string[] = [
+  "build",
+  "research",
+  "thinking",
+  "consortium",
+  "sentinel",
+  "quickcode",
+] as const;
+
+
 // ─── Session title matcher (inline search filter) ─────────────────
 
 
@@ -402,11 +417,37 @@ export const SessionList: Component<SessionListProps> = (props) => {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
+  // Cycle UI v2.8.4 — mode filter chip bar.  Multi-select toggle:
+  // clicking chip A adds A to the active set; clicking again removes it.
+  // Empty set ⇒ no filter.  Chips combine with text-search additively
+  // (both must pass).
+  const [activeModes, setActiveModes] = createSignal<Set<string>>(new Set());
+  const toggleModeFilter = (mode: string): void => {
+    setActiveModes((prev) => {
+      const next = new Set(prev);
+      if (next.has(mode)) next.delete(mode);
+      else next.add(mode);
+      return next;
+    });
+  };
+  const clearAllFilters = (): void => {
+    setSearchQuery("");
+    setActiveModes(new Set<string>());
+  };
+
   const filteredSessions = createMemo<ChatSession[]>(() => {
     const all = q.data?.sessions ?? [];
     const query = searchQuery().trim();
-    if (!query) return all;
-    return all.filter((s) => matchSession(s, query));
+    const modes = activeModes();
+    if (!query && modes.size === 0) return all;
+    return all.filter((s) => {
+      if (modes.size > 0) {
+        const canonical = s.mode === "code" ? "build" : (s.mode ?? "");
+        if (!modes.has(canonical)) return false;
+      }
+      if (query && !matchSession(s, query)) return false;
+      return true;
+    });
   });
 
   const groups = createMemo<SessionGroup[]>(() => {
@@ -417,6 +458,9 @@ export const SessionList: Component<SessionListProps> = (props) => {
   const total = createMemo<number>(() => q.data?.sessions?.length ?? 0);
   const filteredCount = createMemo<number>(() => filteredSessions().length);
   const isSearching = createMemo<boolean>(() => searchQuery().trim().length > 0);
+  const isFiltering = createMemo<boolean>(
+    () => searchQuery().trim().length > 0 || activeModes().size > 0,
+  );
 
   return (
     <Show when={!props.collapsed && auth.user()}>
@@ -447,18 +491,77 @@ export const SessionList: Component<SessionListProps> = (props) => {
               </span>
             </button>
           </Show>
-          <Show when={total() > 0 && !isSearching()}>
+          <Show when={total() > 0 && !isFiltering()}>
             <span class="text-[0.6rem] text-text-subtle tabular-nums">
               {total()}
             </span>
           </Show>
-          <Show when={isSearching()}>
+          <Show when={isFiltering()}>
             <span class="text-[0.6rem] text-text-subtle tabular-nums">
               {filteredCount()}/{total()}
             </span>
           </Show>
         </div>
       </div>
+
+      {/* Cycle UI v2.8.4 — mode filter chip bar.  Visible when there are
+          ≥4 sessions (same gate as inline search; under that the list
+          is short enough to scan visually).  Multi-select via click;
+          clicking the same chip again deactivates.  When ANY filter
+          is active, a "Tümünü temizle" reset link appears. */}
+      <Show when={total() >= 4}>
+        <div class="px-2 mb-1.5">
+          <div class="flex flex-wrap gap-1" data-amor-session-filter-bar="">
+            <For each={FILTERABLE_MODES}>
+              {(m) => {
+                const isActive = () => activeModes().has(m);
+                return (
+                  <button
+                    type="button"
+                    onClick={() => toggleModeFilter(m)}
+                    aria-pressed={isActive()}
+                    data-amor-mode-chip={m}
+                    data-amor-mode-active={isActive() ? "1" : "0"}
+                    title={t(`mode.${m}.label`)}
+                    class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.55rem] font-medium tracking-wide transition-colors focus-visible:outline-2 focus-visible:outline-offset-1"
+                    style={
+                      isActive()
+                        ? {
+                            "border-color": modeColorVar(m),
+                            background:
+                              "color-mix(in oklch, " +
+                              modeColorVar(m) +
+                              " 22%, transparent)",
+                            color: modeColorVar(m),
+                          }
+                        : {
+                            "border-color":
+                              "color-mix(in oklch, var(--color-border-subtle) 60%, transparent)",
+                            color: "var(--color-text-subtle)",
+                          }
+                    }
+                  >
+                    <span aria-hidden="true">
+                      {localeUpper(modeShortLabel(m))}
+                    </span>
+                  </button>
+                );
+              }}
+            </For>
+            <Show when={isFiltering()}>
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                aria-label={t("sessions.filter.clear_all")}
+                title={t("sessions.filter.clear_all")}
+                class="ml-auto inline-flex items-center justify-center rounded-full px-1.5 py-px text-[0.55rem] text-text-mute hover:bg-bg-hover hover:text-text-body"
+              >
+                {localeUpper(t("sessions.filter.clear"))}
+              </button>
+            </Show>
+          </div>
+        </div>
+      </Show>
 
       {/* Cycle UI v2.8.3 — inline session search.  Visible when the
           list has ≥4 sessions (small libraries don't need a filter
@@ -560,6 +663,9 @@ export const SessionList: Component<SessionListProps> = (props) => {
                               currentMode() === (s.mode === "code" ? "build" : s.mode)
                             }
                             onRename={() => setPending({ kind: "rename", session: s })}
+                            onRenameInline={(title) =>
+                              renameMutation.mutate({ id: s.id, title })
+                            }
                             onArchive={() =>
                               archiveMutation.mutate({
                                 id: s.id,
@@ -618,6 +724,10 @@ interface SessionRowProps {
   density: SessionDensity;
   isCurrentMode: boolean;
   onRename: () => void;
+  // Cycle UI v2.8.4 — inline rename without opening the modal.  Wired
+  // straight to renameMutation; falls back to onRename (modal) for
+  // mobile / a11y users where double-click isn't ergonomic.
+  onRenameInline: (title: string) => void;
   onArchive: () => void;
   onPin: () => void;
   onDelete: () => void;
@@ -625,7 +735,36 @@ interface SessionRowProps {
 
 const SessionRow: Component<SessionRowProps> = (props) => {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  // Cycle UI v2.8.4 — inline edit state (double-click on title → input).
+  const [editing, setEditing] = createSignal<boolean>(false);
+  const [draft, setDraft] = createSignal<string>("");
+  let inputRef: HTMLInputElement | undefined;
   const isCompact = (): boolean => props.density === "compact";
+
+  const startEdit = (e?: Event): void => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setDraft(title());
+    setEditing(true);
+    // Focus + select-all on next tick so the user can immediately type.
+    queueMicrotask(() => {
+      inputRef?.focus();
+      inputRef?.select();
+    });
+  };
+  const commitEdit = (): void => {
+    const next = draft().trim();
+    setEditing(false);
+    if (!next) return;
+    if (next === title()) return;
+    props.onRenameInline(next);
+  };
+  const cancelEdit = (): void => {
+    setEditing(false);
+    setDraft("");
+  };
 
   const title = (): string => {
     const tt = props.session.title?.trim();
@@ -703,6 +842,34 @@ const SessionRow: Component<SessionRowProps> = (props) => {
           props.session.updated_at ?? props.session.created_at,
         )}`}
         aria-current={isActiveSession() ? "page" : undefined}
+        onKeyDown={(e) => {
+          // Cycle UI v2.8.4 — keyboard arrow navigation across rows.
+          // Arrow Up/Down moves focus to the previous/next row in
+          // the sidebar.  Enter follows the link (browser default).
+          // Cmd/Ctrl+P toggles pin; Cmd/Ctrl+Shift+R triggers rename
+          // (inline edit on the same row, no modal hop).
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            const rows = Array.from(
+              document.querySelectorAll<HTMLAnchorElement>(
+                "a[data-amor-session-row]",
+              ),
+            );
+            const idx = rows.indexOf(e.currentTarget as HTMLAnchorElement);
+            if (idx < 0) return;
+            const nextIdx =
+              e.key === "ArrowDown"
+                ? Math.min(rows.length - 1, idx + 1)
+                : Math.max(0, idx - 1);
+            rows[nextIdx]?.focus();
+          } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+            e.preventDefault();
+            props.onPin();
+          } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "r") {
+            e.preventDefault();
+            startEdit();
+          }
+        }}
       >
         {/* Cycle UI v2.8.1 — mode-tinted left rail visible on the
             ACTIVE session (URL ?c= match), not the active mode. */}
@@ -756,7 +923,50 @@ const SessionRow: Component<SessionRowProps> = (props) => {
                 {localeUpper(modeShortLabel(modeKey()))}
               </span>
             </Show>
-            <span class="truncate text-[13px] font-medium leading-snug">{title()}</span>
+            {/* Cycle UI v2.8.4 — double-click on title → inline edit
+                (no modal interruption).  Enter commits, Esc cancels,
+                blur commits.  Clicking inside the input doesn't
+                navigate (preventDefault + stopPropagation on the input
+                itself). */}
+            <Show
+              when={!editing()}
+              fallback={
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={draft()}
+                  onInput={(e) =>
+                    setDraft((e.currentTarget as HTMLInputElement).value)
+                  }
+                  onBlur={commitEdit}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitEdit();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  aria-label={t("sessions.rename.placeholder")}
+                  data-amor-session-rename-input=""
+                  class="min-w-0 flex-1 rounded border border-border-strong bg-bg-canvas px-1 py-px text-[13px] font-medium leading-snug text-text-display focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]"
+                />
+              }
+            >
+              <span
+                class="truncate text-[13px] font-medium leading-snug"
+                ondblclick={(e) => startEdit(e)}
+                title={t("sessions.rename.hint")}
+              >
+                {title()}
+              </span>
+            </Show>
           </span>
           {/* Cycle UI v2.8.3 — second row only shown in comfortable
               density.  Compact omits the mode chip + timestamp to

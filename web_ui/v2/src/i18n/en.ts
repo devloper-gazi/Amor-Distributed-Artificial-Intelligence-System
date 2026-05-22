@@ -185,6 +185,10 @@ export const en: Record<string, string> = {
   "sessions.density.toggle_aria": "Toggle density",
   "sessions.density.switch_to_compact":      "Switch to compact rows",
   "sessions.density.switch_to_comfortable":  "Switch to comfortable rows",
+  // Cycle UI v2.8.4 — mode filter chips + inline rename
+  "sessions.filter.clear":        "Clear",
+  "sessions.filter.clear_all":    "Clear all filters",
+  "sessions.rename.hint":         "Double-click to rename",
   // Status taxonomy (frontend-derived from updated_at/archived/pinned)
   "sessions.status.active":       "Active",
   "sessions.status.recent":       "Recent",
