@@ -61,6 +61,9 @@ import {
 // prompt with "/".  Pure-presentation; reuses SLASH_ALIASES from
 // composer-parsers via the overlay.
 import { SlashCommandOverlay } from "./SlashCommandOverlay";
+// Cycle UI v2.6.2 (D3) — inline SVG icon set for the composer's
+// premium icon polish (Send + Attach + Chevron).
+import { SendArrow, Paperclip, ChevronDown } from "../ui/icons";
 import { modeLabel, t, localeUpper } from "../../i18n";
 
 // Re-export the pure parsers so existing imports from
@@ -446,7 +449,23 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   return (
     <form
-      class="relative flex flex-col gap-2 border-t border-border-subtle bg-bg-elevated-v25 px-5 py-4"
+      class={[
+        // Cycle UI v2.6.2 — composer kartlaştı (Karar D4):
+        // rounded-lg + ring-style border + soft shadow + bg-elevated/95
+        // backdrop-blur. Empty-state'de viewport-centered kart, active
+        // state'de mesajların altında elevated kart.  group prefix
+        // hint'in focus-within ile görünür olması için (Karar D5).
+        // py 4→5 ile Bubble (px-5 py-5) ritmiyle eşitlendi (Karar D10).
+        // rounded-md → rounded-lg ile container > control hierarchy
+        // (Karar D9).
+        "amor-composer group relative flex flex-col gap-2",
+        "rounded-lg border border-border-subtle/50 bg-bg-elevated/95",
+        "px-5 py-5 shadow-md backdrop-blur-sm",
+        "transition-[box-shadow,border-color] duration-200",
+        "focus-within:border-border-subtle focus-within:shadow-lg",
+        // busy state — D8 pulse class
+        props.busy ? "amor-composer--busy" : "",
+      ].join(" ")}
       onSubmit={(e: SubmitEvent) => {
         e.preventDefault();
         submit();
@@ -591,15 +610,21 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
           expanded={pickerOpen()}
           badge={props.modeBadge}
         />
-        <button
+        {/* Cycle UI v2.6.2 (D6) — Attach button artık Button primitive
+            ghost variant; text label kaldırıldı, sadece Paperclip icon.
+            aria-label semantik adı korur (a11y). h-8 hizalanır
+            Send + ModePill ile (önceki h-7 idi, ritim sapması). */}
+        <Button
           type="button"
-          class="rounded border border-border-subtle bg-bg-elevated px-2 py-1 text-xs text-text-body hover:border-border-strong"
+          variant="ghost"
+          size="sm"
+          class="!px-2"
           onClick={() => fileInputRef?.click()}
           aria-label={t("common.attach")}
           data-amor-attach="trigger"
         >
-          {t("common.attach")}
-        </button>
+          <Paperclip class="h-4 w-4" />
+        </Button>
         <input
           ref={(el: HTMLInputElement) => (fileInputRef = el)}
           type="file"
@@ -612,7 +637,13 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             e.currentTarget.value = "";
           }}
         />
-        <span class="ml-2 flex-1 truncate text-xs text-text-subtle">
+        {/* Cycle UI v2.6.2 (D5) — hint composer odaktayken görünür,
+            blur'da gizli (group-focus-within CSS-only).  aria-hidden
+            görsel için; sözlü anlam ⌘+Enter shortcut zaten yardım
+            metni — screen reader user'lar bunu özellikle dinler. */}
+        <span
+          class="ml-2 hidden flex-1 truncate text-xs text-text-subtle opacity-0 transition-opacity duration-200 group-focus-within:inline group-focus-within:opacity-100"
+        >
           {t("chat.send_hint")}
         </span>
         <Show
@@ -628,12 +659,19 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             </Button>
           }
         >
+          {/* Cycle UI v2.6.2 (D2 + D11) — Send icon-only.  aria-label
+              koruyor screen reader user'lar için "Gönder" / "Send"
+              context'i kaybetmesin.  Square shape (h-8 w-8, !px-0)
+              icon optical center'a yerleşsin diye.  translate-y-[-0.5px]
+              optical alignment — geometric center subpixel altta. */}
           <Button
             type="submit"
             size="sm"
+            class="!px-0 w-8"
+            aria-label={t("common.send")}
             disabled={!livePreview().text && attachments().length === 0}
           >
-            {t("common.send")}
+            <SendArrow class="h-4 w-4 translate-y-[-0.5px]" />
           </Button>
         </Show>
       </div>
@@ -666,14 +704,23 @@ const ModePill: Component<{
     <button
       type="button"
       onClick={props.onClick}
-      class="group flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-elevated px-3 py-1 text-xs hover:border-border-strong"
+      // Cycle UI v2.6.2 (D7) — desaturated mode pill.
+      // Background mode-accent + transparent 8% mix (was 14%); border
+      // mode-accent + transparent 25% mix (önceden border-subtle).
+      // Text mode-accent + text-body 65/35 mix — pastel + AA-safe.
+      // active:scale press feedback Button.tsx pattern'inden ilham.
+      class="group flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-[transform,background-color] duration-150 active:scale-[0.97] transform-gpu"
+      style={{
+        background: "color-mix(in oklch, var(--mode-accent) 8%, transparent)",
+        "border": "1px solid color-mix(in oklch, var(--mode-accent) 25%, transparent)",
+        color: "color-mix(in oklch, var(--mode-accent) 65%, var(--color-text-body) 35%)",
+      }}
       aria-haspopup="listbox"
       aria-expanded={props.expanded}
       data-amor-mode={props.mode}
     >
       <span
         class="flex h-3.5 w-3.5 items-center justify-center text-[0.85rem] leading-none"
-        style={{ color: "var(--mode-accent)" }}
         aria-hidden="true"
       >
         {MODE_GLYPH[props.mode]}
@@ -687,9 +734,14 @@ const ModePill: Component<{
           {localeUpper(props.badge ?? "")}
         </span>
       </Show>
-      <span class="text-text-subtle" aria-hidden="true">
-        {props.expanded ? "▴" : "▾"}
-      </span>
+      {/* Cycle UI v2.6.2 (D3) — ChevronDown inline SVG, geometric
+          stroke 1.75; rotate-180 when expanded. */}
+      <ChevronDown
+        class={[
+          "h-3 w-3 text-text-subtle transition-transform duration-150",
+          props.expanded ? "rotate-180" : "",
+        ].join(" ")}
+      />
     </button>
   );
 };

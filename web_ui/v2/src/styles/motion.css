@@ -102,9 +102,36 @@
   transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
               border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* Cycle UI v2.6.2 (D12) — focus-within composer kazanır:
+ *   * 2 px crisp ring (existing --color-focus-ring)
+ *   * 24 px outer halo, mode-accent tinted via color-mix at 30%
+ * Halo box-shadow GPU-promoted değil (transform yok), CLS riski 0.
+ * Mode accent --mode-accent ContextVar yoluyla composer ancestor'dan
+ * inherit eder; mode değişince halo rengi de değişir. */
 .amor-composer:focus-within {
-  /* box-shadow / ring applied via Tailwind utilities on the JSX. */
-  transition-duration: 150ms;
+  box-shadow:
+    0 0 0 2px var(--color-focus-ring),
+    0 0 24px -4px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 30%, transparent);
+  transition-duration: 200ms;
+}
+
+/* Cycle UI v2.6.2 (D8) — busy state pulse.  When the composer is
+ * mid-submission (Spinner shown in place of Send icon), the outer
+ * ring softly pulses 3s loop on a slow alternate cubic-bezier.
+ * Ring-only (box-shadow) — width/height never animate so layout
+ * is stable.  Color is mode-accent at 35% alpha so it's visible but
+ * not aggressive. */
+@keyframes amor-composer-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 55%, transparent),
+                0 0 24px -4px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 25%, transparent);
+  }
+}
+.amor-composer--busy {
+  animation: amor-composer-pulse 3s ease-in-out infinite;
 }
 
 /* ── Hover-reveal helper ───────────────────────────────────────────────────
@@ -201,6 +228,13 @@
   .amor-composer,
   .amor-hover-reveal {
     transition: none;
+  }
+  /* Cycle UI v2.6.2 — busy pulse halt under reduced-motion;
+     static ring remains so user still sees the "busy" cue. */
+  .amor-composer--busy {
+    animation: none;
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 40%, transparent);
   }
   /* Hover-reveal items become always-visible under reduced motion so
      users with reduced-motion preferences don't lose the affordance. */
