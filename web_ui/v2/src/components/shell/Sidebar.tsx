@@ -93,7 +93,11 @@ export const Sidebar: Component<SidebarProps> = (props) => {
   return (
     <aside
       class={[
-        "flex h-full flex-col border-r border-border-subtle bg-bg-elevated-v25",
+        // Cycle UI v2.6.1 — translucent sidebar so the halo
+        // backdrop bleeds through and the surface feels lighter.
+        // 70% opacity + backdrop-blur lifts the chat canvas
+        // forward.  Border softens to subtle/30.
+        "flex h-full flex-col border-r border-border-subtle/60 bg-bg-elevated-v25/70 backdrop-blur-md",
         "transition-[width] duration-200",
         props.collapsed ? "w-14" : "w-60",
       ].join(" ")}

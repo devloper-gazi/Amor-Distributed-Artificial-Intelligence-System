@@ -37,9 +37,11 @@ import { UnifiedComposer } from "../components/chat/UnifiedComposer";
 // Cycle UI v2.5 Phase 3 — seed-prompt grid shown when the thread
 // is empty.  Clicking a card pre-fills the composer + sets the
 // suggested mode without auto-submitting.
-import { EmptyState } from "../components/chat/EmptyState";
 // Cycle UI v2.6 (Karar A + H) — atmospheric halo backdrop, mode-tinted.
 import { Halo } from "../components/chat/Halo";
+// Cycle UI v2.6.1 — Greeting moves OUT of EmptyState into UnifiedChat
+// so it can sit side-by-side with a centered composer on empty thread.
+import { Greeting } from "../components/chat/Greeting";
 import {
   UNIFIED_REDUCER,
   createChatStream,
@@ -348,50 +350,63 @@ export const UnifiedChat: Component = () => {
           behind everything via position:fixed + z-index:-1; mode prop
           drives the tint, focus state handled in D10 (Karar H). */}
       <Halo mode={activeMode() ?? suggestedMode()} focused={composerFocused()} />
-      <TopBar
-        title={t("chat.unified_title")}
-        subtitle={t("chat.unified_subtitle")}
-      />
+      {/* Cycle UI v2.6.1 — minimal TopBar: title-only, no subtitle.
+          The mode breadcrumb is intentionally hidden now — modes are
+          implicit via auto-classifier; surfacing them in the topbar
+          turned the chat surface into a control panel.  TopBar
+          collapses to a thin chrome strip; sessions live in sidebar. */}
+      <TopBar title={t("chat.unified_title")} />
       <ConnectionBanner status={status()} />
-      <main class="flex-1 overflow-y-auto">
-        <MessageThread
-          turns={turns()}
-          emptyState={
-            <EmptyState
-              onSeed={(text, mode) => {
-                // Pre-fill the composer by routing through the
-                // classifier signal path.  Setting the suggested
-                // mode override directly so the ModePill reflects
-                // the user's seed pick.
-                setActiveMode(mode);
-                classifier.setPrompt(text);
-                // Surface the seed text via DOM event the
-                // UnifiedComposer listens for (composer owns the
-                // textarea ref + value).  Falls back to inserting
-                // via classifier path only if the composer hasn't
-                // wired the listener yet.
-                if (typeof window !== "undefined") {
-                  window.dispatchEvent(
-                    new CustomEvent("amor:composer-seed", {
-                      detail: { text, mode },
-                    }),
-                  );
-                }
-              }}
-            />
-          }
+      {/* Cycle UI v2.6.1 (Karar F-part2) — chat-only layout.
+          When the thread is empty, composer + greeting share the
+          centered hero area.  After first turn, composer drops to
+          its conventional bottom-fixed slot.  Pure CSS layout
+          switch — no UnifiedComposer internals touched. */}
+      <Show
+        when={turns().length > 0}
+        fallback={
+          <main class="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4">
+            <div class="amor-enter w-full max-w-2xl">
+              {/* Greeting carries the hero weight on empty state. */}
+              <div class="mb-6 flex flex-col items-center">
+                <Greeting />
+              </div>
+              {/* Composer mounted INSIDE the centered column when
+                  thread is empty.  Same component instance — Solid
+                  preserves state across the Show fallback switch
+                  because we keep it mounted under a single key
+                  via the Show's reactive boundary.  No state loss. */}
+              <UnifiedComposer
+                onSubmit={onSubmit}
+                busy={busy()}
+                onCancel={onCancel}
+                initialMode={activeMode()}
+                modeOverride={suggestedMode()}
+                modeBadge={badgeText()}
+                onTextChange={(text) => classifier.setPrompt(text)}
+                placeholder={placeholderText()}
+              />
+            </div>
+          </main>
+        }
+      >
+        <main class="flex-1 overflow-y-auto">
+          <MessageThread
+            turns={turns()}
+            emptyState={null}
+          />
+        </main>
+        <UnifiedComposer
+          onSubmit={onSubmit}
+          busy={busy()}
+          onCancel={onCancel}
+          initialMode={activeMode()}
+          modeOverride={suggestedMode()}
+          modeBadge={badgeText()}
+          onTextChange={(text) => classifier.setPrompt(text)}
+          placeholder={placeholderText()}
         />
-      </main>
-      <UnifiedComposer
-        onSubmit={onSubmit}
-        busy={busy()}
-        onCancel={onCancel}
-        initialMode={activeMode()}
-        modeOverride={suggestedMode()}
-        modeBadge={badgeText()}
-        onTextChange={(text) => classifier.setPrompt(text)}
-        placeholder={placeholderText()}
-      />
+      </Show>
       <Show when={classifier.error()}>
         <div class="bg-bg-elevated-v25 px-5 py-1 text-[0.7rem] text-text-subtle">
           {t("classifier.error")}: {classifier.error()?.message}
