@@ -62,11 +62,15 @@ export const Greeting: Component = () => {
 
   return (
     <h1
-      class="amor-enter text-center font-medium tracking-tight text-text-display"
+      // Cycle UI v2.6.3 — Greeting daha hafif Gemini "What should we
+      // focus on?" tarzı: clamp(22-32px), weight 400 (regular),
+      // text-subtle (display'den daha yumuşak), tight tracking.
+      // Card composer'ın altındaki rolü hero'dan invite-line'a düştü.
+      class="amor-enter text-center font-normal tracking-tight text-text-display"
       style={{
-        "font-size": "clamp(1.75rem, 4.4vw, 2.75rem)",
-        "line-height": "1.15",
-        "letter-spacing": "-0.02em",
+        "font-size": "clamp(1.5rem, 3.2vw, 2rem)",
+        "line-height": "1.2",
+        "letter-spacing": "-0.015em",
         "max-width": "38ch",
         "margin-left": "auto",
         "margin-right": "auto",

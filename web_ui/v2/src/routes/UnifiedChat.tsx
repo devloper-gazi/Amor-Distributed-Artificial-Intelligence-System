@@ -366,9 +366,11 @@ export const UnifiedChat: Component = () => {
         when={turns().length > 0}
         fallback={
           <main class="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4">
-            <div class="amor-enter w-full max-w-2xl">
-              {/* Greeting carries the hero weight on empty state. */}
-              <div class="mb-6 flex flex-col items-center">
+            {/* Cycle UI v2.6.3 — wrap max-w-2xl → max-w-3xl, Gemini
+                geniş composer pill-flow paterni.  Greeting margin
+                composer'a 8 → 5 (daha sıkı, "alan" değil "konuşma"). */}
+            <div class="amor-enter w-full max-w-3xl">
+              <div class="mb-5 flex flex-col items-center">
                 <Greeting />
               </div>
               {/* Composer mounted INSIDE the centered column when

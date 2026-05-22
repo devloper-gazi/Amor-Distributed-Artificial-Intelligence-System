@@ -171,8 +171,10 @@
   --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l + 0.30) calc(c * 0.45) h);
   --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l + 0.30) calc(c * 0.45) h);
   --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l + 0.30) calc(c * 0.45) h);
-  --color-halo-alpha-base:     0.55;
-  --color-halo-alpha-focus:    0.85;
+  /* Cycle UI v2.6.3 — halo daha subtle (0.55→0.35).  Composer card
+     daha öne çıkıyor; halo onun arka planı, dominantı değil. */
+  --color-halo-alpha-base:     0.35;
+  --color-halo-alpha-focus:    0.65;
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -242,8 +244,9 @@
   --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
   --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
   --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
-  --color-halo-alpha-base:     0.55;
-  --color-halo-alpha-focus:    0.85;
+  /* Cycle UI v2.6.3 — dark halo subtle (0.55→0.35).  See light note. */
+  --color-halo-alpha-base:     0.35;
+  --color-halo-alpha-focus:    0.65;
 }
 
 /* System preference falls back to dark when no explicit choice. */
@@ -296,8 +299,9 @@
     --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
     --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
     --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
-    --color-halo-alpha-base:     0.55;
-    --color-halo-alpha-focus:    0.85;
+    /* Cycle UI v2.6.3 — system-dark halo subtle parity. */
+    --color-halo-alpha-base:     0.35;
+    --color-halo-alpha-focus:    0.65;
   }
 }
 

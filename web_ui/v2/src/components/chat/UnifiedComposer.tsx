@@ -64,6 +64,8 @@ import { SlashCommandOverlay } from "./SlashCommandOverlay";
 // Cycle UI v2.6.2 (D3) — inline SVG icon set for the composer's
 // premium icon polish (Send + Attach + Chevron).
 import { SendArrow, Paperclip, ChevronDown } from "../ui/icons";
+// Cycle UI v2.6.3 — Send button mode-tinted background.
+import { modeColorVar } from "../../lib/mode-color";
 import { modeLabel, t, localeUpper } from "../../i18n";
 
 // Re-export the pure parsers so existing imports from
@@ -450,19 +452,17 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
   return (
     <form
       class={[
-        // Cycle UI v2.6.2 — composer kartlaştı (Karar D4):
-        // rounded-lg + ring-style border + soft shadow + bg-elevated/95
-        // backdrop-blur. Empty-state'de viewport-centered kart, active
-        // state'de mesajların altında elevated kart.  group prefix
-        // hint'in focus-within ile görünür olması için (Karar D5).
-        // py 4→5 ile Bubble (px-5 py-5) ritmiyle eşitlendi (Karar D10).
-        // rounded-md → rounded-lg ile container > control hierarchy
-        // (Karar D9).
-        "amor-composer group relative flex flex-col gap-2",
-        "rounded-lg border border-border-subtle/50 bg-bg-elevated/95",
-        "px-5 py-5 shadow-md backdrop-blur-sm",
-        "transition-[box-shadow,border-color] duration-200",
-        "focus-within:border-border-subtle focus-within:shadow-lg",
+        // Cycle UI v2.6.3 — Gemini-style pill composer.  Compact
+        // (px-3 py-2.5), rounded-3xl pill-like, more transparent
+        // shell (bg-elevated/80) so the halo bleeds through, deeper
+        // outer shadow (shadow-2xl) for elevated lift without heavy
+        // border.  Border softened to /30 alpha — barely-there frame
+        // when blurred, crisp when focused.
+        "amor-composer group relative flex flex-col gap-1.5",
+        "rounded-3xl border border-border-subtle/30 bg-bg-elevated/80",
+        "px-3 py-2.5 shadow-xl backdrop-blur-md",
+        "transition-[box-shadow,border-color,background-color] duration-200",
+        "focus-within:border-border-subtle/60 focus-within:bg-bg-elevated/90 focus-within:shadow-2xl",
         // busy state — D8 pulse class
         props.busy ? "amor-composer--busy" : "",
       ].join(" ")}
@@ -474,6 +474,11 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       data-amor-composer="unified"
+      // Cycle UI v2.6.3 — theme.css [data-mode] selector --mode-accent
+      // set eder; tüm descendant elementler (Send button, ModePill,
+      // focus ring) inherit eder.  effectiveMode() user-pick + classifier
+      // priority order'ı yansıtır.
+      data-mode={effectiveMode()}
     >
       {/* Drag-drop overlay */}
       <Show when={dragActive()}>
@@ -659,20 +664,33 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             </Button>
           }
         >
-          {/* Cycle UI v2.6.2 (D2 + D11) — Send icon-only.  aria-label
-              koruyor screen reader user'lar için "Gönder" / "Send"
-              context'i kaybetmesin.  Square shape (h-8 w-8, !px-0)
-              icon optical center'a yerleşsin diye.  translate-y-[-0.5px]
-              optical alignment — geometric center subpixel altta. */}
-          <Button
+          {/* Cycle UI v2.6.3 — Send button artık mode-accent solid
+              renkte, rounded-full (Gemini blue / Claude orange
+              pattern paraleli).  AMOR'da renk her zaman active mode'a
+              bağlı — Build'de yeşil, Research'de mavi vs.  Custom
+              inline button (NOT Button primitive) çünkü mode-accent
+              solid + rounded-full kombinasyonu primary variant'tan
+              farklı semantik.  h-8 w-8 square + icon center. */}
+          <button
             type="submit"
-            size="sm"
-            class="!px-0 w-8"
-            aria-label={t("common.send")}
             disabled={!livePreview().text && attachments().length === 0}
+            aria-label={t("common.send")}
+            class={[
+              "inline-flex h-8 w-8 items-center justify-center rounded-full",
+              "text-white shadow-sm",
+              "transition-[transform,opacity,background-color] duration-150",
+              "hover:opacity-90 active:scale-[0.94] transform-gpu",
+              "disabled:opacity-30 disabled:cursor-not-allowed",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+              "amor-touch",
+            ].join(" ")}
+            style={{
+              "background-color": modeColorVar(effectiveMode()),
+            }}
+            data-amor-send=""
           >
             <SendArrow class="h-4 w-4 translate-y-[-0.5px]" />
-          </Button>
+          </button>
         </Show>
       </div>
 
@@ -704,28 +722,26 @@ const ModePill: Component<{
     <button
       type="button"
       onClick={props.onClick}
-      // Cycle UI v2.6.2 (D7) — desaturated mode pill.
-      // Background mode-accent + transparent 8% mix (was 14%); border
-      // mode-accent + transparent 25% mix (önceden border-subtle).
-      // Text mode-accent + text-body 65/35 mix — pastel + AA-safe.
-      // active:scale press feedback Button.tsx pattern'inden ilham.
-      class="group flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-[transform,background-color] duration-150 active:scale-[0.97] transform-gpu"
+      // Cycle UI v2.6.3 — compact pill: padding daha sıkı (px-2 py-0.5,
+      // önceden px-3 py-1), border kaldırıldı (sadece bg subtle), text
+      // daha sade (no font-medium).  Gemini "Pro" dropdown tarzı —
+      // küçük, baskın değil, mode bilgisi var ama dominant değil.
+      class="group flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.7rem] transition-[transform,background-color] duration-150 active:scale-[0.97] transform-gpu hover:bg-bg-hover"
       style={{
-        background: "color-mix(in oklch, var(--mode-accent) 8%, transparent)",
-        "border": "1px solid color-mix(in oklch, var(--mode-accent) 25%, transparent)",
-        color: "color-mix(in oklch, var(--mode-accent) 65%, var(--color-text-body) 35%)",
+        background: "color-mix(in oklch, var(--mode-accent) 6%, transparent)",
+        color: "color-mix(in oklch, var(--mode-accent) 60%, var(--color-text-body) 40%)",
       }}
       aria-haspopup="listbox"
       aria-expanded={props.expanded}
       data-amor-mode={props.mode}
     >
       <span
-        class="flex h-3.5 w-3.5 items-center justify-center text-[0.85rem] leading-none"
+        class="flex h-3 w-3 items-center justify-center text-[0.75rem] leading-none"
         aria-hidden="true"
       >
         {MODE_GLYPH[props.mode]}
       </span>
-      <span class="font-medium">{modeLabel(meta())}</span>
+      <span class="font-normal">{modeLabel(meta())}</span>
       <Show when={props.badge}>
         <span
           class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium tracking-wide text-text-subtle"
