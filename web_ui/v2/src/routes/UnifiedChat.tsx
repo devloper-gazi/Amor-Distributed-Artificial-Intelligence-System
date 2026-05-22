@@ -25,11 +25,16 @@
 import {
   type Component,
   Show,
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
   onMount,
 } from "solid-js";
+// Cycle UI v2.8.1 — react to ?c=<session_id> URL changes so clicking
+// another session in the sidebar swaps the thread without a remount.
+import { useLocation } from "@solidjs/router";
+import { api } from "../lib/api";
 import { TopBar } from "../components/shell/TopBar";
 import { ConnectionBanner } from "../components/shell/ConnectionBanner";
 import { MessageThread } from "../components/chat/MessageThread";
@@ -355,16 +360,78 @@ export const UnifiedChat: Component = () => {
     onCleanup(() => window.removeEventListener("keydown", handler));
   });
 
-  // Hydrate from ?c=<session_id> deep-link.  Phase 2 placeholder —
-  // Phase 4 will fetch /api/sessions/{id}/branch and replay turns.
-  onMount(() => {
-    const params = new URLSearchParams(window.location.search);
+  // Cycle UI v2.8.1 — past-session hydrate via ?c=<session_id>.
+  //
+  // SessionRow click sends the browser to /?c=<session.id> (single-
+  // route nav, no full page reload thanks to @solidjs/router).  We
+  // react to the URL change here and:
+  //   1. GET /api/sessions/{id}/branch — pulls the active-branch
+  //      messages (root → leaf chronological).
+  //   2. Map each backend doc to a ChatTurn frontend shape.
+  //   3. Inject the turns into a fresh ChatStreamApi instance keyed on
+  //      the resolved mode.  The composer stays empty (user can send
+  //      a follow-up which appends to the same chat_session_id).
+  //
+  // Re-runs when the URL changes (createEffect on location.search) so
+  // clicking another session in the sidebar swaps the thread without a
+  // full route remount.
+  const location = useLocation();
+  const [hydratedSessionId, setHydratedSessionId] = createSignal<string | null>(null);
+
+  const hydrateFromQuery = async () => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(location.search);
     const cid = params.get("c");
-    if (cid) {
-      // Phase 4 hook — for now just no-op so the URL is preserved.
-      // Future: const branch = await fetch(`/api/sessions/${cid}/branch`)
-      //        and seed the turns from the branch payload.
+    if (!cid) {
+      // No ?c= → empty home.  Drop any previously-hydrated stream so
+      // the user sees the greeting + suggestion chips again.
+      if (hydratedSessionId() !== null) {
+        setStreamApi(undefined);
+        setHydratedSessionId(null);
+      }
+      return;
     }
+    if (cid === hydratedSessionId()) return;  // already loaded
+    try {
+      type BranchResp = {
+        messages: Array<{
+          id: string;
+          role: "user" | "assistant" | "system" | "tool";
+          content: string;
+          mode?: ModeKey;
+          created_at?: string;
+          attachments?: unknown[];
+        }>;
+        mode?: ModeKey;
+      };
+      const branch = await api.get<BranchResp>(`/api/sessions/${cid}/branch`);
+      const mode: ModeKey = branch.mode ?? "build";
+      const stream = ensureStream(mode);
+      // Seed the stream's turns from the persisted messages.  Each
+      // message becomes a ChatTurn (role + content + mode + optional
+      // attachments).
+      for (const m of (branch.messages ?? [])) {
+        stream.pushTurn({
+          role: m.role,
+          content: m.content ?? "",
+          mode: m.mode ?? mode,
+          ts: m.created_at ? new Date(m.created_at).getTime() : undefined,
+          // Cycle UI v2.7 — attachments persist + render
+          attachments: Array.isArray(m.attachments)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ? (m.attachments as any[])
+            : undefined,
+        });
+      }
+      setHydratedSessionId(cid);
+      setActiveMode(mode);
+    } catch (err) {
+      console.warn("[unified-chat] session hydrate failed:", err);
+    }
+  };
+
+  onMount(() => {
+    void hydrateFromQuery();
 
     // Cycle UI Phase 3.4 — eager-prefetch the classifier on mount so
     // the user's first real prompt doesn't trigger the 3-5 s MiniLM
@@ -373,6 +440,13 @@ export const UnifiedChat: Component = () => {
     // every user keystroke, so a failed prefetch only loses the
     // warmup benefit, not functionality.
     void classifyPrompt("warmup").catch(() => undefined);
+  });
+
+  // Watch URL changes — user clicks another session in the sidebar,
+  // we re-hydrate without a full route remount.
+  createEffect(() => {
+    location.search;  // dep tracking
+    void hydrateFromQuery();
   });
 
   return (

@@ -449,32 +449,55 @@ const SessionRow: Component<SessionRowProps> = (props) => {
   // the status is still exposed via `data-amor-session-status` and
   // the sr-only label for screen readers + e2e probes.
 
+  // Cycle UI v2.8.1 — active state checker: URL has ?c={session.id}.
+  const isActiveSession = () => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("c") === props.session.id;
+  };
+
   return (
     <li class="group relative">
       <A
-        href={modeHref(modeKey())}
+        // Cycle UI v2.8.1 — Bug fix: session click no longer routes to
+        // /build, /research, etc (those mode pages don't accept ?c=
+        // and effectively start a fresh chat).  Always route to / with
+        // the session id as a query param; UnifiedChat watches the
+        // param + hydrates via GET /api/sessions/{id}/branch.  Single
+        // route = single state machine = no "click my chat, get a
+        // blank composer" regression.
+        href={`/?c=${encodeURIComponent(props.session.id)}`}
         data-amor-session-row=""
         data-amor-session-status={status()}
         data-amor-session-mode={modeKey()}
         class={[
-          // Cycle UI v2.6 (Karar E) — roomy rows: py-1.5 → py-2.5
-          // (~32→44 px target).  gap-2 → gap-2.5 + mt-1 between
-          // title + meta give Gemini-style breathing room.
-          "relative flex items-start gap-2.5 rounded-md px-2 py-2.5 pr-7 text-xs",
+          // Cycle UI v2.8.1 — typography polish: explicit text-sm
+          // (was inheriting text-xs from parent), font-medium on the
+          // title row, line-height tightened.  Hover state crispier
+          // with mode-tinted left rail when the row is the active
+          // session (URL ?c= match).
+          "relative flex items-start gap-2.5 rounded-md px-2 py-2.5 pr-7",
           "border border-transparent",
           "text-text-body hover:bg-bg-hover hover:text-text-display",
+          "transition-colors duration-150",
           "focus-visible:outline-2 focus-visible:outline-offset-1",
-          props.isCurrentMode ? "bg-bg-hover/50 border-border-subtle" : "",
+          isActiveSession()
+            ? "bg-bg-hover text-text-display border-border-subtle"
+            : "",
           props.session.archived ? "opacity-60" : "",
         ].join(" ")}
         title={`${title()} · ${statusLabel()} · ${relativeTime(
           props.session.updated_at ?? props.session.created_at,
         )}`}
-        aria-current={props.isCurrentMode ? "page" : undefined}
+        aria-current={isActiveSession() ? "page" : undefined}
       >
         {/* Mode-tinted left accent bar — visible only on the
             currently-selected mode, gives "you are here" cue. */}
-        <Show when={props.isCurrentMode}>
+        {/* Cycle UI v2.8.1 — mode-tinted left rail visible on the
+            ACTIVE session (URL ?c= match), not the active mode.
+            Was bound to props.isCurrentMode which is a different
+            signal (composer's currently-selected mode, not URL). */}
+        <Show when={isActiveSession()}>
           <span
             class="absolute left-0 top-2 bottom-2 w-[2px] rounded-full"
             style={{ background: modeColorVar(modeKey()) }}
@@ -496,7 +519,7 @@ const SessionRow: Component<SessionRowProps> = (props) => {
           <span class="flex items-center gap-1.5">
             <Show when={props.session.pinned}>
               <span
-                class="text-[0.65rem] leading-none"
+                class="text-[0.7rem] leading-none"
                 style={{ color: "var(--color-status-warming)" }}
                 aria-hidden="true"
                 title={t("sessions.status.pinned")}
@@ -504,9 +527,13 @@ const SessionRow: Component<SessionRowProps> = (props) => {
                 ★
               </span>
             </Show>
-            <span class="truncate font-medium">{title()}</span>
+            {/* Cycle UI v2.8.1 — typography polish: text-[13px] +
+                font-medium + tight leading (was text-xs inherited).
+                Title is the primary identifying surface; needs to
+                read at conversational legibility. */}
+            <span class="truncate text-[13px] font-medium leading-snug">{title()}</span>
           </span>
-          <span class="mt-0.5 flex items-center gap-1.5 text-[0.6rem] text-text-subtle">
+          <span class="mt-0.5 flex items-center gap-1.5 text-[0.65rem] text-text-subtle">
             {/* Mode chip */}
             <Show when={modeKey()}>
               <span
