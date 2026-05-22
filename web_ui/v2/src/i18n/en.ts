@@ -32,6 +32,23 @@ export const en: Record<string, string> = {
   // ── Cycle UI v2.6 — Halo decorative aria ────────────────────
   "halo.aria_label":              "Decorative ambient backdrop",
 
+  // ── Cycle UI v2.7.1 — Attachment system ─────────────────────
+  "composer.drop_hint":           "Drop to attach",
+  "attachment.remove_aria":       "Remove {{name}}",
+  "attachment.size_too_large":    "File too large (max {{limit}})",
+  "attachment.max_files":         "Max {{limit}} files",
+  "attachment.mime_rejected":     "File type not supported",
+  "attachment.uploading":         "Uploading…",
+  "attachment.upload_progress":   "Uploading {{name}} ({{percent}}%)",
+  "attachment.upload_failed":     "Upload failed",
+  "attachment.upload_retry":      "Retry",
+  "attachment.image_no_vision":   "No vision model installed — filename + size only",
+  "attachment.pdf_extracting":    "Extracting PDF text…",
+  "attachment.preview_label":     "Preview",
+  "attachment.download_aria":     "Download {{name}}",
+  "attachment.live_uploaded":     "{{count}} file(s) uploaded",
+  "attachment.live_removed":      "File removed",
+
   // ── Login / Register ────────────────────────────────────────
   "auth.signin.title":            "Sign in to AMOR",
   "auth.signin.subtitle":         "Local-first distributed AI.",

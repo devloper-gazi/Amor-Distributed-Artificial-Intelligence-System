@@ -156,6 +156,10 @@ class LocalAIResearchRequest(BaseModel):
         None, max_length=120,
         description="Override Ollama tag for this run (else OLLAMA_MODEL)",
     )
+    # Cycle UI v2.7.1 (D9) — user-uploaded attachment IDs. Resolver
+    # injects AMOR-ATTACH context blocks into `topic` before research
+    # planner sees it.  No-op when empty (legacy clients).
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class LocalAIResearchResponse(BaseModel):
@@ -1644,6 +1648,25 @@ async def start_research(
         # Create session
         session_id = str(uuid4())
 
+        # Cycle UI v2.7.1 — resolve attachments into the research topic.
+        if request.attachment_ids:
+            try:
+                from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+                from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
+                _db = await _cs._db()
+                enriched, _img_refs, _msg_refs = await resolve_and_inject(
+                    _db, user_id=str(user.id),
+                    attachment_ids=request.attachment_ids,
+                    prompt=request.topic, has_vision_model=False,
+                )
+                request = request.model_copy(update={"topic": enriched})
+                logger.info(
+                    "research_start attachments_resolved n=%d session=%s",
+                    len(_msg_refs), session_id,
+                )
+            except Exception as exc:
+                logger.warning("research_start attachment_resolve_failed: %s", exc)
+
         # Server-side model resolution. Order:
         #   1. request.preferred_model (the picker JS sets this when the
         #      user explicitly chose a tag for this run)
@@ -2796,6 +2819,13 @@ class ThinkingRequest(BaseModel):
     mode: Optional[str] = Field("thinking", description="Mode identifier")
     history: Optional[List[dict]] = Field(None, description="Conversation history")
     max_tokens: int = Field(2048, description="Maximum tokens in response")
+    # Cycle UI v2.7.1 (D9) — accept attachment_ids for graceful FE↔BE
+    # compat.  The Thinking endpoint is anonymous (no get_current_user),
+    # so true tenancy-guarded resolve_and_inject can't run here; we
+    # accept the field, log, and skip resolution (frontend's attachments
+    # land on the user's own chat_message persist via the chat_sessions
+    # MessageAppendRequest path).  v2.7.2 will gate this on auth.
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 @router.post("/thinking")

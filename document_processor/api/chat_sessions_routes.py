@@ -88,6 +88,13 @@ class MessageAppendRequest(BaseModel):
         None, max_length=64,
         description="Optional dedupe key — POST safe to retry",
     )
+    # Cycle UI v2.7.1 (D3 + D9) — attachment refs persisted on the
+    # message doc.  Denormalized name/mime/size + canonical
+    # attachment_id ref so message replay stays truthful even if the
+    # underlying attachments_meta doc is TTL-pruned.  Schema mirrors
+    # MessageAttachmentRef in attachment_models.py — passed through
+    # as-is into chat_messages.attachments[].
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, max_length=10)
 
 
 class SessionSummary(BaseModel):

@@ -160,6 +160,24 @@ export interface ChatTurn {
    *  assistant bubble.  ``MessageThread`` routes these to
    *  ``ToolCallCardBuild`` instead of ``MessageBubble``. */
   buildCard?: BuildToolCard;
+  /** Cycle UI v2.7.1 — user-attached file refs persisted on the
+   *  message.  Read-only render in MessageBubble (chip + download
+   *  link to ``GET /api/attachments/{id}``).  Schema mirrors
+   *  ``MessageAttachmentRef`` Pydantic model on the backend. */
+  attachments?: ChatAttachmentRef[];
+}
+
+/** Cycle UI v2.7.1 — denormalized attachment ref persisted on chat
+ *  messages.  Same shape backend writes via MessageAppendRequest
+ *  + chat_messages.attachments[]. */
+export interface ChatAttachmentRef {
+  attachment_id: string;
+  name: string;
+  mime: string;
+  size: number;
+  role: "user_attached" | "model_emitted";
+  inclusion: "inline_text" | "image_ref" | "filename_only";
+  inline_preview?: string;
 }
 
 /** Cycle UI v2.5 Phase 2 — Build-engine tool-call payload.  One card

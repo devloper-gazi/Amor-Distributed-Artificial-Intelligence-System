@@ -183,6 +183,10 @@ class QuickCodeStartRequest(BaseModel):
     # one of ``"trivial"``, ``"simple"``, ``"complex"``, ``"math"``;
     # any other value silently falls back to ``None``.
     complexity_hint: Optional[str] = Field(None, max_length=20)
+    # Cycle UI v2.7.1 (D9) — user-uploaded attachment IDs (quick edits
+    # on a small source file).  Resolver injects AMOR-ATTACH context
+    # blocks into the prompt before the lite 5-phase pipeline runs.
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class QuickCodeStartResponse(BaseModel):
@@ -229,6 +233,23 @@ async def start_quick_code(
     client_id = _require_client_id(x_client_id)
     user_id = user.id if user else None
     session_id = str(uuid4())
+
+    # Cycle UI v2.7.1 — resolve attachments into prompt.  Anonymous
+    # callers skip (no tenancy enforcement possible).
+    if body.attachment_ids and user_id:
+        try:
+            from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+            from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
+            _db = await _cs._db()
+            enriched, _img, _msg = await resolve_and_inject(
+                _db, user_id=str(user_id),
+                attachment_ids=body.attachment_ids,
+                prompt=body.prompt, has_vision_model=False,
+            )
+            body = body.model_copy(update={"prompt": enriched})
+            logger.info("quickcode_start attachments_resolved n=%d session=%s", len(_msg), session_id)
+        except Exception as exc:
+            logger.warning("quickcode_start attachment_resolve_failed: %s", exc)
 
     effort = _normalize_tier(body.effort, "medium")
 

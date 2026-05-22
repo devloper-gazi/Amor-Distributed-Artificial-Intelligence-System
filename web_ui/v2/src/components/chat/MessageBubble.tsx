@@ -1,4 +1,4 @@
-﻿import { type Component, Show } from "solid-js";
+﻿import { type Component, For, Show } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
 import { renderMarkdown, escapeText } from "../../lib/sanitise";
 import { Avatar } from "../ui";
@@ -199,6 +199,38 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
             <span class="streaming-caret" aria-hidden="true" />
           </Show>
         </div>
+        {/* Cycle UI v2.7.1 — past-message attachment chips, read-only
+            download links.  Tenancy-guarded GET /api/attachments/{id}
+            streams the file back with Content-Disposition: inline so
+            text/images preview directly. */}
+        <Show when={(props.turn.attachments ?? []).length > 0}>
+          <ul
+            class="mt-2 flex flex-wrap gap-1.5"
+            aria-label={t("attachment.preview_label")}
+            data-amor-past-attachments=""
+          >
+            <For each={props.turn.attachments ?? []}>
+              {(att) => (
+                <li>
+                  <a
+                    href={`/api/attachments/${att.attachment_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={t("attachment.download_aria", { name: att.name })}
+                    class="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-elevated px-2.5 py-0.5 text-[0.7rem] text-text-body hover:border-border-strong-v25 hover:text-text-display transition-colors"
+                  >
+                    <span class="truncate max-w-[14rem]" title={att.name}>
+                      {att.name}
+                    </span>
+                    <span class="text-text-subtle tabular-nums">
+                      {(att.size / 1024).toFixed(1)} KB
+                    </span>
+                  </a>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
         <Show when={showActions() && !props.turn.streaming}>
           <MessageActions
             turn={props.turn}

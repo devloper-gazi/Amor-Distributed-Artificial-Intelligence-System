@@ -103,6 +103,11 @@ class SentinelStartRequest(BaseModel):
         "standard",
         pattern="^(quick|standard|deep|paranoid)$",
     )
+    # Cycle UI v2.7.1 (D9) — user-uploaded attachment IDs (configs,
+    # logs, suspicious files for inspection).  Resolver enriches the
+    # `prompt` (when present) with AMOR-ATTACH context blocks before
+    # the scan begins.
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class SentinelStartResponse(BaseModel):

@@ -480,22 +480,25 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
       // priority order'ı yansıtır.
       data-mode={effectiveMode()}
     >
-      {/* Drag-drop overlay */}
+      {/* Cycle UI v2.7.1 — drag-drop overlay i18n'd + aria-live for SR
+          announcement.  Polite to avoid interrupting current TTS read. */}
       <Show when={dragActive()}>
         <div
           class="pointer-events-none absolute inset-0 z-[var(--z-overlay)] flex items-center justify-center rounded-md border-2 border-dashed border-text-primary/50 bg-bg-elevated/80 text-sm text-text-display backdrop-blur-sm"
-          aria-hidden="true"
+          role="region"
+          aria-label={t("composer.drop_hint")}
+          aria-live="polite"
           data-amor-overlay="drop"
         >
-          Drop to attach
+          {t("composer.drop_hint")}
         </div>
       </Show>
 
-      {/* Attachment chips */}
+      {/* Cycle UI v2.7.1 — Attachment chips, i18n'd remove aria. */}
       <Show when={attachments().length > 0}>
         <ul
           class="flex flex-wrap gap-1.5"
-          aria-label="Attachments"
+          aria-label={t("attachment.preview_label")}
           data-amor-attachments="list"
         >
           <For each={attachments()}>
@@ -510,7 +513,7 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
                 <button
                   type="button"
                   onClick={() => removeFile(i())}
-                  aria-label={`Remove ${file.name}`}
+                  aria-label={t("attachment.remove_aria", { name: file.name })}
                   class="text-text-subtle hover:text-text-display"
                 >
                   ×

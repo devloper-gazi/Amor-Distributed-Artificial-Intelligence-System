@@ -32,6 +32,23 @@ export const tr: Record<string, string> = {
   // ── Cycle UI v2.6 — Halo decorative aria ────────────────────
   "halo.aria_label":              "Arka plan dekoratif aydınlatma",
 
+  // ── Cycle UI v2.7.1 — Attachment system ─────────────────────
+  "composer.drop_hint":           "Eklemek için bırakın",
+  "attachment.remove_aria":       "{{name}} dosyasını kaldır",
+  "attachment.size_too_large":    "Dosya çok büyük (en fazla {{limit}})",
+  "attachment.max_files":         "En fazla {{limit}} dosya eklenebilir",
+  "attachment.mime_rejected":     "Bu dosya türü desteklenmiyor",
+  "attachment.uploading":         "Yükleniyor…",
+  "attachment.upload_progress":   "{{name}} yükleniyor ({{percent}}%)",
+  "attachment.upload_failed":     "Yükleme başarısız",
+  "attachment.upload_retry":      "Tekrar dene",
+  "attachment.image_no_vision":   "Görüntü modeli yüklü değil — dosya adı + boyut iletilir",
+  "attachment.pdf_extracting":    "PDF metni çıkarılıyor…",
+  "attachment.preview_label":     "Önizleme",
+  "attachment.download_aria":     "{{name}} dosyasını indir",
+  "attachment.live_uploaded":     "{{count}} dosya yüklendi",
+  "attachment.live_removed":      "Dosya kaldırıldı",
+
   // ── Giriş / Kayıt ───────────────────────────────────────────
   "auth.signin.title":            "AMOR'a giriş yap",
   "auth.signin.subtitle":         "Yerel öncelikli dağıtık yapay zekâ.",
