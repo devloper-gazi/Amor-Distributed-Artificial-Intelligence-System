@@ -136,6 +136,43 @@
   100% { transform: translate3d(-2%, 2%, 0) scale(0.97); }
 }
 
+/* ── Halo (Cycle UI v2.6 Karar A + H) ──────────────────────────────────────
+ * Chat canvas backdrop: viewport-fixed radial gradient tinted by the
+ * active mode.  Inline-style CSS vars drive the dynamic bits:
+ *   --halo-tint    : current mode's tint (var(--color-halo-tint-*))
+ *   --halo-alpha   : 0.55 rest / 0.85 focused
+ *   --halo-scale   : 1.0 rest / 1.02 composer-focused
+ *
+ * The `amor-blob` keyframe is re-used here at 14s for a slightly faster
+ * presence than the Login surface's 18-26s (Login = 3 stacked blobs,
+ * this = 1 unified halo, so it can move more freely).
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-halo {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  contain: paint;
+  will-change: transform, opacity;
+
+  /* Radial gradient: tint at 38% vertical (above center, where the
+     greeting + composer sit), fades to transparent at 70% radius. */
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 38%,
+    var(--halo-tint, var(--color-halo-base)) 0%,
+    transparent 70%
+  );
+  opacity: var(--halo-alpha, var(--color-halo-alpha-base, 0.55));
+  transform: scale(var(--halo-scale, 1));
+
+  transition:
+    opacity 240ms cubic-bezier(0, 0, 0.2, 1),
+    transform 240ms cubic-bezier(0, 0, 0.2, 1),
+    background 320ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  animation: amor-blob 14s ease-in-out infinite alternate;
+}
+
 /* ── prefers-reduced-motion ────────────────────────────────────────────────
  * Extends the rule in theme.css.  Disable all amor-* animations + zero out
  * transition durations.  Streaming caret falls back to a static 70% opacity
@@ -153,6 +190,12 @@
   /* Aurora blobs hold a static position under reduced motion. */
   [class*="animate-[amor-blob"] {
     animation: none !important;
+  }
+  /* Halo holds static under reduced motion — opacity ramp still
+     allowed (WCAG 2.3.3 considers opacity-only safe). */
+  .amor-halo {
+    animation: none;
+    transition: opacity 240ms cubic-bezier(0, 0, 0.2, 1);
   }
   .amor-rotate-target,
   .amor-composer,

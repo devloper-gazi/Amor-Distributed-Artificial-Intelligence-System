@@ -38,6 +38,8 @@ import { UnifiedComposer } from "../components/chat/UnifiedComposer";
 // is empty.  Clicking a card pre-fills the composer + sets the
 // suggested mode without auto-submitting.
 import { EmptyState } from "../components/chat/EmptyState";
+// Cycle UI v2.6 (Karar A + H) — atmospheric halo backdrop, mode-tinted.
+import { Halo } from "../components/chat/Halo";
 import {
   UNIFIED_REDUCER,
   createChatStream,
@@ -153,6 +155,30 @@ export const UnifiedChat: Component = () => {
     return t("classifier.auto");
   });
 
+  // Cycle UI v2.6 (Karar F) — placeholder rotation.  Cycles every 8s
+  // through 4 i18n variants so the empty composer feels alive.  When
+  // the classifier reports `low_confidence`, lock to variant 0 (the
+  // neutral "Ne istersen sor — doğru modu ben seçerim" line) so the
+  // surface doesn't keep moving while the user is mid-thought.
+  // `prefers-reduced-motion` short-circuits to variant 0 too.
+  const [placeholderIdx, setPlaceholderIdx] = createSignal(0);
+  const placeholderText = createMemo<string>(() => {
+    const r = classifier.result();
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || (r && r.low_confidence)) return t("composer.placeholder.0");
+    return t(`composer.placeholder.${placeholderIdx()}`);
+  });
+  onMount(() => {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const id = window.setInterval(() => {
+      setPlaceholderIdx((i) => (i + 1) % 4);
+    }, 8000);
+    onCleanup(() => window.clearInterval(id));
+  });
+
   // Lazily create the stream API for the chosen mode + prompt.  Each
   // submission spawns a new stream singleton keyed on startPath.
   // All 6 modes share UNIFIED_REDUCER — per-mode dispatch happens
@@ -204,6 +230,67 @@ export const UnifiedChat: Component = () => {
 
   onCleanup(() => classifier.cancel());
 
+  // Cycle UI v2.6 (Karar M) — global keyboard shortcuts.  Native
+  // ``window.addEventListener`` instead of a dep (`@solid-primitives/
+  // keyboard`) per Q1 user decision.  Platform-aware: macOS uses
+  // Cmd (metaKey), Win/Linux uses Ctrl (ctrlKey).
+  //
+  // Bindings:
+  //   * Cmd/Ctrl+N  — new chat (clear current stream + textarea)
+  //   * Cmd/Ctrl+/  — focus the composer + insert "/" so the slash
+  //                   overlay opens (UnifiedComposer already wires
+  //                   the slash-prefix detection)
+  //   * Cmd/Ctrl+B  — sidebar toggle (CustomEvent listened by Sidebar)
+  //   * Esc         — already handled by Kobalte overlay close; we
+  //                   only catch it here when a download/preview etc.
+  //                   bubbles up un-handled.  No-op by default.
+  //
+  // Cmd+K is intentionally NOT bound here — CommandPalette owns it
+  // (web_ui/v2/src/components/shell/CommandPalette.tsx) and reacts
+  // to its own keydown listener.  Adding a second handler would
+  // double-toggle.
+  onMount(() => {
+    if (typeof window === "undefined") return;
+    const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || "");
+    const handler = (ev: KeyboardEvent) => {
+      const mod = isMac ? ev.metaKey : ev.ctrlKey;
+      if (!mod) return;
+      const key = ev.key.toLowerCase();
+      // Cmd+N — new chat
+      if (key === "n" && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        const api = streamApi();
+        if (api) void api.cancel();
+        // Route to clean / so deep-link state (?c=…) drops too.
+        if (window.location.pathname !== "/" || window.location.search) {
+          window.history.replaceState(null, "", "/");
+        }
+        // Wipe in-place by clearing the stream signal — composer
+        // textarea is left untouched (user might still want to
+        // re-send).  If they want a fully fresh state they'll
+        // navigate or refresh.
+        setStreamApi(undefined);
+        return;
+      }
+      // Cmd+/ — focus composer + open slash overlay
+      if (key === "/" && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent("amor:focus-composer", { detail: { prefix: "/" } }),
+        );
+        return;
+      }
+      // Cmd+B — sidebar toggle
+      if (key === "b" && !ev.shiftKey && !ev.altKey) {
+        ev.preventDefault();
+        window.dispatchEvent(new CustomEvent("amor:sidebar-toggle"));
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    onCleanup(() => window.removeEventListener("keydown", handler));
+  });
+
   // Hydrate from ?c=<session_id> deep-link.  Phase 2 placeholder —
   // Phase 4 will fetch /api/sessions/{id}/branch and replay turns.
   onMount(() => {
@@ -236,6 +323,10 @@ export const UnifiedChat: Component = () => {
         "padding-bottom": "env(safe-area-inset-bottom, 0)",
       }}
     >
+      {/* Cycle UI v2.6 — atmospheric halo backdrop (Karar A).  Sits
+          behind everything via position:fixed + z-index:-1; mode prop
+          drives the tint, focus state handled in D10 (Karar H). */}
+      <Halo mode={activeMode() ?? suggestedMode()} />
       <TopBar
         title={t("chat.unified_title")}
         subtitle={t("chat.unified_subtitle")}
@@ -278,7 +369,7 @@ export const UnifiedChat: Component = () => {
         modeOverride={suggestedMode()}
         modeBadge={badgeText()}
         onTextChange={(text) => classifier.setPrompt(text)}
-        placeholder={t("chat.unified_placeholder")}
+        placeholder={placeholderText()}
       />
       <Show when={classifier.error()}>
         <div class="bg-bg-elevated-v25 px-5 py-1 text-[0.7rem] text-text-subtle">

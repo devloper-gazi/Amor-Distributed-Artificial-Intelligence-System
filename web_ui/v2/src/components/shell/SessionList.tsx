@@ -18,6 +18,7 @@ import { auth } from "../../lib/auth";
 import { sessions, type ChatSession } from "../../lib/sessions";
 import { Modal, Button, Input } from "../ui";
 import { t, localeUpper } from "../../i18n";
+import { modeColorVar } from "../../lib/mode-color";
 
 interface SessionListProps {
   collapsed: boolean;
@@ -99,17 +100,10 @@ export function deriveActivityStatus(
 // ─── Mode → color token + label ───────────────────────────────────
 
 
-function modeColorVar(mode: string | undefined): string {
-  switch (mode) {
-    case "research":   return "var(--color-mode-research)";
-    case "thinking":   return "var(--color-mode-thinking)";
-    case "build":
-    case "code":       return "var(--color-mode-build)";
-    case "consortium": return "var(--color-mode-consortium)";
-    case "sentinel":   return "var(--color-mode-sentinel)";
-    default:           return "var(--color-text-tertiary)";
-  }
-}
+// Cycle UI v2.6 (Karar A) — `modeColorVar()` moved to lib/mode-color.ts
+// so the Halo component can share the same vocabulary.  Import added
+// at file head; this comment marks where the local function used to
+// live (lines 102-112 in v2.5).
 
 function modeShortLabel(mode: string | undefined): string {
   // 3-4 char compact label for the chip badge.

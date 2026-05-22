@@ -8,6 +8,30 @@
  */
 
 export const en: Record<string, string> = {
+  // ── Cycle UI v2.6 — Greeting (Karar B) ──────────────────────
+  "greet.morning":                "Good morning, {{name}}",
+  "greet.afternoon":              "Good afternoon, {{name}}",
+  "greet.evening":                "Good evening, {{name}}",
+  "greet.night":                  "Let's roll, {{name}}",
+  "greet.fallback_name":          "there",
+
+  // ── Cycle UI v2.6 — Composer placeholder rotation (Karar F) ─
+  "composer.placeholder.0":       "Ask anything — I'll pick the right mode.",
+  "composer.placeholder.1":       "Write some code?",
+  "composer.placeholder.2":       "Research a topic?",
+  "composer.placeholder.3":       "Think through an architecture?",
+
+  // ── Cycle UI v2.6 — Recent / Show more (Karar K) ────────────
+  "recent.show_more":             "{{count}} more…",
+  "recent.show_less":             "Show less",
+
+  // ── Cycle UI v2.6 — Sidebar legacy toggle (Karar D) ─────────
+  "sidebar.legacy_toggle.label":  "Dense sidebar",
+  "sidebar.legacy_toggle.hint":   "v2.5 style: show all modes + system links.",
+
+  // ── Cycle UI v2.6 — Halo decorative aria ────────────────────
+  "halo.aria_label":              "Decorative ambient backdrop",
+
   // ── Login / Register ────────────────────────────────────────
   "auth.signin.title":            "Sign in to AMOR",
   "auth.signin.subtitle":         "Local-first distributed AI.",

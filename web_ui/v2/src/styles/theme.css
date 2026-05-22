@@ -151,6 +151,28 @@
   --z-modal-backdrop: 400;
   --z-modal: 500;
   --z-toast: 600;
+
+  /* ── Cycle UI v2.6 — Halo token family (Karar L) ─────────────────────
+   * Atmospheric radial-gradient backdrop for the chat surface.  Each
+   * mode tints the halo from its accent token via OKLch relative-color
+   * syntax — single source of truth (--color-mode-*), no duplication.
+   *
+   * Light mode: soft blush, very low chroma (decorative, never load-
+   * bearing for text contrast).
+   * Dark mode: cooler blue-violet base, mode-tinted on demand.
+   *
+   * Usage: <Halo mode={…} /> sets `--color-halo-tint` inline; the
+   * component CSS reads that var. */
+  --color-halo-base:           oklch(0.97 0.015 268);
+  --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-alpha-base:     0.55;
+  --color-halo-alpha-focus:    0.85;
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -209,6 +231,19 @@
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
   --shadow-xl:
     0 20px 25px -5px rgb(0 0 0 / 0.6), 0 10px 10px -5px rgb(0 0 0 / 0.4);
+
+  /* Cycle UI v2.6 — Halo dark counterparts (Karar L).  Lower lightness
+     base + brighter mode tints for AA contrast over OKLch black canvas. */
+  --color-halo-base:           oklch(0.18 0.08 268);
+  --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-alpha-base:     0.55;
+  --color-halo-alpha-focus:    0.85;
 }
 
 /* System preference falls back to dark when no explicit choice. */
@@ -251,6 +286,18 @@
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
+
+    /* Cycle UI v2.6 — Halo system-fallback dark mirror (Karar L). */
+    --color-halo-base:           oklch(0.18 0.08 268);
+    --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-alpha-base:     0.55;
+    --color-halo-alpha-focus:    0.85;
   }
 }
 

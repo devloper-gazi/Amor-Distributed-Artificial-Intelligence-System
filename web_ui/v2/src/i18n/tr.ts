@@ -8,6 +8,30 @@
  */
 
 export const tr: Record<string, string> = {
+  // ── Cycle UI v2.6 — Greeting (Karar B) ──────────────────────
+  "greet.morning":                "Günaydın, {{name}}",
+  "greet.afternoon":              "İyi öğleden sonra, {{name}}",
+  "greet.evening":                "İyi akşamlar, {{name}}",
+  "greet.night":                  "Hadi başlayalım, {{name}}",
+  "greet.fallback_name":          "orada",
+
+  // ── Cycle UI v2.6 — Composer placeholder rotation (Karar F) ─
+  "composer.placeholder.0":       "Ne istersen sor — doğru modu ben seçerim.",
+  "composer.placeholder.1":       "Bir kod yazalım mı?",
+  "composer.placeholder.2":       "Bir konuyu araştıralım mı?",
+  "composer.placeholder.3":       "Bir mimariyi düşünelim mi?",
+
+  // ── Cycle UI v2.6 — Recent / Show more (Karar K) ────────────
+  "recent.show_more":             "{{count}} daha…",
+  "recent.show_less":             "Daha az göster",
+
+  // ── Cycle UI v2.6 — Sidebar legacy toggle (Karar D) ─────────
+  "sidebar.legacy_toggle.label":  "Yoğun kenar çubuğu",
+  "sidebar.legacy_toggle.hint":   "v2.5 stilinde tüm modları + sistem bağlantılarını göster.",
+
+  // ── Cycle UI v2.6 — Halo decorative aria ────────────────────
+  "halo.aria_label":              "Arka plan dekoratif aydınlatma",
+
   // ── Giriş / Kayıt ───────────────────────────────────────────
   "auth.signin.title":            "AMOR'a giriş yap",
   "auth.signin.subtitle":         "Yerel öncelikli dağıtık yapay zekâ.",
