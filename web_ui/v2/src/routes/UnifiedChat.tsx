@@ -433,6 +433,22 @@ export const UnifiedChat: Component = () => {
   onMount(() => {
     void hydrateFromQuery();
 
+    // Cycle UI v2.8.2 — listen for the Sidebar "Yeni sohbet" event.
+    // Sidebar.tsx fires `amor:new-chat` AFTER navigate("/"), so when
+    // we arrive here from /settings or any other route the stream
+    // signal needs explicit reset (empty turns + drop session id).
+    if (typeof window !== "undefined") {
+      const onNewChat = () => {
+        const api = streamApi();
+        if (api) void api.cancel();
+        setStreamApi(undefined);
+        setHydratedSessionId(null);
+        setActiveMode("build");
+      };
+      window.addEventListener("amor:new-chat", onNewChat);
+      onCleanup(() => window.removeEventListener("amor:new-chat", onNewChat));
+    }
+
     // Cycle UI Phase 3.4 — eager-prefetch the classifier on mount so
     // the user's first real prompt doesn't trigger the 3-5 s MiniLM
     // first-load.  Fire-and-forget: swallow any error (network /

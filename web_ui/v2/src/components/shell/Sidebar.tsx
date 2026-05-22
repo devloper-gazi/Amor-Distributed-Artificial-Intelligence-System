@@ -1,5 +1,5 @@
 ﻿import { type Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
-import { A, useLocation } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
 import { MODES, type ModeMeta } from "../../lib/types";
 import { auth } from "../../lib/auth";
 import { Avatar, Tooltip, IconButton, Kbd } from "../ui";
@@ -63,9 +63,30 @@ function loadLegacyDense(): boolean {
 
 export const Sidebar: Component<SidebarProps> = (props) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const isActive = (href: string) =>
     location.pathname === href ||
     (href !== "/" && location.pathname.startsWith(href));
+
+  /** Cycle UI v2.8.2 — "Yeni sohbet" handler.  Previously dispatched
+   *  a Cmd+N keyboard event that only UnifiedChat's onMount listener
+   *  consumed; on /settings (or any other route where UnifiedChat
+   *  isn't mounted) the click silently no-op'd.  Now:
+   *   1. SolidJS router navigate("/") — works from ANY route.
+   *   2. Drop the ?c= deep-link so the destination is the fresh
+   *      empty-state thread (not a hydrated past session).
+   *   3. Dispatch the existing CustomEvent so UnifiedChat (when it
+   *      mounts post-nav) tears down any cached stream + clears the
+   *      composer textarea.  Two-stage = works regardless of source
+   *      route.
+   */
+  const startNewChat = () => {
+    // Strip ?c= from URL — fresh chat means empty state.
+    navigate("/", { replace: false });
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("amor:new-chat"));
+    }
+  };
 
   const [legacyDense, setLegacyDense] = createSignal<boolean>(loadLegacyDense());
   onMount(() => {
@@ -130,15 +151,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
       <Show when={!props.collapsed}>
         <button
           type="button"
-          onClick={() => {
-            if (typeof window !== "undefined") {
-              const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || "");
-              const evt = new KeyboardEvent("keydown", {
-                key: "n", metaKey: isMac, ctrlKey: !isMac, bubbles: true,
-              });
-              window.dispatchEvent(evt);
-            }
-          }}
+          onClick={startNewChat}
           class="mx-3 mt-3 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-text-body hover:bg-bg-hover hover:text-text-display"
           aria-label={t("sidebar.new_chat")}
           data-amor-action="new-chat"
@@ -151,10 +164,7 @@ export const Sidebar: Component<SidebarProps> = (props) => {
       <Show when={props.collapsed}>
         <div class="mx-2 mt-3 flex justify-center">
           <Tooltip label={`${t("sidebar.new_chat")} (⌘N)`} placement="right">
-            <IconButton aria-label={t("sidebar.new_chat")} size="sm" onClick={() => {
-              const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || "");
-              window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", metaKey: isMac, ctrlKey: !isMac }));
-            }}>
+            <IconButton aria-label={t("sidebar.new_chat")} size="sm" onClick={startNewChat}>
               <span aria-hidden="true">+</span>
             </IconButton>
           </Tooltip>
