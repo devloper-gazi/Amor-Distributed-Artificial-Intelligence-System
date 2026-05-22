@@ -156,7 +156,7 @@ async def resolve_and_inject(
     attachment_ids: list[str],
     prompt: str,
     has_vision_model: bool = False,
-) -> tuple[str, list[tuple[str, bytes]], list[MessageAttachmentRef]]:
+) -> tuple[str, list[tuple[str, str]], list[MessageAttachmentRef]]:
     """Resolve every id, build the enriched prompt + message refs.
 
     Args:
@@ -177,7 +177,14 @@ async def resolve_and_inject(
         return prompt, [], []
 
     blocks: list[str] = []
-    image_refs: list[tuple[str, bytes]] = []
+    # Cycle UI v2.7.2 (D7) — Ollama's `messages[i].images` expects a
+    # base64-encoded string list (NO data: prefix), matching the
+    # OpenAI vision spec via openai_compat backend.  We encode at
+    # resolve time so the caller (chat /start endpoint or engine
+    # forwarding step) can splat the list directly onto
+    # `ChatMessage.images`.
+    import base64 as _b64  # noqa: PLC0415 — local keeps non-vision path cold
+    image_refs: list[tuple[str, str]] = []
     msg_refs: list[MessageAttachmentRef] = []
     inline_budget = MAX_TOTAL_INLINE_BYTES
 
@@ -214,7 +221,8 @@ async def resolve_and_inject(
             ))
             inclusion: str = "image_ref" if has_vision_model else "filename_only"
             if has_vision_model:
-                image_refs.append((meta.mime, blob))
+                # Base64 — Ollama + OpenAI vision both consume this shape.
+                image_refs.append((meta.mime, _b64.b64encode(blob).decode("ascii")))
             msg_refs.append(MessageAttachmentRef(
                 attachment_id=aid, name=meta.original_name, mime=meta.mime,
                 size=meta.size, role="user_attached",

@@ -390,14 +390,20 @@ async def start_code_session(
     if payload.attachment_ids:
         try:
             from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+            from .vision_capability import detect_vision_capability  # noqa: PLC0415
             from ..infrastructure.chat_store import chat_store  # noqa: PLC0415
             _db = await chat_store._db()
+            # Cycle UI v2.7.2 (D7) — dynamic vision capability detect.
+            # When the user has pulled a vision-capable Ollama model
+            # (Qwen2-VL, LLaVA, Phi-3-Vision, etc.) the resolver
+            # forwards image bytes to the LLM via ChatMessage.images.
+            _has_vision = await detect_vision_capability()
             enriched_prompt, _img_refs, _msg_refs = await resolve_and_inject(
                 _db,
                 user_id=str(user.id),
                 attachment_ids=payload.attachment_ids,
                 prompt=payload.prompt,
-                has_vision_model=False,  # vision substrate v2.7.1
+                has_vision_model=_has_vision,
             )
             # Pydantic v2 model_copy keeps original payload immutable.
             payload = payload.model_copy(update={"prompt": enriched_prompt})

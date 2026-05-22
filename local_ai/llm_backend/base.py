@@ -40,6 +40,13 @@ class ChatMessage:
     content: str
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
+    # Cycle UI v2.7.2 (D7) — multimodal image attachments.  Each
+    # element is a base64-encoded image payload (PNG/JPEG/WebP),
+    # NO data: prefix — matches Ollama's `/api/chat` schema natively
+    # and the OpenAI vision spec via openai_compat backend's
+    # `content` array conversion.  Backends without vision support
+    # silently drop this field (graceful degradation).
+    images: Optional[list[str]] = None
 
 
 @dataclass
@@ -101,6 +108,12 @@ def normalize_messages(
                 d["name"] = m.name
             if m.tool_call_id is not None:
                 d["tool_call_id"] = m.tool_call_id
+            # Cycle UI v2.7.2 (D7) — image array carried through the
+            # transport.  Backends that understand the field (Ollama
+            # multimodal models, OpenAI vision-compat) consume it;
+            # text-only backends ignore unknown keys.
+            if m.images:
+                d["images"] = list(m.images)
             out.append(d)
         elif isinstance(m, dict):
             if "role" not in m or "content" not in m:

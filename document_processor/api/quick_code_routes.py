@@ -239,12 +239,14 @@ async def start_quick_code(
     if body.attachment_ids and user_id:
         try:
             from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+            from .vision_capability import detect_vision_capability  # noqa: PLC0415
             from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
             _db = await _cs._db()
+            _has_vision = await detect_vision_capability()
             enriched, _img, _msg = await resolve_and_inject(
                 _db, user_id=str(user_id),
                 attachment_ids=body.attachment_ids,
-                prompt=body.prompt, has_vision_model=False,
+                prompt=body.prompt, has_vision_model=_has_vision,
             )
             body = body.model_copy(update={"prompt": enriched})
             logger.info("quickcode_start attachments_resolved n=%d session=%s", len(_msg), session_id)

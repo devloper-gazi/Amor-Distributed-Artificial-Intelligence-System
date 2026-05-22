@@ -1652,12 +1652,14 @@ async def start_research(
         if request.attachment_ids:
             try:
                 from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+                from .vision_capability import detect_vision_capability  # noqa: PLC0415
                 from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
                 _db = await _cs._db()
+                _has_vision = await detect_vision_capability()
                 enriched, _img_refs, _msg_refs = await resolve_and_inject(
                     _db, user_id=str(user.id),
                     attachment_ids=request.attachment_ids,
-                    prompt=request.topic, has_vision_model=False,
+                    prompt=request.topic, has_vision_model=_has_vision,
                 )
                 request = request.model_copy(update={"topic": enriched})
                 logger.info(
