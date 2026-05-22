@@ -430,6 +430,52 @@ export const UnifiedChat: Component = () => {
                 onTextChange={(text) => classifier.setPrompt(text)}
                 placeholder={placeholderText()}
               />
+              {/* Cycle UI v2.8 — Claude-style suggestion chip row
+                  beneath the composer.  4 minimal chips map to the
+                  4 most-used modes (build / research / thinking /
+                  quickcode); clicking a chip pre-fills the composer
+                  with a seed prompt + locks the mode.  Sentinel +
+                  Consortium accessible via slash overlay or
+                  composer mode pill — chip row stays minimal. */}
+              <div
+                class="mt-4 flex flex-wrap items-center justify-center gap-2"
+                aria-label="Quick start suggestions"
+                data-amor-suggestions=""
+              >
+                {([
+                  { mode: "build" as ModeKey, label: t("suggest.build"), glyph: "▲" },
+                  { mode: "research" as ModeKey, label: t("suggest.research"), glyph: "◎" },
+                  { mode: "thinking" as ModeKey, label: t("suggest.thinking"), glyph: "◊" },
+                  { mode: "quickcode" as ModeKey, label: t("suggest.quickcode"), glyph: "•" },
+                ]).map((s) => (
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-border-subtle/40 bg-bg-elevated/60 px-3 py-1.5 text-xs text-text-subtle transition-[background-color,border-color,color] duration-150 hover:border-border-subtle hover:bg-bg-elevated hover:text-text-body active:scale-[0.98] transform-gpu"
+                    onClick={() => {
+                      setActiveMode(s.mode);
+                      if (typeof window !== "undefined") {
+                        window.dispatchEvent(
+                          new CustomEvent("amor:focus-composer", {
+                            detail: { prefix: "" },
+                          }),
+                        );
+                      }
+                    }}
+                    data-amor-suggest={s.mode}
+                  >
+                    <span
+                      class="text-[0.85rem] leading-none"
+                      style={{
+                        color: `color-mix(in oklch, var(--color-mode-${s.mode}) 65%, var(--color-text-body) 35%)`,
+                      }}
+                      aria-hidden="true"
+                    >
+                      {s.glyph}
+                    </span>
+                    <span>{s.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </main>
         }

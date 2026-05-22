@@ -119,45 +119,106 @@ export const Sidebar: Component<SidebarProps> = (props) => {
         </IconButton>
       </div>
 
-      {/* Command palette trigger */}
+      {/* Cycle UI v2.8 — Gemini/Claude pattern: top-level action
+          buttons replace the old MODLAR/SİSTEM accordions.  Modes
+          remain reachable via the composer pill + slash overlay; the
+          sidebar focuses on session-life actions (new chat, search,
+          library, settings).  legacyDense() flag still toggles the
+          v2.5 dense view for power users. */}
+
+      {/* Action: New chat */}
       <Show when={!props.collapsed}>
         <button
           type="button"
-          onClick={props.onOpenPalette}
-          class="mx-3 mt-3 flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs text-text-subtle hover:bg-bg-hover hover:text-text-body"
-          aria-label={t("sidebar.palette_open")}
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || "");
+              const evt = new KeyboardEvent("keydown", {
+                key: "n", metaKey: isMac, ctrlKey: !isMac, bubbles: true,
+              });
+              window.dispatchEvent(evt);
+            }
+          }}
+          class="mx-3 mt-3 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-text-body hover:bg-bg-hover hover:text-text-display"
+          aria-label={t("sidebar.new_chat")}
+          data-amor-action="new-chat"
         >
-          <span>{t("sidebar.search")}</span>
-          <Kbd>Mod+K</Kbd>
+          <span class="w-4 text-center text-text-subtle" aria-hidden="true">+</span>
+          <span class="truncate font-medium">{t("sidebar.new_chat")}</span>
+          <Kbd class="ml-auto">Mod+N</Kbd>
         </button>
       </Show>
       <Show when={props.collapsed}>
         <div class="mx-2 mt-3 flex justify-center">
+          <Tooltip label={`${t("sidebar.new_chat")} (⌘N)`} placement="right">
+            <IconButton aria-label={t("sidebar.new_chat")} size="sm" onClick={() => {
+              const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || "");
+              window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", metaKey: isMac, ctrlKey: !isMac }));
+            }}>
+              <span aria-hidden="true">+</span>
+            </IconButton>
+          </Tooltip>
+        </div>
+      </Show>
+
+      {/* Action: Search (command palette) */}
+      <Show when={!props.collapsed}>
+        <button
+          type="button"
+          onClick={props.onOpenPalette}
+          class="mx-3 mt-1 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-text-body hover:bg-bg-hover hover:text-text-display"
+          aria-label={t("sidebar.palette_open")}
+        >
+          <span class="w-4 text-center text-text-subtle" aria-hidden="true">⌕</span>
+          <span class="truncate font-medium">{t("sidebar.search")}</span>
+          <Kbd class="ml-auto">Mod+K</Kbd>
+        </button>
+      </Show>
+      <Show when={props.collapsed}>
+        <div class="mx-2 mt-1 flex justify-center">
           <Tooltip label={`${t("palette.dialog_label")} (⌘K)`} placement="right">
-            <IconButton
-              aria-label={t("sidebar.palette_open")}
-              size="sm"
-              onClick={props.onOpenPalette}
-            >
+            <IconButton aria-label={t("sidebar.palette_open")} size="sm" onClick={props.onOpenPalette}>
               <span aria-hidden="true">⌘</span>
             </IconButton>
           </Tooltip>
         </div>
       </Show>
 
-      {/* Modes */}
+      {/* Action: Settings (Gemini-pattern top-level shortcut) */}
+      <Show when={!props.collapsed}>
+        <A
+          href="/settings"
+          class="mx-3 mt-1 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-text-body hover:bg-bg-hover hover:text-text-display"
+          aria-label={t("sidebar.system.settings")}
+        >
+          <span class="w-4 text-center text-text-subtle" aria-hidden="true">⚙</span>
+          <span class="truncate font-medium">{t("sidebar.system.settings")}</span>
+        </A>
+      </Show>
+      <Show when={props.collapsed}>
+        <div class="mx-2 mt-1 flex justify-center">
+          <Tooltip label={t("sidebar.system.settings")} placement="right">
+            <A href="/settings" class="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-bg-hover hover:text-text-display">
+              <span aria-hidden="true">⚙</span>
+            </A>
+          </Tooltip>
+        </div>
+      </Show>
+
+      {/* Modes + System — collapsed-by-default in v2.8.  Power users
+          who want the v2.5 dense view enable `legacy_dense_sidebar`
+          flag (Settings). */}
       <nav class="flex-1 overflow-y-auto px-2 py-3">
-        {/* Cycle UI v2.6 (Karar D) — MODLAR + SİSTEM bölümleri varsayılan
-            olarak collapsed (Gemini "alan" hissi).  legacy_dense_sidebar
-            localStorage flag true → eski "kontrol paneli" görünümü. */}
-        <Show when={!props.collapsed} fallback={
-          <ul class="space-y-0.5">
-            <For each={MODES}>
-              {(mode) => (
-                <SidebarItem mode={mode} active={isActive(mode.href)} collapsed={true} />
-              )}
-            </For>
-          </ul>
+        <Show when={!props.collapsed && legacyDense()} fallback={
+          <Show when={props.collapsed}>
+            <ul class="space-y-0.5">
+              <For each={MODES}>
+                {(mode) => (
+                  <SidebarItem mode={mode} active={isActive(mode.href)} collapsed={true} />
+                )}
+              </For>
+            </ul>
+          </Show>
         }>
           <details
             open={legacyDense()}

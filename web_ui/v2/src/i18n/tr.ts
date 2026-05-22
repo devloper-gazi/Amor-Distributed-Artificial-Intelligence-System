@@ -14,6 +14,15 @@ export const tr: Record<string, string> = {
   "greet.evening":                "İyi akşamlar, {{name}}",
   "greet.night":                  "Hadi başlayalım, {{name}}",
   "greet.fallback_name":          "orada",
+  // Cycle UI v2.8 — invitational subtitle (Claude pattern)
+  "greet.subtitle":               "Bugün ne üzerinde çalışıyorsun?",
+  // Cycle UI v2.8 — suggestion chip row (Claude pattern)
+  "suggest.build":                "Kod",
+  "suggest.research":             "Araştır",
+  "suggest.thinking":             "Düşün",
+  "suggest.quickcode":            "Hızlı düzelt",
+  // Cycle UI v2.8 — Gemini-pattern sidebar top-level actions
+  "sidebar.new_chat":             "Yeni sohbet",
 
   // ── Cycle UI v2.6 — Composer placeholder rotation (Karar F) ─
   "composer.placeholder.0":       "Ne istersen sor — doğru modu ben seçerim.",

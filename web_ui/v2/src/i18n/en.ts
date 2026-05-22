@@ -14,6 +14,15 @@ export const en: Record<string, string> = {
   "greet.evening":                "Good evening, {{name}}",
   "greet.night":                  "Let's roll, {{name}}",
   "greet.fallback_name":          "there",
+  // Cycle UI v2.8 — invitational subtitle (Claude pattern)
+  "greet.subtitle":               "What are you working on today?",
+  // Cycle UI v2.8 — suggestion chip row (Claude pattern)
+  "suggest.build":                "Code",
+  "suggest.research":             "Research",
+  "suggest.thinking":             "Think",
+  "suggest.quickcode":            "Quick fix",
+  // Cycle UI v2.8 — Gemini-pattern sidebar top-level actions
+  "sidebar.new_chat":             "New chat",
 
   // ── Cycle UI v2.6 — Composer placeholder rotation (Karar F) ─
   "composer.placeholder.0":       "Ask anything — I'll pick the right mode.",

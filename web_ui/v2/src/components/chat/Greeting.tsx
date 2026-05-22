@@ -61,24 +61,37 @@ export const Greeting: Component = () => {
   const name = createMemo(() => pickName());
 
   return (
-    <h1
-      // Cycle UI v2.6.3 — Greeting daha hafif Gemini "What should we
-      // focus on?" tarzı: clamp(22-32px), weight 400 (regular),
-      // text-subtle (display'den daha yumuşak), tight tracking.
-      // Card composer'ın altındaki rolü hero'dan invite-line'a düştü.
-      class="amor-enter text-center font-normal tracking-tight text-text-display"
-      style={{
-        "font-size": "clamp(1.5rem, 3.2vw, 2rem)",
-        "line-height": "1.2",
-        "letter-spacing": "-0.015em",
-        "max-width": "38ch",
-        "margin-left": "auto",
-        "margin-right": "auto",
-      }}
-      data-amor-greeting=""
-    >
-      {t(key(), { name: name() })}
-    </h1>
+    <div class="amor-enter flex flex-col items-center gap-2">
+      <h1
+        // Cycle UI v2.6.3 — Greeting daha hafif Gemini "What should we
+        // focus on?" tarzı: clamp(22-32px), weight 400 (regular),
+        // text-subtle (display'den daha yumuşak), tight tracking.
+        class="text-center font-normal tracking-tight text-text-display"
+        style={{
+          "font-size": "clamp(1.5rem, 3.2vw, 2rem)",
+          "line-height": "1.2",
+          "letter-spacing": "-0.015em",
+          "max-width": "38ch",
+        }}
+        data-amor-greeting=""
+      >
+        {t(key(), { name: name() })}
+      </h1>
+      {/* Cycle UI v2.8 — invitational subtitle (Claude pattern).
+          Sits one line below the greeting hero; same vertical rhythm
+          but text-subtle so the eye moves naturally to the composer
+          below.  i18n: "Bugün ne üzerinde çalışıyorsun?" / EN. */}
+      <p
+        class="text-center text-text-subtle"
+        style={{
+          "font-size": "clamp(0.875rem, 1.4vw, 1rem)",
+          "line-height": "1.4",
+        }}
+        data-amor-greeting-subtitle=""
+      >
+        {t("greet.subtitle")}
+      </p>
+    </div>
   );
 };
 
