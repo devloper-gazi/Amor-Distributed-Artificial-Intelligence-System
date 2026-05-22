@@ -553,7 +553,11 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
           }
           minRows={2}
           maxRows={10}
-          class="bg-bg-elevated"
+          // Cycle UI v2.6.4 — Textarea composer pill içinde subordinate;
+          // kendi focus ring'i composer outer ring'iyle çakışmasın diye
+          // outline-none + transparent bg (composer kart bg'sini
+          // görelim).  Composer focus-within zaten outer cue veriyor.
+          class="!bg-transparent !outline-none !border-none !ring-0 focus:!ring-0 focus:!outline-none focus-visible:!outline-none focus-visible:!ring-0"
           autofocus
           aria-label={t("common.send")}
           aria-controls={mentionOpen() ? "amor-mention-listbox" : undefined}
@@ -608,28 +612,29 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         </p>
       </Show>
 
-      <div class="flex items-center justify-between gap-2">
-        <ModePill
-          mode={effectiveMode()}
-          onClick={() => setPickerOpen((o: boolean) => !o)}
-          expanded={pickerOpen()}
-          badge={props.modeBadge}
-        />
-        {/* Cycle UI v2.6.2 (D6) — Attach button artık Button primitive
-            ghost variant; text label kaldırıldı, sadece Paperclip icon.
-            aria-label semantik adı korur (a11y). h-8 hizalanır
-            Send + ModePill ile (önceki h-7 idi, ritim sapması). */}
+      {/* Cycle UI v2.6.4 — Gemini-style footer layout: sol-grup
+          (attach + mode-pill) + flex-1 spacer + sağ-grup (hint focus-
+          only + send).  Paperclip'in justify-between'da ortaya
+          itilmesi sorunu çözüldü; visual rhythm sol-orta-sağ. */}
+      <div class="flex items-center gap-1.5">
+        {/* Sol: attach + mode pill */}
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          class="!px-2"
+          class="!px-1.5 h-7 w-7"
           onClick={() => fileInputRef?.click()}
           aria-label={t("common.attach")}
           data-amor-attach="trigger"
         >
           <Paperclip class="h-4 w-4" />
         </Button>
+        <ModePill
+          mode={effectiveMode()}
+          onClick={() => setPickerOpen((o: boolean) => !o)}
+          expanded={pickerOpen()}
+          badge={props.modeBadge}
+        />
         <input
           ref={(el: HTMLInputElement) => (fileInputRef = el)}
           type="file"
@@ -642,15 +647,15 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             e.currentTarget.value = "";
           }}
         />
-        {/* Cycle UI v2.6.2 (D5) — hint composer odaktayken görünür,
-            blur'da gizli (group-focus-within CSS-only).  aria-hidden
-            görsel için; sözlü anlam ⌘+Enter shortcut zaten yardım
-            metni — screen reader user'lar bunu özellikle dinler. */}
+
+        {/* Orta: flex-1 spacer + hint (focus-only) */}
         <span
-          class="ml-2 hidden flex-1 truncate text-xs text-text-subtle opacity-0 transition-opacity duration-200 group-focus-within:inline group-focus-within:opacity-100"
+          class="hidden flex-1 truncate text-[0.7rem] text-text-mute opacity-0 transition-opacity duration-200 group-focus-within:inline group-focus-within:opacity-100"
         >
           {t("chat.send_hint")}
         </span>
+        {/* Spacer when hint hidden (group-not-focus state) */}
+        <span class="flex-1 group-focus-within:hidden" aria-hidden="true" />
         <Show
           when={!props.busy}
           fallback={
@@ -664,32 +669,28 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
             </Button>
           }
         >
-          {/* Cycle UI v2.6.3 — Send button artık mode-accent solid
-              renkte, rounded-full (Gemini blue / Claude orange
-              pattern paraleli).  AMOR'da renk her zaman active mode'a
-              bağlı — Build'de yeşil, Research'de mavi vs.  Custom
-              inline button (NOT Button primitive) çünkü mode-accent
-              solid + rounded-full kombinasyonu primary variant'tan
-              farklı semantik.  h-8 w-8 square + icon center. */}
+          {/* Cycle UI v2.6.4 — Sağ: Send button kompakt + neutral.
+              h-8 w-8 → h-7 w-7 (28×28) Gemini ile aynı boyut.
+              Solid mode-accent (yeşil/mavi) yerine neutral text-display
+              (light siyah / dark beyaz) — composer pill içinde tek
+              vurgu noktası olmalı, mode-accent ModePill'de zaten var.
+              Disabled state'te text-mute (dim) ile, enabled'da display.
+              amor-touch ile coarse-pointer 44×44 garanti. */}
           <button
             type="submit"
             disabled={!livePreview().text && attachments().length === 0}
             aria-label={t("common.send")}
             class={[
-              "inline-flex h-8 w-8 items-center justify-center rounded-full",
-              "text-white shadow-sm",
+              "amor-touch inline-flex h-7 w-7 items-center justify-center rounded-full",
+              "bg-text-display text-bg-canvas",
               "transition-[transform,opacity,background-color] duration-150",
-              "hover:opacity-90 active:scale-[0.94] transform-gpu",
-              "disabled:opacity-30 disabled:cursor-not-allowed",
+              "hover:opacity-90 active:scale-[0.92] transform-gpu",
+              "disabled:bg-bg-hover disabled:text-text-mute disabled:cursor-not-allowed",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-              "amor-touch",
             ].join(" ")}
-            style={{
-              "background-color": modeColorVar(effectiveMode()),
-            }}
             data-amor-send=""
           >
-            <SendArrow class="h-4 w-4 translate-y-[-0.5px]" />
+            <SendArrow class="h-3.5 w-3.5 translate-y-[-0.5px]" />
           </button>
         </Show>
       </div>

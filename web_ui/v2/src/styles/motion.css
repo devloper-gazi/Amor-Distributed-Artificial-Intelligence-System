@@ -102,16 +102,16 @@
   transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
               border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-/* Cycle UI v2.6.2 (D12) — focus-within composer kazanır:
- *   * 2 px crisp ring (existing --color-focus-ring)
- *   * 24 px outer halo, mode-accent tinted via color-mix at 30%
- * Halo box-shadow GPU-promoted değil (transform yok), CLS riski 0.
- * Mode accent --mode-accent ContextVar yoluyla composer ancestor'dan
- * inherit eder; mode değişince halo rengi de değişir. */
+/* Cycle UI v2.6.4 — focus-within composer: tek subtle elevation.
+ * v2.6.2'nin 2px ring + 24px outer halo kombinasyonu Tailwind'in
+ * focus-within:bg + border-color change'iyle çakışıyordu (göz çift
+ * ring görüyordu).  v2.6.4 sadece soft outer shadow + mode-accent
+ * tint bırakır; Tailwind kendi bg/border accent'i handle eder.
+ * Result: tek, sessiz "alive" hissi. */
 .amor-composer:focus-within {
   box-shadow:
-    0 0 0 2px var(--color-focus-ring),
-    0 0 24px -4px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 30%, transparent);
+    0 4px 24px -6px color-mix(in oklch, var(--mode-accent, var(--color-focus-ring)) 20%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--mode-accent, var(--color-focus-ring)) 18%, transparent);
   transition-duration: 200ms;
 }
 
