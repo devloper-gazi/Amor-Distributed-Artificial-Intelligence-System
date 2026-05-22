@@ -85,6 +85,10 @@ export interface ChatStreamConfig<StartReq> {
 export interface StartMetadata {
   mode?: ChatTurn["mode"];
   classifierMeta?: ChatTurn["classifierMeta"];
+  /** Cycle UI v2.7 (D11) — attachment IDs returned by the upload
+   *  helper; spliced into the request body before POST.  Empty
+   *  default keeps legacy adapters working. */
+  attachmentIds?: string[];
 }
 
 export interface ChatStreamApi {
@@ -338,6 +342,18 @@ export function createChatStream<StartReq>(
       // ignore unknown fields).
       if (chatSessionId && body && typeof body === "object" && !("chat_session_id" in body)) {
         body.chat_session_id = chatSessionId;
+      }
+      // Cycle UI v2.7 — splice attachment IDs into the request body.
+      // Backend `AttachmentBearingRequest` mixin (Phase 2 endpoint
+      // touches) reads `attachment_ids` and runs resolve_and_inject()
+      // to enrich the prompt with AMOR-ATTACH context blocks before
+      // the engine dispatches.  Legacy endpoints that haven't been
+      // touched yet ignore the unknown field (Pydantic strict only
+      // when explicitly set — our models default to `extra="ignore"`).
+      if (meta?.attachmentIds && meta.attachmentIds.length > 0 && body && typeof body === "object") {
+        if (!("attachment_ids" in body)) {
+          body.attachment_ids = meta.attachmentIds;
+        }
       }
       const resp = await api.post<StartResp>(cfg.startPath, body);
       setSessionId(resp.session_id);

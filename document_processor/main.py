@@ -78,6 +78,11 @@ except ImportError:
 from .api.chat_sessions_routes import router as chat_sessions_router
 from .api.query_record_routes import router as query_record_router  # Phase B4
 from .api.chat_folders_routes import router as chat_folders_router
+# Cycle UI v2.7 — attachment system end-to-end.  Upload/download/delete
+# endpoints + canonical metadata stored in `attachments_meta` Mongo
+# collection.  6 chat /start endpoints inherit `AttachmentBearingRequest`
+# mixin to accept `attachment_ids[]` (see `api/attachment_models.py`).
+from .api.attachments_routes import attachments_router
 from .api.auth_routes import router as auth_router
 # Cycle UI 2026-05-20 — unified chat endpoints (Phase 1: classifier;
 # Phase 2 will add /start + /events dispatcher).  Lazy-import-friendly:
@@ -754,6 +759,10 @@ logger.info("Query record routes included")
 # Chat folders persistence (MongoDB)
 app.include_router(chat_folders_router)
 logger.info("Chat folders routes included")
+
+# Cycle UI v2.7 — attachment upload/download/delete (multipart endpoint).
+app.include_router(attachments_router)
+logger.info("Attachment routes included")
 
 # Sprint 0 admin baselines dashboard (Cycle C)
 app.include_router(admin_baselines_router)

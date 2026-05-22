@@ -203,6 +203,47 @@ export const UnifiedChat: Component = () => {
   };
 
   const onSubmit = async (text: string, mode: ModeKey) => {
+    // Cycle UI v2.7 — legacy text+mode-only submit path.  Used when
+    // the composer didn't expose attachments (e.g. legacy callers).
+    return _runSubmit(text, mode, []);
+  };
+
+  // Cycle UI v2.7 (D10) — rich submit path: receives the full
+  // ComposerSubmission ({text, mode, attachments: File[]}) and
+  // orchestrates multipart upload → attachment_ids → stream.start.
+  // UnifiedComposer fires this AFTER onSubmit (composer's submit()
+  // calls both), so the legacy path is harmless when no attachments
+  // are present; with attachments the rich path takes over.
+  const onSubmitRich = async (submission: {
+    text: string;
+    mode: ModeKey;
+    attachments: File[];
+  }) => {
+    if (submission.attachments.length === 0) {
+      // No files → legacy `onSubmit` path already ran via composer.
+      return;
+    }
+    // Upload all in parallel, gather attachment_ids.
+    const { uploadAttachments } = await import("../lib/api");
+    let attachmentIds: string[] = [];
+    try {
+      const uploads = await uploadAttachments(submission.attachments);
+      attachmentIds = uploads.map((u) => u.attachment_id);
+    } catch (err) {
+      console.error("[unified-chat] attachment upload failed:", err);
+      // Continue without attachments — user sees error toast via
+      // composer state (D14 future).  For now we proceed prompt-only.
+      attachmentIds = [];
+    }
+    return _runSubmit(submission.text, submission.mode, attachmentIds);
+  };
+
+  /** Shared submit path: composes classifierMeta + stream.start. */
+  const _runSubmit = async (
+    text: string,
+    mode: ModeKey,
+    attachmentIds: string[],
+  ) => {
     const stream = ensureStream(mode);
     // Snapshot the classifier result BEFORE cancelling so we can
     // thread it into the turn for MessageBubble's hover tooltip.
@@ -218,7 +259,7 @@ export const UnifiedChat: Component = () => {
         }
       : undefined;
     classifier.cancel();
-    await stream.start(text, { mode, classifierMeta });
+    await stream.start(text, { mode, classifierMeta, attachmentIds });
   };
 
   const onCancel = async () => {
@@ -380,6 +421,7 @@ export const UnifiedChat: Component = () => {
                   via the Show's reactive boundary.  No state loss. */}
               <UnifiedComposer
                 onSubmit={onSubmit}
+                onSubmitRich={onSubmitRich}
                 busy={busy()}
                 onCancel={onCancel}
                 initialMode={activeMode()}
@@ -400,6 +442,7 @@ export const UnifiedChat: Component = () => {
         </main>
         <UnifiedComposer
           onSubmit={onSubmit}
+          onSubmitRich={onSubmitRich}
           busy={busy()}
           onCancel={onCancel}
           initialMode={activeMode()}
