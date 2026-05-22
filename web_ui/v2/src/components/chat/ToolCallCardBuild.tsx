@@ -156,7 +156,8 @@ export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
 
       {/* Body */}
       <Show when={hasBody() && open()}>
-        <div class="overflow-x-auto px-3 py-2 text-[12px] leading-5">
+        {/* Cycle UI v2.6 (Karar I) — body nefes: px 3→4, py 2→2.5 */}
+        <div class="overflow-x-auto px-4 py-2.5 text-[12px] leading-5">
           <Show
             when={props.card.language === "diff"}
             fallback={
@@ -183,7 +184,8 @@ export const ToolCallCardBuild: Component<ToolCallCardBuildProps> = (props) => {
 
       {/* Footer */}
       <Show when={props.card.durationMs != null || props.card.meta}>
-        <footer class="flex items-center gap-3 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-subtle">
+        {/* Cycle UI v2.6 (Karar I) — footer nefes: px 3→4, py 1.5→2 */}
+        <footer class="flex items-center gap-3 border-t border-border-subtle px-4 py-2 text-[11px] text-text-subtle">
           <Show when={props.card.durationMs != null}>
             <span class="tabular-nums" data-amor-build-duration="">
               {props.card.durationMs}ms

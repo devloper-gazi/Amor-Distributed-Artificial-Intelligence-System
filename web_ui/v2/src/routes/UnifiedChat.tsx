@@ -230,6 +230,27 @@ export const UnifiedChat: Component = () => {
 
   onCleanup(() => classifier.cancel());
 
+  // Cycle UI v2.6 (Karar H) — composer focus → Halo focused signal.
+  // Document-level focusin/focusout bubbles up through Solid's tree;
+  // we detect whether the focus target is inside the composer (data-
+  // attribute scoped) and flip a signal Halo reads.  Pure DOM event,
+  // no prop drill into UnifiedComposer's 861-LOC internals.
+  const [composerFocused, setComposerFocused] = createSignal(false);
+  onMount(() => {
+    if (typeof document === "undefined") return;
+    const isComposer = (el: EventTarget | null): boolean =>
+      el instanceof HTMLElement &&
+      !!el.closest('[data-amor-composer="unified"]');
+    const onIn  = (ev: FocusEvent) => { if (isComposer(ev.target)) setComposerFocused(true);  };
+    const onOut = (ev: FocusEvent) => { if (isComposer(ev.target)) setComposerFocused(false); };
+    document.addEventListener("focusin",  onIn);
+    document.addEventListener("focusout", onOut);
+    onCleanup(() => {
+      document.removeEventListener("focusin",  onIn);
+      document.removeEventListener("focusout", onOut);
+    });
+  });
+
   // Cycle UI v2.6 (Karar M) — global keyboard shortcuts.  Native
   // ``window.addEventListener`` instead of a dep (`@solid-primitives/
   // keyboard`) per Q1 user decision.  Platform-aware: macOS uses
@@ -326,7 +347,7 @@ export const UnifiedChat: Component = () => {
       {/* Cycle UI v2.6 — atmospheric halo backdrop (Karar A).  Sits
           behind everything via position:fixed + z-index:-1; mode prop
           drives the tint, focus state handled in D10 (Karar H). */}
-      <Halo mode={activeMode() ?? suggestedMode()} />
+      <Halo mode={activeMode() ?? suggestedMode()} focused={composerFocused()} />
       <TopBar
         title={t("chat.unified_title")}
         subtitle={t("chat.unified_subtitle")}

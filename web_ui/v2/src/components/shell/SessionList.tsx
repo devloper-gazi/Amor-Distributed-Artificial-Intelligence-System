@@ -457,7 +457,10 @@ const SessionRow: Component<SessionRowProps> = (props) => {
         data-amor-session-status={status()}
         data-amor-session-mode={modeKey()}
         class={[
-          "relative flex items-start gap-2 rounded-md px-2 py-1.5 pr-7 text-xs",
+          // Cycle UI v2.6 (Karar E) — roomy rows: py-1.5 → py-2.5
+          // (~32→44 px target).  gap-2 → gap-2.5 + mt-1 between
+          // title + meta give Gemini-style breathing room.
+          "relative flex items-start gap-2.5 rounded-md px-2 py-2.5 pr-7 text-xs",
           "border border-transparent",
           "text-text-body hover:bg-bg-hover hover:text-text-display",
           "focus-visible:outline-2 focus-visible:outline-offset-1",

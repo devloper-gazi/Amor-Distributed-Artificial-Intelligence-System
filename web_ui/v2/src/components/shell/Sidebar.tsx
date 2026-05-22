@@ -1,4 +1,4 @@
-﻿import { type Component, For, Show } from "solid-js";
+﻿import { type Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import { MODES, type ModeMeta } from "../../lib/types";
 import { auth } from "../../lib/auth";
@@ -45,11 +45,50 @@ const GLYPH: Record<string, string> = {
   activity: "≈",
 };
 
+/** Cycle UI v2.6 (Karar D) — legacy_dense_sidebar localStorage flag.
+ *  When true (operator opt-in), MODLAR + SİSTEM sections start
+ *  expanded (v2.5 behaviour).  When false (default), they're
+ *  collapsed accordion sections — "alan" feel.
+ *
+ *  Settings UI toggle in D8 emits "amor:sidebar-legacy-toggle"
+ *  CustomEvent; this signal listens + persists. */
+function loadLegacyDense(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    return localStorage.getItem("amor.sidebar.legacy_dense") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export const Sidebar: Component<SidebarProps> = (props) => {
   const location = useLocation();
   const isActive = (href: string) =>
     location.pathname === href ||
     (href !== "/" && location.pathname.startsWith(href));
+
+  const [legacyDense, setLegacyDense] = createSignal<boolean>(loadLegacyDense());
+  onMount(() => {
+    if (typeof window === "undefined") return;
+    const onToggle = (ev: Event) => {
+      const next = !legacyDense();
+      setLegacyDense(next);
+      try {
+        localStorage.setItem("amor.sidebar.legacy_dense", next ? "1" : "0");
+      } catch {
+        // ignore SSR / storage-disabled
+      }
+      // Tell other parts of the surface (Settings page label etc.).
+      window.dispatchEvent(
+        new CustomEvent("amor:sidebar-legacy-changed", { detail: { value: next } }),
+      );
+      void ev;
+    };
+    window.addEventListener("amor:sidebar-legacy-toggle", onToggle);
+    onCleanup(() =>
+      window.removeEventListener("amor:sidebar-legacy-toggle", onToggle),
+    );
+  });
 
   return (
     <aside
@@ -104,76 +143,95 @@ export const Sidebar: Component<SidebarProps> = (props) => {
 
       {/* Modes */}
       <nav class="flex-1 overflow-y-auto px-2 py-3">
-        <Show when={!props.collapsed}>
-          <p class="mb-1.5 px-2 text-[0.65rem] font-semibold tracking-widest text-text-subtle">
-            {localeUpper(t("sidebar.section.modes"))}
-          </p>
-        </Show>
-        <ul class="space-y-0.5">
-          <For each={MODES}>
-            {(mode) => (
-              <SidebarItem mode={mode} active={isActive(mode.href)} collapsed={props.collapsed} />
-            )}
-          </For>
-        </ul>
+        {/* Cycle UI v2.6 (Karar D) — MODLAR + SİSTEM bölümleri varsayılan
+            olarak collapsed (Gemini "alan" hissi).  legacy_dense_sidebar
+            localStorage flag true → eski "kontrol paneli" görünümü. */}
+        <Show when={!props.collapsed} fallback={
+          <ul class="space-y-0.5">
+            <For each={MODES}>
+              {(mode) => (
+                <SidebarItem mode={mode} active={isActive(mode.href)} collapsed={true} />
+              )}
+            </For>
+          </ul>
+        }>
+          <details
+            open={legacyDense()}
+            class="amor-sidebar-section"
+            data-amor-section="modes"
+          >
+            <summary class="mb-1.5 cursor-pointer list-none px-2 py-1 text-[0.65rem] font-semibold tracking-widest text-text-subtle hover:text-text-body select-none">
+              {localeUpper(t("sidebar.section.modes"))}
+              <span class="ml-1 inline-block text-text-mute transition-transform" aria-hidden="true">▾</span>
+            </summary>
+            <ul class="space-y-0.5">
+              <For each={MODES}>
+                {(mode) => (
+                  <SidebarItem mode={mode} active={isActive(mode.href)} collapsed={props.collapsed} />
+                )}
+              </For>
+            </ul>
+          </details>
 
-        <Show when={!props.collapsed}>
-          <p class="mt-6 mb-1.5 px-2 text-[0.65rem] font-semibold tracking-widest text-text-subtle">
-            {localeUpper(t("sidebar.section.system"))}
-          </p>
-        </Show>
-        <ul class="space-y-0.5">
-          <For each={SYSTEM_LINKS}>
-            {(link) => (
-              <li>
-                <Show
-                  when={link.external}
-                  fallback={
-                    <A
-                      href={link.href}
-                      class={[
-                        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
-                        "text-text-body hover:bg-bg-hover hover:text-text-display",
-                        isActive(link.href)
-                          ? "bg-bg-hover text-text-display"
-                          : "",
-                      ].join(" ")}
-                      end={link.href === "/"}
+          <details
+            open={legacyDense()}
+            class="amor-sidebar-section mt-4"
+            data-amor-section="system"
+          >
+            <summary class="mb-1.5 cursor-pointer list-none px-2 py-1 text-[0.65rem] font-semibold tracking-widest text-text-subtle hover:text-text-body select-none">
+              {localeUpper(t("sidebar.section.system"))}
+              <span class="ml-1 inline-block text-text-mute transition-transform" aria-hidden="true">▾</span>
+            </summary>
+            <ul class="space-y-0.5">
+              <For each={SYSTEM_LINKS}>
+                {(link) => (
+                  <li>
+                    <Show
+                      when={link.external}
+                      fallback={
+                        <A
+                          href={link.href}
+                          class={[
+                            "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
+                            "text-text-body hover:bg-bg-hover hover:text-text-display",
+                            isActive(link.href)
+                              ? "bg-bg-hover text-text-display"
+                              : "",
+                          ].join(" ")}
+                          end={link.href === "/"}
+                        >
+                          <span
+                            class="w-4 text-center text-text-subtle"
+                            aria-hidden="true"
+                          >
+                            {link.glyph}
+                          </span>
+                          <span class="truncate">{t(link.label_key)}</span>
+                        </A>
+                      }
                     >
-                      <span
-                        class="w-4 text-center text-text-subtle"
-                        aria-hidden="true"
+                      <a
+                        href={link.href}
+                        class={[
+                          "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
+                          "text-text-body hover:bg-bg-hover hover:text-text-display",
+                        ].join(" ")}
                       >
-                        {link.glyph}
-                      </span>
-                      <Show when={!props.collapsed}>
+                        <span
+                          class="w-4 text-center text-text-subtle"
+                          aria-hidden="true"
+                        >
+                          {link.glyph}
+                        </span>
                         <span class="truncate">{t(link.label_key)}</span>
-                      </Show>
-                    </A>
-                  }
-                >
-                  <a
-                    href={link.href}
-                    class={[
-                      "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
-                      "text-text-body hover:bg-bg-hover hover:text-text-display",
-                    ].join(" ")}
-                  >
-                    <span
-                      class="w-4 text-center text-text-subtle"
-                      aria-hidden="true"
-                    >
-                      {link.glyph}
-                    </span>
-                    <Show when={!props.collapsed}>
-                      <span class="truncate">{t(link.label_key)}</span>
+                      </a>
                     </Show>
-                  </a>
-                </Show>
-              </li>
-            )}
-          </For>
-        </ul>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </details>
+        </Show>
 
         {/* Sessions */}
         <SessionList collapsed={props.collapsed} />

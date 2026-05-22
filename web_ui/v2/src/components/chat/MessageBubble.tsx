@@ -74,7 +74,10 @@ export const MessageBubble: Component<MessageBubbleProps> = (props) => {
   return (
     <div
       class={[
-        "group relative flex gap-3 px-5 py-4",
+        // Cycle UI v2.6 (Karar I) — bubble nefes: gap 3→4, py 4→5
+        // (16→20 px vertical), keeps text content unchanged.  Reads
+        // softer at 1080p without scrollbar penalty.
+        "group relative flex gap-4 px-5 py-5",
         isUser() ? "bg-bg-canvas" : "bg-bg-elevated-v25",
       ].join(" ")}
       data-role={props.turn.role}
