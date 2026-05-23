@@ -42,6 +42,44 @@ def cmd_start(services: Sequence[str] = (), *, build: bool = False) -> int:
         engine=engine,
         timeout_s=180.0,
     )
+
+    # Auto-heal: when `compose up -d` recreates `app` (config or env
+    # changed) it gets a new internal Docker IP, but nginx in the
+    # `gateway` container caches the OLD IP via its upstream DNS
+    # resolver -- producing 502s forever until somebody restarts the
+    # gateway by hand.  If health checks fail with that exact 502/503
+    # pattern on the gateway-fronted services (gateway + app), kick
+    # the gateway once and re-probe.  Idempotent + cheap when not
+    # needed; eliminates the most common "I ran start.cmd but the UI
+    # is 502" support request.
+    if not report.all_ok:
+        stale_dns = any(
+            r.name in ("gateway", "app")
+            and (
+                "HTTP 502" in r.detail
+                or "HTTP 503" in r.detail
+                or "HTTP 504" in r.detail
+            )
+            for r in report.failed
+        )
+        if stale_dns:
+            util.warn(
+                "Gateway is 502/503/504 -- likely stale nginx upstream "
+                "cache after `app` recreate.  Auto-restarting gateway..."
+            )
+            heal = compose.restart(engine, ["gateway"], stream=False)
+            if heal.ok:
+                report = health.wait_for(
+                    to_wait_for,
+                    engine=engine,
+                    timeout_s=60.0,
+                )
+            else:
+                util.warn(
+                    f"  gateway restart failed (exit {heal.code}) -- "
+                    "leaving health report as-is."
+                )
+
     if not report.all_ok:
         util.warn("Some core services did not report healthy in time:")
         for r in report.failed:
@@ -51,7 +89,7 @@ def cmd_start(services: Sequence[str] = (), *, build: bool = False) -> int:
     print()
     print(f"{util.C_BOLD}URLs:{util.C_RESET}")
     for label, url in constants.POST_INSTALL_URLS:
-        print(f"  • {label:<14} {util.C_CYAN}{url}{util.C_RESET}")
+        print(f"  - {label:<14} {util.C_CYAN}{url}{util.C_RESET}")
     return 0
 
 

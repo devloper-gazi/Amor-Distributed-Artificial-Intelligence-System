@@ -1,4 +1,4 @@
-# AMOR — legacy `validate_setup.ps1` entry point.
+﻿# AMOR -- legacy `validate_setup.ps1` entry point.
 #
 # Cycle E v18 replaced the bespoke validator (which checked for v1 UI
 # files that no longer exist) with `tools/setup/doctor.py`.  This stub

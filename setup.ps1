@@ -1,4 +1,4 @@
-# AMOR — Windows PowerShell bootstrap shim.
+﻿# AMOR -- Windows PowerShell bootstrap shim.
 #
 # Locates a Python 3.9+ interpreter, then hands off to the
 # `tools.setup` package which does the real work.  Pass any args
