@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps, Show } from "solid-js";
+﻿import { type Component, type JSX, splitProps, Show } from "solid-js";
 
 export interface ProgressBarProps
   extends JSX.HTMLAttributes<HTMLDivElement> {
@@ -31,7 +31,7 @@ export const ProgressBar: Component<ProgressBarProps> = (props) => {
       aria-label={local.label}
       {...rest}
     >
-      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-tertiary">
+      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-elevated-v25">
         <Show
           when={pct() !== null}
           fallback={

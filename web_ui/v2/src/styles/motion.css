@@ -1,0 +1,244 @@
+/* ============================================================================
+ * AMOR Cycle UI v2.5 — motion language.
+ *
+ * Pure CSS keyframes + transitions.  No JS animation library (Decision 2 in
+ * the parent plan).  All entries ≤200 ms; ease-out for entries, ease-in
+ * for exits.  prefers-reduced-motion honoured at the bottom of this file.
+ *
+ * Imported once from theme.css after Phase 1.  Components reference these
+ * via class names (.streaming-caret, .amor-enter) — no per-component CSS
+ * duplication.
+ *
+ * Why a separate file?  theme.css is the Tailwind v4 @theme source-of-truth;
+ * keeping @keyframes in their own file keeps theme.css scannable + lets
+ * future v2.6 motion polish edit only this file.
+ * ===========================================================================*/
+
+/* ── Streaming caret ────────────────────────────────────────────────────────
+ * Per Cycle UI v2.5 Research J.3: DOM-node `<span class="streaming-caret">`
+ * appended inside the assistant's content while turn.streaming === true.
+ * NOT a `::after` pseudo — Safari has occasional repaint issues with
+ * pseudo-element animations during SSE delta append.
+ *
+ * Animation curve:
+ *   * 0-45%   visible
+ *   * 50-95%  hidden
+ *   * 100%    visible (loop reset)
+ *   * Each toggle takes ~5% of the cycle in transition — feels "physical"
+ *     rather than the binary steps(2) typewriter blink.  Custom cubic-
+ *     bezier (0.4, 0, 0.6, 1) shapes the fade transition.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-caret {
+  0%, 45%   { opacity: 1; }
+  50%, 95%  { opacity: 0; }
+  100%      { opacity: 1; }
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  background: var(--color-text-body, currentColor);
+  animation: amor-caret 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ── Message / approval enter ───────────────────────────────────────────────
+ * Used by MessageThread when a new turn is pushed + by ApprovalPrompt when
+ * the approval card mounts.  200 ms ease-out via opacity + translateY (12 →
+ * 0).  Apply with class `.amor-enter` on the wrapping element; the keyframe
+ * runs once then settles.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.amor-enter {
+  animation: amor-enter 200ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+/* ── Mode-pill flip pulse ──────────────────────────────────────────────────
+ * When the classifier flips its suggestion (top1 mode changes while the
+ * user is still typing), the ModePill's "auto" badge pulses once to draw
+ * the eye.  Applied via `data-flip-pulse="1"` on the badge element.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-pulse-once {
+  0%   { opacity: 0;    transform: scale(0.92); }
+  40%  { opacity: 1;    transform: scale(1.04); }
+  100% { opacity: 1;    transform: scale(1.00); }
+}
+
+[data-flip-pulse="1"] {
+  animation: amor-pulse-once 180ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+/* ── Branch navigator rotate ───────────────────────────────────────────────
+ * Used by BranchNavigator's expand/collapse caret.  Targets a child
+ * element with `[aria-expanded="true"]` parent.
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-rotate-target {
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+[aria-expanded="true"] .amor-rotate-target,
+[data-expanded="true"] .amor-rotate-target {
+  transform: rotate(180deg);
+}
+
+/* ── Composer focus glow ───────────────────────────────────────────────────
+ * Applied via `:focus-within` on the composer wrapper.  Tailwind's
+ * `focus-within:ring-2 focus-within:ring-focus-ring` handles the ring;
+ * this rule shapes the timing.  200 ms ease-in-out — focus arrival
+ * should feel slightly heavier than focus departure (deliberate weight).
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-composer {
+  transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Cycle UI v2.6.4 — focus-within composer: tek subtle elevation.
+ * v2.6.2'nin 2px ring + 24px outer halo kombinasyonu Tailwind'in
+ * focus-within:bg + border-color change'iyle çakışıyordu (göz çift
+ * ring görüyordu).  v2.6.4 sadece soft outer shadow + mode-accent
+ * tint bırakır; Tailwind kendi bg/border accent'i handle eder.
+ * Result: tek, sessiz "alive" hissi. */
+.amor-composer:focus-within {
+  box-shadow:
+    0 4px 24px -6px color-mix(in oklch, var(--mode-accent, var(--color-focus-ring)) 20%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--mode-accent, var(--color-focus-ring)) 18%, transparent);
+  transition-duration: 200ms;
+}
+
+/* Cycle UI v2.6.2 (D8) — busy state pulse.  When the composer is
+ * mid-submission (Spinner shown in place of Send icon), the outer
+ * ring softly pulses 3s loop on a slow alternate cubic-bezier.
+ * Ring-only (box-shadow) — width/height never animate so layout
+ * is stable.  Color is mode-accent at 35% alpha so it's visible but
+ * not aggressive. */
+@keyframes amor-composer-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 55%, transparent),
+                0 0 24px -4px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 25%, transparent);
+  }
+}
+.amor-composer--busy {
+  animation: amor-composer-pulse 3s ease-in-out infinite;
+}
+
+/* ── Hover-reveal helper ───────────────────────────────────────────────────
+ * MessageBubble's mode pill, action bar, etc. opacity-0 by default and
+ * opacity-1 on `:hover` of the group parent.  Tailwind covers the rule;
+ * this file standardises the transition curve so every hover-reveal feels
+ * consistent across the surface.  Use class `.amor-hover-reveal` on the
+ * child element.
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-hover-reveal {
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.group:hover .amor-hover-reveal,
+.group:focus-within .amor-hover-reveal {
+  opacity: 1;
+}
+
+/* ── Aurora blob drift (Login backdrop) ─────────────────────────────────────
+ * Three OKLch mode-accent radial gradients on the Login surface drift on a
+ * very slow loop (18-26 s) so the canvas feels alive without being
+ * distracting.  Translation only — no opacity flicker — so users with
+ * vestibular sensitivity register motion but not flashing.  Disabled under
+ * prefers-reduced-motion at the bottom of this file.
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes amor-blob {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2%, -3%, 0) scale(1.05); }
+  100% { transform: translate3d(-2%, 2%, 0) scale(0.97); }
+}
+
+/* ── Halo (Cycle UI v2.6 Karar A + H) ──────────────────────────────────────
+ * Chat canvas backdrop: viewport-fixed radial gradient tinted by the
+ * active mode.  Inline-style CSS vars drive the dynamic bits:
+ *   --halo-tint    : current mode's tint (var(--color-halo-tint-*))
+ *   --halo-alpha   : 0.55 rest / 0.85 focused
+ *   --halo-scale   : 1.0 rest / 1.02 composer-focused
+ *
+ * The `amor-blob` keyframe is re-used here at 14s for a slightly faster
+ * presence than the Login surface's 18-26s (Login = 3 stacked blobs,
+ * this = 1 unified halo, so it can move more freely).
+ * ────────────────────────────────────────────────────────────────────────── */
+.amor-halo {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  contain: paint;
+  will-change: transform, opacity;
+
+  /* Radial gradient: tint at 38% vertical (above center, where the
+     greeting + composer sit), fades to transparent at 70% radius. */
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 38%,
+    var(--halo-tint, var(--color-halo-base)) 0%,
+    transparent 70%
+  );
+  opacity: var(--halo-alpha, var(--color-halo-alpha-base, 0.55));
+  transform: scale(var(--halo-scale, 1));
+
+  transition:
+    opacity 240ms cubic-bezier(0, 0, 0.2, 1),
+    transform 240ms cubic-bezier(0, 0, 0.2, 1),
+    background 320ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  animation: amor-blob 14s ease-in-out infinite alternate;
+}
+
+/* ── prefers-reduced-motion ────────────────────────────────────────────────
+ * Extends the rule in theme.css.  Disable all amor-* animations + zero out
+ * transition durations.  Streaming caret falls back to a static 70% opacity
+ * block so the user still knows the assistant is generating.
+ * ────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .streaming-caret {
+    animation: none;
+    opacity: 0.7;
+  }
+  .amor-enter,
+  [data-flip-pulse="1"] {
+    animation: none;
+  }
+  /* Aurora blobs hold a static position under reduced motion. */
+  [class*="animate-[amor-blob"] {
+    animation: none !important;
+  }
+  /* Halo holds static under reduced motion — opacity ramp still
+     allowed (WCAG 2.3.3 considers opacity-only safe). */
+  .amor-halo {
+    animation: none;
+    transition: opacity 240ms cubic-bezier(0, 0, 0.2, 1);
+  }
+  .amor-rotate-target,
+  .amor-composer,
+  .amor-hover-reveal {
+    transition: none;
+  }
+  /* Cycle UI v2.6.2 — busy pulse halt under reduced-motion;
+     static ring remains so user still sees the "busy" cue. */
+  .amor-composer--busy {
+    animation: none;
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--color-mode-research, var(--color-focus-ring)) 40%, transparent);
+  }
+  /* Hover-reveal items become always-visible under reduced motion so
+     users with reduced-motion preferences don't lose the affordance. */
+  .amor-hover-reveal {
+    opacity: 1;
+  }
+}

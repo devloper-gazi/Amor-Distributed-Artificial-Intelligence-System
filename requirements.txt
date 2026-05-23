@@ -26,6 +26,11 @@ cachetools>=5.3.0  # P1.2: TTLCache for bounded in-memory session storage
 # Web scraping
 beautifulsoup4==4.12.2
 lxml==5.0.0
+# v18.1.3 — lxml ≥5.0 dropped the bundled `html-clean` extra; trafilatura
+# still requests `lxml[html-clean]` which now emits a startup
+# UserWarning "lxml 5.0.0 does not provide the extra 'html-clean'".
+# Pin the now-separate package so the extra is satisfied silently.
+lxml-html-clean>=0.4.0
 playwright==1.40.0
 trafilatura>=1.6.0
 fake-useragent>=1.4.0
@@ -114,3 +119,20 @@ z3-solver>=4.13      # Z3Verifier — SMT termination/overflow/exhaustiveness
 # via quick_v2_symcode_enabled; the module degrades to a pass-through
 # verdict if sympy is absent.
 sympy>=1.12          # SymCode — symbolic math equivalence via subprocess
+
+# ── Cycle H.3 — GRPO + verifier-reward LoRA training (commented) ───
+# Plan-agent locked: TRL>=0.18 ships GRPOTrainer with `beta` +
+# scalar `reward_chosen`/`reward_rejected` semantics.  The API
+# drifted hard between 0.14 and 0.18 (ref-model handling moved,
+# reward signature changed to `completions: list[list[dict]]`).
+# These deps are HEAVY (peft + accelerate + bitsandbytes pull ~3 GB
+# of CUDA wheels) so the runtime app container does NOT install
+# them.  Operator opts in via the training venv on the GPU host:
+#     pip install -r requirements-training.txt
+# The pin lives here as the source of truth.
+# trl>=0.18,<0.19   # GRPOTrainer + ORPOTrainer
+# peft>=0.11        # LoRA adapter mechanics
+# unsloth>=2024.10  # Patches for ORPO/GRPO + 4bit quantisation
+# transformers>=4.45,<4.50
+# accelerate>=0.30
+# bitsandbytes>=0.43 ; sys_platform != 'win32'

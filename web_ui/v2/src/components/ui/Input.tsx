@@ -34,20 +34,20 @@ export const Input: Component<InputProps> = (props) => {
         "bg-bg-elevated px-3 transition-colors",
         local.invalid
           ? "border-status-failed"
-          : "border-border-default focus-within:border-border-strong",
+          : "border-border-strong-v25 focus-within:border-border-strong",
         local.disabled ? "opacity-50" : "",
         local.class ?? "",
       ].join(" ")}
     >
       <Show when={local.prefix}>
-        <span class="flex items-center text-text-tertiary" aria-hidden="true">
+        <span class="flex items-center text-text-subtle" aria-hidden="true">
           {local.prefix}
         </span>
       </Show>
       <input
         class={[
           "min-w-0 flex-1 bg-transparent text-sm",
-          "text-text-primary placeholder:text-text-tertiary",
+          "text-text-display placeholder:text-text-subtle",
           "outline-none disabled:cursor-not-allowed",
         ].join(" ")}
         disabled={local.disabled}
@@ -55,7 +55,7 @@ export const Input: Component<InputProps> = (props) => {
         {...rest}
       />
       <Show when={local.suffix}>
-        <span class="flex items-center text-text-tertiary">{local.suffix}</span>
+        <span class="flex items-center text-text-subtle">{local.suffix}</span>
       </Show>
     </div>
   );

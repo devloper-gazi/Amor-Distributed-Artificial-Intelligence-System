@@ -3,7 +3,7 @@ Configuration management using Pydantic for type-safe settings.
 All settings can be overridden via environment variables.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 from pathlib import Path
 
@@ -244,6 +244,218 @@ class Settings(BaseSettings):
     code_debug_diff_mode_enabled: bool = True
     # Maximum debug→fix→reexecute loops per session.
     code_max_debug_iterations: int = 3
+    # Cycle D — quality-improvement Reflexion loop.  Distinct from
+    # ``code_max_debug_iterations`` (which only fires on FAILED
+    # execution).  After the pipeline reaches "review" the engine
+    # scores the deliverable; if the score is below
+    # ``code_reflexion_quality_threshold`` AND we still have
+    # iterations available, the coder is re-invoked with a
+    # feedback-rich prompt (sandbox stdout/stderr + critic issues +
+    # test execution failures) to produce an improved version.  The
+    # better-scored version wins.  Default 1 iteration is a balance
+    # between cost (extra LLM call + extra sandbox run = ~30-60s) and
+    # quality lift; production deployments can set 0 to disable.
+    code_max_reflexion_iterations: int = 1
+    code_reflexion_quality_threshold: int = 80
+    # Cycle F Sprint 2 — Hypothesis property-based testing + branch
+    # coverage Reflexion signal.  Both are FEEDBACK SIGNALS that
+    # surface in the reflexion-retry prompt; they do NOT change the
+    # quality-score weighting (35+25+15+25=100 from Cycle D is kept).
+    #
+    #   code_property_tests_enabled: when True, the Tester agent's
+    #     prompt is augmented (Python only) to require @given
+    #     invariants in addition to example-based tests.  Set False
+    #     for a flag-flip rollback to Cycle-D-style tester output.
+    #
+    #   code_branch_coverage_threshold: 0.0-1.0 fraction; when
+    #     pytest-cov reports below this, the Reflexion loop bundles
+    #     a MISSED_BRANCHES block into the coder-retry prompt.
+    #     Threshold is "feedback hint" not "hard gate".
+    code_property_tests_enabled: bool = True
+    code_branch_coverage_threshold: float = 0.80
+    # Cycle F Sprint 3 — LoRA hot-swap via llama.cpp PR #10994
+    # `"lora": [{"id": <int>, "scale": <float>}, ...]` per-request
+    # body field.  ``code_lora_enabled`` is the master gate; when
+    # False, the runtime never attaches a `lora` field to the
+    # OpenAI-compat body (zero behaviour change from Sprint 2).
+    #
+    # ``code_lora_role_adapters`` maps role -> adapter ID as a JSON
+    # string (parsed lazily so a bad value doesn't crash startup).
+    # Examples:
+    #   '{"coder":0,"tester":1,"debugger":2}'
+    #   '{"coder":0}'              # only coder gets a LoRA
+    #   '{}'                       # explicit empty (= disabled per-role)
+    # The adapter IDs MUST match the order llama-swap mounts them
+    # via the --lora flags in compose/llama-swap/config.yaml.
+    code_lora_enabled: bool = False
+    code_lora_role_adapters: str = "{}"
+    code_lora_default_scale: float = 1.0
+    # Cycle F Sprint 4 — Anthropic Agent Skills loader.
+    #   code_skills_enabled: master gate.  When False, the planner
+    #     system prompt is unchanged from Sprint 3.
+    #   code_skills_root: filesystem directory containing
+    #     {skill_name}/SKILL.md.  Repo-relative by default.
+    #   code_skills_token_budget: max token cost (estimated at
+    #     ~4 chars/token) for the rendered SKILLS AVAILABLE: block.
+    #     When the library outgrows the budget, render_skill_index
+    #     drops the most-expensive skills first.
+    code_skills_enabled: bool = False
+    code_skills_root: str = "skills"
+    code_skills_token_budget: int = 2000
+    # Cycle F Sprint 5 — ApprovalPolicy gate for MCP tool dispatch.
+    # When `code_approval_enabled=False` (default), every tool call
+    # runs as in Sprints 1-4.  When True, dispatch passes through
+    # `ApprovalPolicy.decide()` first; tools in `code_approval_deny`
+    # are blocked outright, `code_approval_allow_silent` runs without
+    # prompt, and everything else routes through the SSE bridge for
+    # human approval.
+    #
+    # CSV-string for lists: "name1,name2,name3" (whitespace tolerated).
+    # JSON-string for category_actions: {"delete": "deny", "exec": "prompt"}
+    # Cost circuit-breaker: per-session token budget; tripped session
+    # blocks all subsequent tool calls until reset.
+    code_approval_enabled: bool = False
+    code_approval_allow_silent: str = ""   # CSV of tool names
+    code_approval_deny: str = ""           # CSV of tool names
+    code_approval_prompt: str = ""         # CSV of tool names
+    code_approval_default_action: str = "prompt"  # allow | prompt | deny
+    code_approval_category_actions: str = ""  # JSON dict
+    code_approval_cost_budget_tokens: int = 50_000
+    # Cycle F Sprint 6 — async pipeline parallelism.
+    # When True, _phase_test runs concurrently with _phase_execute +
+    # _phase_analyze after _phase_implement completes (currently
+    # execute + analyze are already concurrent via asyncio.gather;
+    # this adds test to the same group).  Cuts pipeline wall by
+    # ~25-30s on the Sprint-0 corpus median case.  Rollback: flip
+    # to False — pipeline reverts to Cycle D's sequential test
+    # phase.
+    #
+    # `code_critic_prefix_warmup` fires a non-blocking critic
+    # prefix-cache warmup as soon as `self.code` is available so
+    # the review phase's first LLM call lands on a hot KV cache.
+    # Best-effort: failures silently degrade to the cold-prefix
+    # case.  Forward-compat for Sprint 6 piece 2b (critic async).
+    code_pipeline_parallel: bool = True
+    code_critic_prefix_warmup: bool = True
+    # v18.1 Step 4 (Cycle G) — fully-async critic.  When True
+    # (default), the critic LLM call is kicked off as a background
+    # task right after the parallel block (execute/analyze/test)
+    # completes, in parallel with the debug retry loop.  The review
+    # phase then awaits the task with a freshness timeout
+    # (`code_critic_async_timeout_s`), falling back to
+    # `approved_with_minor` score=70 when the call stalls.  Saves
+    # ~30-60s on the Sprint-0 corpus median (Phi-4 Q4_K_M critic
+    # latency moves entirely off the critical path on Build prompts
+    # where debug retries inflate wall-clock by 100-300s).
+    # Flag-flip rollback to v18 inline-blocking critic behaviour.
+    code_critic_async: bool = True
+    code_critic_async_timeout_s: float = 8.0
+    # v18.1.5 (Cycle H gate-gap fix) — Thinking mode per-phase + per-session
+    # wall-clock caps.  Previously a Thinking session had NO timeout on the
+    # `_llm_json` call inside each phase, so if llama-swap evicted the
+    # architect model between sessions and the cold-reload stalled, the
+    # whole thinking pipeline hung silently — Sprint-0 2026-05-16 measured
+    # 3/3 Thinking prompts timing out at the runner's 600s cap with 0
+    # tokens emitted (peak VRAM dropped from 7.4 GB → 1.4 GB confirming
+    # eviction).  Per-phase 120s cap bounds worst-case wall-clock to 6×120
+    # = 12 min; failed phase marks `status="failed"` and continues
+    # downstream (synthesize tolerates empty prior phases).  Session cap
+    # is hard wall-clock; either fires → engine returns a partial snapshot
+    # instead of hanging forever.  Flag-flip via env override; setting
+    # `code_thinking_phase_timeout_s=0` disables the cap entirely.
+    code_thinking_phase_timeout_s: float = 120.0
+    code_thinking_session_timeout_s: float = 540.0
+    # v18.1.2 (Cycle G) — sandbox tmpfs ceiling.  HumanEval+ 50 runs
+    # circa 2026-05-05 hit ENOSPC during `pip install --target=
+    # /tmp/pip-prefix numpy` because the previous 384m default was
+    # just barely large enough for numpy alone (~75 MB installed +
+    # transient wheel staging).  Doubling to 768m absorbs scipy /
+    # sympy combos and pip's tempdir overhead on the same /tmp
+    # without going to gigabyte territory.  Operators on tight RAM
+    # budgets can override via env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`.
+    code_sandbox_tmpfs_size_mb: int = 768
+    # Cycle H Phase A.1 — BitNet b1.58 2B4T shadow planner.
+    # Default OFF — operator opts in once bitnet.cpp llama-server is
+    # running on `code_bitnet_planner_url` (default port 8081).  When
+    # enabled, `code_bitnet_shadow_traffic_pct` percent of planning
+    # requests fork in parallel to BitNet; the result is logged for
+    # agreement-rate measurement but the MAIN planner's output is what
+    # the user sees (shadow mode never blocks).  After 14-day shadow
+    # window with ≥85% agreement + p95 ≤6s, operator can promote to
+    # active routing.  Plan-agent locked 8s p99 timeout (`code_bitnet_planner_timeout_s`)
+    # because BitNet CPU throughput is realistic 6-10 tok/s — fallback
+    # to main planner is silent when timeout fires.
+    code_bitnet_planner_enabled: bool = True   # Cycle H.1 — flipped ON after the 3B GGUF smoke proved end-to-end
+    # Cycle H.1 — default points at the existing llama-swap proxy
+    # which loads the BitNet GGUF on-demand (see the amor-bitnet-shadow
+    # entry in compose/llama-swap/config.yaml).  This sidesteps the
+    # Microsoft setup_env.py NotImplementedError on b1.58-2B-4T —
+    # llama.cpp mainline ≥b8500 ships i2_s tensor-type support out of
+    # the box, so the bitnet.cpp custom-LUT wrapper isn't required.
+    # The /v1/chat/completions API surface is identical; the shadow
+    # path's hash-routed model alias is "bitnet" (see aliases in the
+    # llama-swap config).  Override via env when running BitNet on a
+    # dedicated host port:  AMOR_CODE_BITNET_PLANNER_URL=http://localhost:8081
+    code_bitnet_planner_url: str = "http://amor-llama-swap:9100"
+    code_bitnet_model_alias: str = "bitnet"
+    code_bitnet_shadow_traffic_pct: float = 100.0   # Cycle H.1 — 100% during smoke; lower to 10% in production
+    code_bitnet_planner_timeout_s: float = 8.0
+    code_bitnet_fallback_to_main: bool = True
+    code_bitnet_model_tag: str = "bitnet"   # Cycle H.1 — alias defined in compose/llama-swap/config.yaml
+    # Cycle I.1 — LFM2 long-context "associative cortex" track.
+    # Default OFF; flip on after the 2-week SWE-bench-Lite shadow gate
+    # passes (Plan-agent locked: ≥2pp drop = revert).  When enabled,
+    # the engine's _phase_plan routes to `cortex` role when the
+    # prompt+context window exceeds ``code_cortex_threshold_tokens``;
+    # otherwise the existing planner path runs.
+    code_lfm2_cortex_enabled: bool = False
+    code_cortex_threshold_tokens: int = 16384
+    # Cycle I.2 — Titans test-time predictive memory (Sapienza MAC
+    # reimpl, "no gradient through verifier" variant).  Default OFF —
+    # when enabled, the engine's _phase_plan recalls the top-K most
+    # similar past sessions (cosine sim over BGE-M3 embeddings) and
+    # prepends them to the planner prompt as auxiliary context.
+    # Operator opts in once the shadow-recall quality is validated.
+    code_titans_enabled: bool = False
+    code_titans_recall_k: int = 3
+    code_titans_max_window: int = 200
+    code_titans_min_score: float = 0.20
+    # Cycle H Phase A.2 — LazyGraphRAG knowledge layer.  Microsoft's
+    # lazy-eval GraphRAG variant — defers LLM use behind a per-query
+    # relevance budget, 10-90% cheaper than full GraphRAG indexing
+    # while outperforming on global queries at a 500-budget.  Default
+    # OFF; when enabled, sits ALONGSIDE existing LanceDB hybrid search
+    # (not a replacement) and re-uses the existing sentence-
+    # transformers embedder to keep VRAM flat.  Plan-agent locked
+    # caveats:
+    #   * indexing O(N·log N) on entity extraction — 50K LOC = 20-40 min
+    #     first pass.  Cached to LanceDB metadata table.
+    #   * relevance budget bounds LLM-call cost per query.
+    rag_graphrag_enabled: bool = False
+    rag_graphrag_hierarchy_depth: int = 2
+    rag_graphrag_relevance_budget: int = 500
+    rag_graphrag_entity_min_length: int = 3
+    rag_graphrag_community_min_size: int = 3
+    # Cycle G G3 — CodeQL hot-path integration.  Default OFF because
+    # the CodeQL CLI (~600 MB bundle) is NOT shipped with
+    # python:3.11-slim; operator installs it host-side and flips
+    # this flag on.  When enabled, the StaticAnalysisHarness'
+    # gather block calls `_run_codeql()` against every Python
+    # snippet >200 LOC, mapping SARIF findings to AnalysisIssue
+    # with severity="security" so they feed `_score_candidate`'s
+    # 15-pt static-analysis slot.
+    code_codeql_enabled: bool = False
+    # Cycle G G4 — continuous mutation testing in-loop.  Default OFF
+    # because mutmut's wall-clock is 5-30× pytest baseline.  When
+    # enabled, the test phase runs `mutmut run` after pytest + cov
+    # complete and exposes the mutation score on the engine state.
+    # The Reflexion loop reads it via `format_mutant_survived_block`
+    # and re-prompts the coder with surviving-mutant diffs when the
+    # score is below threshold.  Default threshold 0.35 (mid-range
+    # for in-loop mutation testing per Plan-agent's G4 acceptance
+    # criterion ≥35%).
+    code_mutation_testing_enabled: bool = False
+    code_mutation_score_threshold: float = 0.35
     # Auto-pull the best code model if not installed.
     code_auto_pull_models: bool = True
     # Redis TTL for in-flight code intelligence sessions.
@@ -462,12 +674,15 @@ class Settings(BaseSettings):
     # ── Phase 16 — Adapter Foundations (pluggable LLM backend) ───────
     # Selects which inference backend ``local_ai.llm_backend`` returns
     # from ``get_backend()``.  Allowed values:
-    #   "ollama"        — default, today's behaviour (no migration)
+    #   ""              — empty: fall through to AMOR_LLM_BACKEND env
+    #                     (Cycle C Sprint 1 — env-driven rollback flag).
+    #                     Resolves to "ollama" if env is also unset.
+    #   "ollama"        — today's behaviour (forced)
     #   "llama-swap"    — llama-swap proxy (OpenAI /v1)
     #   "llama-cpp"     — direct llama-server (OpenAI /v1)
     #   "openai-compat" — generic /v1 (vLLM / ExLlamaV2 / LM Studio)
     #   "stub"          — deterministic test backend (used in CI)
-    llm_backend: str = "ollama"
+    llm_backend: str = ""
     # Override URL for the active backend.  Empty string falls back
     # to ``OLLAMA_BASE_URL`` env var / per-backend default.
     llm_backend_url: str = ""
@@ -542,12 +757,20 @@ class Settings(BaseSettings):
     # writes silent (no Phase 15 ledger noise).
     memory_ledger_audit_enabled: bool = True
 
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    # v18.1.5 — migrate from Pydantic v1 class-based Config to v2 ConfigDict
+    # so PydanticDeprecatedSince20 stops firing on every settings import.
+    # Same semantics: .env file, case-insensitive, ignore unknown keys.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        # Inherits `protected_namespaces=()` set on BaseSettings via
+        # the existing helper (or leaves the default).  We also keep
+        # `protected_namespaces` empty so fields starting with `model_`
+        # don't warn — AMOR has 80+ such fields.
+        protected_namespaces=(),
+    )
 
 
 # Global settings instance

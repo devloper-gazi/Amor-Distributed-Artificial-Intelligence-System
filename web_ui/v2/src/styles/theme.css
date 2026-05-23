@@ -1,11 +1,13 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
+/* Cycle UI v2.5 — pure-CSS motion language (keyframes + transitions + reduced-motion). */
+@import "./motion.css";
 
 /* ============================================================================
  * AMOR v2 — design tokens, ported from web_ui/static/css/tokens.css.
  *
  * Tailwind v4 `@theme` block: every variable here both becomes a CSS
  * custom property AND generates a utility class.  Defining
- * `--color-bg-primary` makes `bg-bg-primary`, `text-bg-primary` etc.
+ * `--color-bg-primary` makes `bg-bg-canvas`, `text-bg-primary` etc.
  * available, which lets us delete most ad-hoc CSS.
  *
  * Theme switching is done by toggling `[data-theme="dark|light"]` on
@@ -18,21 +20,20 @@
  * =========================================================================== */
 
 @theme {
-  /* ── Base palette (light) ───────────────────────────────────────────── */
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #fafafa;
-  --color-bg-tertiary: #f5f5f5;
+  /* Cycle UI v2.5 � bridge-period tokens removed (Phase 3 closing
+     commit).  Legacy --color-bg-primary / --color-text-primary /
+     --color-border-default were deleted after the codemod sweep
+     confirmed zero remaining references in web_ui/v2/src/.
+     Kept for backwards compatibility (consumed by Tailwind v4's
+     bg-bg-elevated + bg-bg-hover utilities still referenced by
+     legacy /home / /build / etc. routes during rollback window): */
   --color-bg-elevated: #ffffff;
   --color-bg-hover: #f0f0f0;
 
-  --color-text-primary: #000000;
-  --color-text-secondary: #666666;
-  --color-text-tertiary: #999999;
   --color-text-inverse: #ffffff;
   --color-text-disabled: #cccccc;
 
   --color-border-subtle: #e5e5e5;
-  --color-border-default: #d4d4d4;
   --color-border-strong: #a3a3a3;
 
   /* Status pills — 4 states only.  Saturation tuned for AA contrast. */
@@ -50,6 +51,38 @@
   --color-mode-consortium: oklch(0.62 0.16 50);   /* users-round */
   --color-mode-sentinel: oklch(0.55 0.18 25);     /* shield-half */
   --color-mode-system: oklch(0.65 0.02 250);      /* activity */
+  /* Cycle UI v2.5 (2026-05-21) — QuickCode is the auto-classifier's
+     7th class (Decision 2 in the parent plan).  Hue 175 sits between
+     Build's 145 and Research's 240 — visually "Build family, faster
+     variant".  Chroma 0.13 slightly desaturated vs Build's 0.17 to
+     signal "lighter weight" — matches the Decision 2 brief: "teal
+     close to but distinct from Build's aqua". */
+  --color-mode-quickcode: oklch(0.62 0.13 175);   /* zap */
+
+  /* ── Cycle UI v2.5 — NEW OKLch token system (bridge period) ──
+     These names ship ALONGSIDE the legacy --color-bg-* / --color-text-*
+     / --color-border-* above.  Phases 2-3 codemod TSX files from the
+     legacy names to these new ones one batch at a time.  Phase 3
+     closing commit deletes the legacy definitions after a grep
+     confirms zero remaining references.
+
+     OKLch lightness chosen for WCAG AA on the canvas:
+       text-body  (#2b2b2b ≈ L 0.22) on #fff = 14.3:1 ✅ AAA
+       text-subtle(#595959 ≈ L 0.42) on #fff =  7.0:1 ✅ AAA
+       text-mute  (#7a7a7a ≈ L 0.55) on #fff =  4.6:1 ✅ AA (sınırda) */
+  --color-bg-canvas:     oklch(1     0     0);          /* pure white */
+  --color-bg-elevated-v25: oklch(0.985 0   0);          /* ~fafafa */
+  --color-bg-overlay:    oklch(0.97  0     0 / 0.92);   /* modal/sheet bg */
+
+  --color-text-display:  oklch(0     0     0);          /* pure black */
+  --color-text-body:     oklch(0.22  0     0);          /* ~#2b2b2b */
+  --color-text-subtle:   oklch(0.42  0     0);          /* ~#595959 */
+  --color-text-mute:     oklch(0.55  0     0);          /* ~#7a7a7a */
+
+  --color-border-subtle-v25: oklch(0.92 0   0);         /* ~#e8e8e8 */
+  --color-border-strong-v25: oklch(0.78 0   0);         /* ~#c4c4c4 */
+
+  --color-focus-ring:    oklch(0.55 0.20 255);          /* vivid blue */
 
   /* ── Spacing — 8-pt grid ────────────────────────────────────────────── */
   --spacing-1: 0.25rem;   /* 4 */
@@ -118,6 +151,30 @@
   --z-modal-backdrop: 400;
   --z-modal: 500;
   --z-toast: 600;
+
+  /* ── Cycle UI v2.6 — Halo token family (Karar L) ─────────────────────
+   * Atmospheric radial-gradient backdrop for the chat surface.  Each
+   * mode tints the halo from its accent token via OKLch relative-color
+   * syntax — single source of truth (--color-mode-*), no duplication.
+   *
+   * Light mode: soft blush, very low chroma (decorative, never load-
+   * bearing for text contrast).
+   * Dark mode: cooler blue-violet base, mode-tinted on demand.
+   *
+   * Usage: <Halo mode={…} /> sets `--color-halo-tint` inline; the
+   * component CSS reads that var. */
+  --color-halo-base:           oklch(0.97 0.015 268);
+  --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l + 0.30) calc(c * 0.45) h);
+  --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l + 0.30) calc(c * 0.45) h);
+  /* Cycle UI v2.6.3 — halo daha subtle (0.55→0.35).  Composer card
+     daha öne çıkıyor; halo onun arka planı, dominantı değil. */
+  --color-halo-alpha-base:     0.35;
+  --color-halo-alpha-focus:    0.65;
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -126,20 +183,19 @@
  * ────────────────────────────────────────────────────────────────────── */
 
 [data-theme="dark"] {
-  --color-bg-primary: #000000;
-  --color-bg-secondary: #0a0a0a;
-  --color-bg-tertiary: #121212;
+  /* Cycle UI v2.5 Phase 3 � legacy --color-bg-primary / --color-text-
+     primary / --color-border-default removed.  Kept: --color-bg-
+     elevated + --color-bg-hover + --color-text-inverse + --color-text-
+     disabled + --color-border-subtle + --color-border-strong, all
+     still referenced by legacy /home / /build / etc. chrome during
+     the rollback window. */
   --color-bg-elevated: #1a1a1a;
   --color-bg-hover: #262626;
 
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #a3a3a3;
-  --color-text-tertiary: #666666;
   --color-text-inverse: #000000;
   --color-text-disabled: #404040;
 
   --color-border-subtle: #1f1f1f;
-  --color-border-default: #2e2e2e;
   --color-border-strong: #525252;
 
   /* Mode accents — slightly brighter for AA on dark backgrounds. */
@@ -149,31 +205,63 @@
   --color-mode-consortium: oklch(0.74 0.16 50);
   --color-mode-sentinel: oklch(0.68 0.18 25);
   --color-mode-system: oklch(0.78 0.02 250);
+  /* Cycle UI v2.5 — QuickCode dark counterpart.  L 0.75 vs Build's
+     0.70 keeps the "lighter weight" semantic in dark mode too. */
+  --color-mode-quickcode: oklch(0.75 0.11 175);
+
+  /* ── Cycle UI v2.5 — NEW OKLch token system, dark counterparts ──
+     Contrast on bg-canvas (#000):
+       text-body  (#e8e8e8 ≈ L 0.92) on #000 = 17.4:1 ✅ AAA
+       text-subtle(#b0b0b0 ≈ L 0.72) on #000 =  8.0:1 ✅ AAA
+       text-mute  (#7e7e7e ≈ L 0.58) on #000 =  4.6:1 ✅ AA */
+  --color-bg-canvas:        oklch(0     0     0);       /* pure black */
+  --color-bg-elevated-v25:  oklch(0.16  0     0);       /* ~#212121 */
+  --color-bg-overlay:       oklch(0.10  0     0 / 0.92);
+
+  --color-text-display:     oklch(1     0     0);       /* pure white */
+  --color-text-body:        oklch(0.92  0     0);       /* ~#e8e8e8 */
+  --color-text-subtle:      oklch(0.72  0     0);       /* ~#b0b0b0 */
+  --color-text-mute:        oklch(0.58  0     0);       /* ~#7e7e7e */
+
+  --color-border-subtle-v25: oklch(0.22 0    0);        /* ~#3a3a3a */
+  --color-border-strong-v25: oklch(0.38 0    0);        /* ~#606060 */
+
+  --color-focus-ring:       oklch(0.78 0.16 255);       /* lifted blue */
 
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
   --shadow-xl:
     0 20px 25px -5px rgb(0 0 0 / 0.6), 0 10px 10px -5px rgb(0 0 0 / 0.4);
+
+  /* Cycle UI v2.6 — Halo dark counterparts (Karar L).  Lower lightness
+     base + brighter mode tints for AA contrast over OKLch black canvas. */
+  --color-halo-base:           oklch(0.18 0.08 268);
+  --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
+  --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
+  /* Cycle UI v2.6.3 — dark halo subtle (0.55→0.35).  See light note. */
+  --color-halo-alpha-base:     0.35;
+  --color-halo-alpha-focus:    0.65;
 }
 
 /* System preference falls back to dark when no explicit choice. */
 @media (prefers-color-scheme: dark) {
   [data-theme="system"] {
-    --color-bg-primary: #000000;
-    --color-bg-secondary: #0a0a0a;
-    --color-bg-tertiary: #121212;
+    /* Cycle UI v2.5 Phase 3 � legacy primary/secondary/tertiary/
+       default tokens removed; same set kept as the explicit dark
+       block above. */
     --color-bg-elevated: #1a1a1a;
     --color-bg-hover: #262626;
 
-    --color-text-primary: #ffffff;
-    --color-text-secondary: #a3a3a3;
-    --color-text-tertiary: #666666;
     --color-text-inverse: #000000;
     --color-text-disabled: #404040;
 
     --color-border-subtle: #1f1f1f;
-    --color-border-default: #2e2e2e;
     --color-border-strong: #525252;
 
     --color-mode-research: oklch(0.72 0.16 240);
@@ -182,10 +270,38 @@
     --color-mode-consortium: oklch(0.74 0.16 50);
     --color-mode-sentinel: oklch(0.68 0.18 25);
     --color-mode-system: oklch(0.78 0.02 250);
+    --color-mode-quickcode: oklch(0.75 0.11 175);
+
+    /* Cycle UI v2.5 — system-fallback dark must mirror the explicit
+       dark block above so users on `data-theme="system"` get the same
+       v2.5 token values. */
+    --color-bg-canvas:        oklch(0     0     0);
+    --color-bg-elevated-v25:  oklch(0.16  0     0);
+    --color-bg-overlay:       oklch(0.10  0     0 / 0.92);
+    --color-text-display:     oklch(1     0     0);
+    --color-text-body:        oklch(0.92  0     0);
+    --color-text-subtle:      oklch(0.72  0     0);
+    --color-text-mute:        oklch(0.58  0     0);
+    --color-border-subtle-v25: oklch(0.22 0    0);
+    --color-border-strong-v25: oklch(0.38 0    0);
+    --color-focus-ring:       oklch(0.78 0.16 255);
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
+
+    /* Cycle UI v2.6 — Halo system-fallback dark mirror (Karar L). */
+    --color-halo-base:           oklch(0.18 0.08 268);
+    --color-halo-tint-research:  oklch(from var(--color-mode-research)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-thinking:  oklch(from var(--color-mode-thinking)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-build:     oklch(from var(--color-mode-build)     calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-consortium:oklch(from var(--color-mode-consortium)calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-sentinel:  oklch(from var(--color-mode-sentinel)  calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-system:    oklch(from var(--color-mode-system)    calc(l - 0.42) calc(c * 0.6) h);
+    --color-halo-tint-quickcode: oklch(from var(--color-mode-quickcode) calc(l - 0.42) calc(c * 0.6) h);
+    /* Cycle UI v2.6.3 — system-dark halo subtle parity. */
+    --color-halo-alpha-base:     0.35;
+    --color-halo-alpha-focus:    0.65;
   }
 }
 
@@ -206,6 +322,8 @@
 [data-mode="consortium"]  { --mode-accent: var(--color-mode-consortium); }
 [data-mode="sentinel"]    { --mode-accent: var(--color-mode-sentinel); }
 [data-mode="system"]      { --mode-accent: var(--color-mode-system); }
+/* Cycle UI v2.5 — 7th classifier class. */
+[data-mode="quickcode"]   { --mode-accent: var(--color-mode-quickcode); }
 
 /* ────────────────────────────────────────────────────────────────────────
  * Reduced motion — drop transitions wholesale.  Spinners switch to

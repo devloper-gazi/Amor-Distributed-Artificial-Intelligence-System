@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps, Show } from "solid-js";
+﻿import { type Component, type JSX, splitProps, Show } from "solid-js";
 import { Spinner } from "./Spinner";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -13,15 +13,20 @@ export interface ButtonProps
   type?: "button" | "submit" | "reset";
 }
 
+// Cycle UI v2.6.2 (D1) — `active:scale-[0.98]` adds Linear/Vercel-style
+// press feedback to every variant.  `transform-gpu` promotes the
+// element to its own compositor layer so the scale animation is
+// jank-free.  prefers-reduced-motion (motion.css:181-210) zeros the
+// transform automatically — no extra guard needed here.
 const VARIANT_CLASS: Record<Variant, string> = {
   primary:
-    "bg-text-primary text-text-inverse hover:opacity-90 active:opacity-80 disabled:opacity-50",
+    "bg-text-display text-text-inverse hover:opacity-90 active:scale-[0.98] disabled:opacity-50 transform-gpu",
   secondary:
-    "border border-border-default bg-bg-elevated text-text-primary hover:bg-bg-hover disabled:opacity-50",
+    "border border-border-strong-v25 bg-bg-elevated text-text-display hover:bg-bg-hover active:scale-[0.98] disabled:opacity-50 transform-gpu",
   ghost:
-    "text-text-primary hover:bg-bg-hover disabled:opacity-50",
+    "text-text-display hover:bg-bg-hover active:scale-[0.98] disabled:opacity-50 transform-gpu",
   danger:
-    "border border-status-failed/40 text-status-failed hover:bg-status-failed/10 disabled:opacity-50",
+    "border border-status-failed/40 text-status-failed hover:bg-status-failed/10 active:scale-[0.98] disabled:opacity-50 transform-gpu",
 };
 
 const SIZE_CLASS: Record<Size, string> = {
@@ -56,9 +61,18 @@ export const Button: Component<ButtonProps> = (props) => {
       disabled={local.disabled || local.loading}
       class={[
         "inline-flex items-center justify-center gap-2",
-        "font-medium transition-[background-color,opacity] duration-100",
+        // Cycle UI v2.6.2 (D1) — extend transition to cover the new
+        // `active:scale-[0.98]` press feedback alongside background +
+        // opacity.  120ms (was 100ms) lands somewhere between Linear
+        // and Vercel's button motion — fast enough to feel responsive,
+        // slow enough to register.
+        "font-medium transition-[background-color,opacity,transform] duration-150",
         "focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed",
+        // Sprint 11 Day 4 — guarantee 44×44 hit area on coarse-pointer
+        // devices.  Visual size stays whatever ``SIZE_CLASS`` set; the
+        // utility only enlarges when @media (pointer: coarse) hits.
+        "amor-touch",
         SIZE_CLASS[size()],
         VARIANT_CLASS[variant()],
         local.class ?? "",

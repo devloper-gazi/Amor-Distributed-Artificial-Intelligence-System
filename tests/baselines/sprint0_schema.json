@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amor.local/baselines/sprint0_schema.json",
+  "title": "AMOR Sprint 0 Baseline Result",
+  "description": "Schema for Sprint 0 canonical baseline run output (data/baselines/sprint0_<utc-iso>.jsonl + sprint0_latest.json). One row per prompt; the JSONL is line-delimited rows; the latest.json is the wrapper {meta, rows[]}.",
+  "type": "object",
+  "required": ["meta", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "run_id",
+        "started_utc",
+        "finished_utc",
+        "backend",
+        "models_used",
+        "git_sha",
+        "host"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "run_id": { "type": "string" },
+        "started_utc": { "type": "string", "format": "date-time" },
+        "finished_utc": { "type": "string", "format": "date-time" },
+        "backend": {
+          "type": "string",
+          "enum": ["ollama", "llama-cpp", "llama-swap", "stub", "openai-compat"]
+        },
+        "models_used": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "role -> model tag map (architect/editor/coder/...) at run time"
+        },
+        "git_sha": { "type": ["string", "null"] },
+        "host": { "type": "string" },
+        "judge": {
+          "type": ["object", "null"],
+          "properties": {
+            "model_path": { "type": "string" },
+            "method": {
+              "type": "string",
+              "enum": ["mistral-small-3-q4km-cpu", "phi-4-14b-cpu", "none"]
+            },
+            "rubrics": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "position_swap": { "type": "boolean" }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": [
+        "prompt_id",
+        "mode",
+        "prompt",
+        "started_utc",
+        "finished_utc",
+        "metrics",
+        "output"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "prompt_id": { "type": "string" },
+        "mode": {
+          "type": "string",
+          "enum": ["Build", "Research", "Thinking", "Consortium", "Sentinel", "System"]
+        },
+        "prompt": { "type": "string" },
+        "started_utc": { "type": "string", "format": "date-time" },
+        "finished_utc": { "type": "string", "format": "date-time" },
+        "session_id": { "type": ["string", "null"] },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "failed", "cancelled", "timeout"]
+        },
+        "error": { "type": ["string", "null"] },
+        "metrics": {
+          "type": "object",
+          "required": [
+            "wall_clock_ms",
+            "first_token_ms",
+            "prompt_tokens",
+            "completion_tokens",
+            "tool_calls",
+            "retries"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "wall_clock_ms": { "type": "integer", "minimum": 0 },
+            "first_token_ms": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "ms to first content event from POST /start; null if no chunk arrived (failure)"
+            },
+            "prompt_tokens": { "type": "integer", "minimum": 0 },
+            "completion_tokens": { "type": "integer", "minimum": 0 },
+            "peak_vram_mb": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "peak VRAM observed during this prompt via nvidia-smi poll; null if poll unavailable"
+            },
+            "tool_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "count of tool-call events seen in the SSE stream"
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "debug-retry iterations the pipeline ran (Build mode)"
+            },
+            "phase_timings_ms": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 },
+              "description": "per-phase wall-clock ms (Build: triage/model_prep/plan/implement/execute/analyze/test/debug/review)"
+            }
+          }
+        },
+        "output": {
+          "type": "string",
+          "description": "final assistant content (markdown). For Build mode, the deliverable_ready event payload."
+        },
+        "judge_score": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "properties": {
+            "correctness": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "completeness": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "uncertain": {
+              "type": "boolean",
+              "description": "true if A/B vs B/A position-swap disagreed by >1 point on any rubric"
+            },
+            "rationale": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

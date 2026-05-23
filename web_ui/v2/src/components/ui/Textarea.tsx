@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps, onMount } from "solid-js";
+﻿import { type Component, type JSX, splitProps, onMount } from "solid-js";
 
 export interface TextareaProps
   extends JSX.TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -81,9 +81,9 @@ export const Textarea: Component<TextareaProps> = (props) => {
         }
       }}
       class={[
-        "w-full resize-none rounded-md border border-border-default",
-        "bg-bg-elevated px-3 py-2 text-sm text-text-primary",
-        "placeholder:text-text-tertiary",
+        "w-full resize-none rounded-md border border-border-strong-v25",
+        "bg-bg-elevated px-3 py-2 text-sm text-text-display",
+        "placeholder:text-text-subtle",
         "outline-none focus:border-border-strong",
         // Modern path — zero JS resize work where supported.
         "[field-sizing:content]",

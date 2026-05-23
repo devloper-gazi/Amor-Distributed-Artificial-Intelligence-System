@@ -1,0 +1,933 @@
+﻿/**
+ * Cycle C Sprint 4 Day 1+2 — mode-agnostic composer.
+ *
+ * Single textarea + a mode pill + @-mention picker + drag-drop attach
+ * for the entire AMOR product surface.  Slash-command parsing routes
+ * a prompt to the right mode without forcing the user to navigate to
+ * a per-mode route:
+ *
+ *     /build snake game in HTML
+ *     /research compare CRDT vs OT
+ *     /think evaluate trade-offs of moving to Rust
+ *
+ * If the input doesn't start with a recognised slash command, the
+ * active pill mode wins (defaulting to last-used mode, persisted in
+ * localStorage).
+ *
+ * What this Day 1 + Day 2 ships:
+ * * Slash-command parser ({build, research, think, consortium,
+ *   sentinel, system} + aliases).
+ * * Mode pill with OKLch accent per mode + listbox-style ModePicker.
+ * * @-mention picker — debounced GET /api/repo/symbols, arrow / Enter
+ *   navigation, inserts ``@[name](path:line)`` token at the cursor.
+ * * Drag-drop attach overlay + paste-clipboard handler for images
+ *   and text files; attachment chips render above the textarea.
+ * * Cmd/Ctrl-Enter sends; Shift-Enter for newline (chat convention,
+ *   matches existing ChatComposer).
+ * * Persistent last-mode in localStorage["amor.composer.mode"].
+ *
+ * What Day 3-5 add:
+ * * Day 3 — message hover-actions bar.
+ * * Day 4 — tool-call cards.
+ * * Day 5 — axe-core a11y gate.
+ *
+ * Existing per-mode pages (Build.tsx, Research.tsx etc) keep working
+ * unchanged — UnifiedComposer is opt-in via a new /chat route.
+ */
+
+import {
+  type Component,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+  onMount,
+} from "solid-js";
+
+import { Button, Textarea } from "../ui";
+import { type ModeKey, MODES, type ModeMeta } from "../../lib/types";
+import {
+  parseSlashCommand,
+  detectMention,
+  modeMeta,
+  MODE_GLYPH,
+  type RepoSymbol,
+  type ParsedInput,
+} from "./composer-parsers";
+// Cycle UI v2.5 Phase 2 — auto-suggest popover when the user starts a
+// prompt with "/".  Pure-presentation; reuses SLASH_ALIASES from
+// composer-parsers via the overlay.
+import { SlashCommandOverlay } from "./SlashCommandOverlay";
+// Cycle UI v2.6.2 (D3) — inline SVG icon set for the composer's
+// premium icon polish (Send + Attach + Chevron).
+import { SendArrow, Paperclip, ChevronDown } from "../ui/icons";
+// Cycle UI v2.6.3 — Send button mode-tinted background.
+import { modeColorVar } from "../../lib/mode-color";
+import { modeLabel, t, localeUpper } from "../../i18n";
+
+// Re-export the pure parsers so existing imports from
+// ``UnifiedComposer`` keep working.
+export { parseSlashCommand, detectMention } from "./composer-parsers";
+export type { ParsedInput, RepoSymbol } from "./composer-parsers";
+
+// localStorage keys.
+const LS_KEY_LAST_MODE = "amor.composer.mode";
+
+const DEFAULT_MODE: ModeKey = "build";
+
+// Debounce + page-size for the @-mention symbol query.
+const MENTION_DEBOUNCE_MS = 150;
+const MENTION_PAGE_SIZE = 8;
+// Cap one attachment payload size (display-only check; backend still
+// enforces).
+const ATTACH_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+// Comma-separated list of MIME prefixes the paste-clipboard handler
+// captures by default.  Anything outside this set goes through the
+// browser's native textarea paste (text body inserted as text).
+const PASTE_FILE_PREFIXES = ["image/", "text/", "application/json"];
+
+const loadLastMode = (): ModeKey => {
+  try {
+    const raw = localStorage.getItem(LS_KEY_LAST_MODE);
+    if (raw && MODES.some((m) => m.key === raw)) {
+      return raw as ModeKey;
+    }
+  } catch {
+    // ignore localStorage failures
+  }
+  return DEFAULT_MODE;
+};
+
+const saveLastMode = (mode: ModeKey): void => {
+  try {
+    localStorage.setItem(LS_KEY_LAST_MODE, mode);
+  } catch {
+    // ignore
+  }
+};
+
+export interface ComposerSubmission {
+  text: string;
+  mode: ModeKey;
+  attachments: File[];
+}
+
+export interface UnifiedComposerProps {
+  /** Called when the user submits — receives final text + resolved mode. */
+  onSubmit: (text: string, mode: ModeKey) => void | Promise<void>;
+  /** Optional richer submit callback receiving the full submission record
+   *  (text + mode + attachments).  Called *in addition to* ``onSubmit``
+   *  so existing consumers don't break.  Day 4 will phase out the
+   *  legacy two-arg form in favour of this. */
+  onSubmitRich?: (submission: ComposerSubmission) => void | Promise<void>;
+  /** Disable the send button + show Cancel instead. */
+  busy?: boolean;
+  onCancel?: () => void;
+  /** Override the placeholder.  Default: "Ask anything — or /build, /research, /think…" */
+  placeholder?: string;
+  /** Initial mode override (otherwise restored from localStorage). */
+  initialMode?: ModeKey;
+  /** Cycle UI 2026-05-20 — Notify parent of every text change so it can
+   *  feed an intent classifier or other side-effect.  Parent should
+   *  treat this as a high-frequency event and debounce downstream
+   *  work itself.  When omitted the composer behaves as before. */
+  onTextChange?: (text: string) => void;
+  /** Cycle UI 2026-05-20 — When provided, this mode replaces the
+   *  composer's internal ``activeMode`` until the user picks a
+   *  different mode via the ModePicker (which then "locks" the
+   *  user's choice and ignores further overrides).  Used by the
+   *  auto-mode classifier in UnifiedChat to suggest a mode while
+   *  letting manual selection still win. */
+  modeOverride?: ModeKey;
+  /** Cycle UI 2026-05-20 — Optional flag rendered next to the
+   *  ModePill, e.g. "auto" / "uncertain" / classifier confidence
+   *  badge.  Parent owns the string so it can be localised + carry
+   *  inline-classifier state.  When omitted, no badge is rendered. */
+  modeBadge?: string;
+}
+
+const formatBytes = (n: number): string => {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+};
+
+export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
+  const [text, setText] = createSignal("");
+  const [activeMode, setActiveMode] = createSignal<ModeKey>(
+    props.initialMode ?? DEFAULT_MODE,
+  );
+  // Cycle UI 2026-05-20 — once the user explicitly clicks ModePicker,
+  // their choice "locks" the composer's mode and modeOverride is
+  // ignored until they click a different mode (or clear via slash).
+  const [userPickedMode, setUserPickedMode] = createSignal(false);
+  // Effective mode: user pick > modeOverride > activeMode > DEFAULT.
+  const effectiveMode = (): ModeKey => {
+    if (userPickedMode()) return activeMode();
+    if (props.modeOverride) return props.modeOverride;
+    return activeMode();
+  };
+  const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [caret, setCaret] = createSignal(0);
+  const [mentionMatches, setMentionMatches] = createSignal<RepoSymbol[]>([]);
+  const [mentionSelected, setMentionSelected] = createSignal(0);
+  const [mentionLoading, setMentionLoading] = createSignal(false);
+  const [attachments, setAttachments] = createSignal<File[]>([]);
+  const [dragActive, setDragActive] = createSignal(false);
+  // Cycle UI v2.5 Phase 2 — slash overlay open whenever the trimmed
+  // text starts with "/".  Closing it explicitly (ESC) hides for
+  // this composition; the next "/" keystroke reopens it.
+  const [slashDismissed, setSlashDismissed] = createSignal(false);
+  const slashOverlayOpen = createMemo(() => {
+    if (slashDismissed()) return false;
+    return text().replace(/^\s+/, "").startsWith("/");
+  });
+  let textareaRef: HTMLTextAreaElement | undefined;
+  let mentionAbort: AbortController | null = null;
+  let mentionDebounceTimer: number | null = null;
+  let fileInputRef: HTMLInputElement | undefined;
+
+  onMount(() => {
+    if (!props.initialMode) {
+      setActiveMode(loadLastMode());
+    }
+    // Cycle UI v2.5 Phase 3 — EmptyState seed prompt cards
+    // dispatch `amor:composer-seed` to fill the textarea.  Listening
+    // here keeps EmptyState decoupled from the composer's internal
+    // ref + signal plumbing.
+    const onSeed = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { text?: string; mode?: ModeKey }
+        | undefined;
+      if (!detail || typeof detail.text !== "string") return;
+      setText(detail.text);
+      props.onTextChange?.(detail.text);
+      if (detail.mode) {
+        setActiveMode(detail.mode);
+        setUserPickedMode(true);
+      }
+      requestAnimationFrame(() => {
+        if (!textareaRef) return;
+        textareaRef.focus();
+        // Caret to end so the user can continue typing or hit ⌘+Enter.
+        const end = detail.text!.length;
+        textareaRef.setSelectionRange(end, end);
+      });
+    };
+    window.addEventListener("amor:composer-seed", onSeed);
+    onCleanup(() => window.removeEventListener("amor:composer-seed", onSeed));
+  });
+
+  onCleanup(() => {
+    if (mentionAbort) mentionAbort.abort();
+    if (mentionDebounceTimer) window.clearTimeout(mentionDebounceTimer);
+  });
+
+  // Persist mode as it changes (skip the initial load).
+  createEffect(
+    on(activeMode, (m) => saveLastMode(m), { defer: true }),
+  );
+
+  // Live-parsed view of what the slash command resolves to.  Used to
+  // show a soft hint under the textarea ("/build → Build mode") so
+  // the user gets feedback before pressing Enter.
+  const livePreview = createMemo<ParsedInput>(() =>
+    parseSlashCommand(text(), effectiveMode()),
+  );
+
+  // Live mention detection.  This is ``createMemo`` so the picker
+  // open/close transitions reactively as caret + text change.
+  const mention = createMemo(() => detectMention(text(), caret()));
+  const mentionOpen = () => mention() !== null;
+
+  // Debounced fetch when the mention query changes.
+  createEffect(
+    on(
+      () => {
+        const m = mention();
+        return m ? m.query : null;
+      },
+      (q) => {
+        // Close → clear state.
+        if (q === null) {
+          setMentionMatches([]);
+          setMentionSelected(0);
+          if (mentionAbort) mentionAbort.abort();
+          if (mentionDebounceTimer) {
+            window.clearTimeout(mentionDebounceTimer);
+            mentionDebounceTimer = null;
+          }
+          return;
+        }
+        if (mentionDebounceTimer) {
+          window.clearTimeout(mentionDebounceTimer);
+        }
+        mentionDebounceTimer = window.setTimeout(() => {
+          fetchMentions(q);
+        }, MENTION_DEBOUNCE_MS);
+      },
+      { defer: true },
+    ),
+  );
+
+  const fetchMentions = async (q: string): Promise<void> => {
+    if (mentionAbort) mentionAbort.abort();
+    const ctrl = new AbortController();
+    mentionAbort = ctrl;
+    setMentionLoading(true);
+    try {
+      const url = `/api/repo/symbols?q=${encodeURIComponent(q)}&limit=${MENTION_PAGE_SIZE}`;
+      const r = await fetch(url, {
+        credentials: "include",
+        signal: ctrl.signal,
+        headers: { Accept: "application/json" },
+      });
+      if (!r.ok) {
+        setMentionMatches([]);
+        return;
+      }
+      const body = (await r.json()) as { items?: RepoSymbol[] };
+      setMentionMatches(body.items ?? []);
+      setMentionSelected(0);
+    } catch (err) {
+      if ((err as { name?: string }).name === "AbortError") return;
+      setMentionMatches([]);
+    } finally {
+      if (mentionAbort === ctrl) mentionAbort = null;
+      setMentionLoading(false);
+    }
+  };
+
+  const insertMention = (sym: RepoSymbol): void => {
+    const m = mention();
+    if (!m || !textareaRef) return;
+    const before = text().slice(0, m.atIndex);
+    const after = text().slice(caret());
+    const sep = after.startsWith(" ") || after === "" ? "" : " ";
+    const next = `${before}${sym.label}${sep}${after}`;
+    setText(next);
+    const newCaret = before.length + sym.label.length + sep.length;
+    requestAnimationFrame(() => {
+      if (!textareaRef) return;
+      textareaRef.focus();
+      textareaRef.setSelectionRange(newCaret, newCaret);
+      setCaret(newCaret);
+    });
+  };
+
+  const submit = () => {
+    if (props.busy) return;
+    const parsed = parseSlashCommand(text(), effectiveMode());
+    if (!parsed.text && attachments().length === 0) return;
+    const files = attachments().slice();
+    void props.onSubmit(parsed.text, parsed.mode);
+    void props.onSubmitRich?.({ text: parsed.text, mode: parsed.mode, attachments: files });
+    setText("");
+    props.onTextChange?.("");
+    setAttachments([]);
+    // After submit, release the user-picked lock so the next message's
+    // classifier suggestion can win again (matches Claude/ChatGPT
+    // semantics: each message starts fresh in auto-mode).
+    setUserPickedMode(false);
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    // 1) @-mention picker hijacks arrows + Enter when open.
+    if (mentionOpen() && mentionMatches().length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionSelected((i) =>
+          Math.min(mentionMatches().length - 1, i + 1),
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionSelected((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const sym = mentionMatches()[mentionSelected()];
+        if (sym) insertMention(sym);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // Closing the picker = inserting a space after the @ token,
+        // which our regex no longer matches as a live mention.
+        const m = mention();
+        if (m && textareaRef) {
+          const at = m.atIndex;
+          const before = text().slice(0, at);
+          const after = text().slice(caret());
+          setText(`${before}@ ${m.query}${after}`);
+        }
+        return;
+      }
+    }
+
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit();
+      return;
+    }
+    if (e.key === "Escape" && pickerOpen()) {
+      e.preventDefault();
+      setPickerOpen(false);
+    }
+  };
+
+  const trackCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart);
+  };
+
+  const pickMode = (mode: ModeKey) => {
+    setActiveMode(mode);
+    setUserPickedMode(true);  // Cycle UI 2026-05-20 — lock the choice
+    setPickerOpen(false);
+    // Strip any matching slash prefix the user typed earlier — once
+    // they pick a mode explicitly, the prefix is redundant noise.
+    const { text: stripped } = parseSlashCommand(text(), mode);
+    setText(stripped);
+    props.onTextChange?.(stripped);
+    requestAnimationFrame(() => textareaRef?.focus());
+  };
+
+  // Attachment helpers ------------------------------------------------
+
+  const addFiles = (incoming: FileList | File[]): void => {
+    const list = Array.from(incoming).filter((f) => f.size <= ATTACH_MAX_BYTES);
+    if (list.length === 0) return;
+    setAttachments((prev) => [...prev, ...list]);
+  };
+
+  const removeFile = (idx: number): void => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const onDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer || e.dataTransfer.types.length === 0) return;
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const onDragLeave = (e: DragEvent) => {
+    // Only flip off when the leave event leaves the form itself —
+    // child elements emit their own dragleave.
+    if (e.currentTarget === e.target) {
+      setDragActive(false);
+    }
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (!e.dataTransfer) return;
+    if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files);
+  };
+
+  const onPaste = (e: ClipboardEvent) => {
+    if (!e.clipboardData) return;
+    const items = Array.from(e.clipboardData.items);
+    const fileItems = items.filter(
+      (it) =>
+        it.kind === "file" &&
+        PASTE_FILE_PREFIXES.some((p) => it.type.startsWith(p)),
+    );
+    if (fileItems.length === 0) return;
+    e.preventDefault();
+    const files: File[] = [];
+    for (const it of fileItems) {
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+    if (files.length > 0) addFiles(files);
+  };
+
+  return (
+    <form
+      class={[
+        // Cycle UI v2.6.3 — Gemini-style pill composer.  Compact
+        // (px-3 py-2.5), rounded-3xl pill-like, more transparent
+        // shell (bg-elevated/80) so the halo bleeds through, deeper
+        // outer shadow (shadow-2xl) for elevated lift without heavy
+        // border.  Border softened to /30 alpha — barely-there frame
+        // when blurred, crisp when focused.
+        "amor-composer group relative flex flex-col gap-1.5",
+        "rounded-3xl border border-border-subtle/30 bg-bg-elevated/80",
+        "px-3 py-2.5 shadow-xl backdrop-blur-md",
+        "transition-[box-shadow,border-color,background-color] duration-200",
+        "focus-within:border-border-subtle/60 focus-within:bg-bg-elevated/90 focus-within:shadow-2xl",
+        // busy state — D8 pulse class
+        props.busy ? "amor-composer--busy" : "",
+      ].join(" ")}
+      onSubmit={(e: SubmitEvent) => {
+        e.preventDefault();
+        submit();
+      }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      data-amor-composer="unified"
+      // Cycle UI v2.6.3 — theme.css [data-mode] selector --mode-accent
+      // set eder; tüm descendant elementler (Send button, ModePill,
+      // focus ring) inherit eder.  effectiveMode() user-pick + classifier
+      // priority order'ı yansıtır.
+      data-mode={effectiveMode()}
+    >
+      {/* Cycle UI v2.7.1 — drag-drop overlay i18n'd + aria-live for SR
+          announcement.  Polite to avoid interrupting current TTS read. */}
+      <Show when={dragActive()}>
+        <div
+          class="pointer-events-none absolute inset-0 z-[var(--z-overlay)] flex items-center justify-center rounded-md border-2 border-dashed border-text-primary/50 bg-bg-elevated/80 text-sm text-text-display backdrop-blur-sm"
+          role="region"
+          aria-label={t("composer.drop_hint")}
+          aria-live="polite"
+          data-amor-overlay="drop"
+        >
+          {t("composer.drop_hint")}
+        </div>
+      </Show>
+
+      {/* Cycle UI v2.7.1 — Attachment chips, i18n'd remove aria. */}
+      <Show when={attachments().length > 0}>
+        <ul
+          class="flex flex-wrap gap-1.5"
+          aria-label={t("attachment.preview_label")}
+          data-amor-attachments="list"
+        >
+          <For each={attachments()}>
+            {(file, i) => (
+              <li class="flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-elevated px-2.5 py-0.5 text-[0.7rem] text-text-body">
+                <span class="truncate max-w-[14rem]" title={file.name}>
+                  {file.name}
+                </span>
+                <span class="text-text-subtle tabular-nums">
+                  {formatBytes(file.size)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(i())}
+                  aria-label={t("attachment.remove_aria", { name: file.name })}
+                  class="text-text-subtle hover:text-text-display"
+                >
+                  ×
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+
+      <div class="relative">
+        <Textarea
+          ref={(el: HTMLTextAreaElement) => (textareaRef = el)}
+          value={text()}
+          onInput={(e: InputEvent & { currentTarget: HTMLTextAreaElement }) => {
+            const v = e.currentTarget.value;
+            setText(v);
+            trackCaret(e.currentTarget);
+            props.onTextChange?.(v);
+            // Cycle UI v2.5 — reset the "user dismissed slash overlay"
+            // flag whenever the input is cleared, so the next "/"
+            // keystroke reopens the overlay.  Without this a one-
+            // off ESC would suppress the overlay forever in this
+            // composition.
+            if (v === "") setSlashDismissed(false);
+          }}
+          onKeyUp={(e: KeyboardEvent & { currentTarget: HTMLTextAreaElement }) =>
+            trackCaret(e.currentTarget)
+          }
+          onClick={(e: MouseEvent & { currentTarget: HTMLTextAreaElement }) =>
+            trackCaret(e.currentTarget)
+          }
+          onSelect={(e: Event & { currentTarget: HTMLTextAreaElement }) =>
+            trackCaret(e.currentTarget)
+          }
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          placeholder={
+            props.placeholder ?? t("chat.composer.placeholder")
+          }
+          minRows={2}
+          maxRows={10}
+          // Cycle UI v2.6.4 — Textarea composer pill içinde subordinate;
+          // kendi focus ring'i composer outer ring'iyle çakışmasın diye
+          // outline-none + transparent bg (composer kart bg'sini
+          // görelim).  Composer focus-within zaten outer cue veriyor.
+          class="!bg-transparent !outline-none !border-none !ring-0 focus:!ring-0 focus:!outline-none focus-visible:!outline-none focus-visible:!ring-0"
+          autofocus
+          aria-label={t("common.send")}
+          aria-controls={mentionOpen() ? "amor-mention-listbox" : undefined}
+          aria-activedescendant={
+            mentionOpen() && mentionMatches().length > 0
+              ? `amor-mention-opt-${mentionSelected()}`
+              : undefined
+          }
+        />
+
+        {/* @-mention picker */}
+        <Show when={mentionOpen()}>
+          <MentionPicker
+            matches={mentionMatches()}
+            selected={mentionSelected()}
+            loading={mentionLoading()}
+            query={mention()?.query ?? ""}
+            onPick={insertMention}
+            onHover={(i) => setMentionSelected(i)}
+          />
+        </Show>
+
+        {/* Cycle UI v2.5 — slash-command suggestion overlay.  Opens
+            automatically when the user starts the prompt with "/"; ESC
+            closes for the remainder of the composition; clearing the
+            text re-arms it. */}
+        <Show when={slashOverlayOpen()}>
+          <SlashCommandOverlay
+            text={text()}
+            onPick={(mode) => {
+              // Apply the same logic as ModePicker.onPick — strip the
+              // slash, lock the user's choice, refocus the textarea.
+              pickMode(mode);
+              setSlashDismissed(true);
+            }}
+            onClose={() => setSlashDismissed(true)}
+          />
+        </Show>
+      </div>
+
+      {/* Live slash-resolution hint */}
+      <Show
+        when={livePreview().slashUsed && livePreview().mode !== activeMode()}
+      >
+        <p
+          class="text-[0.7rem] text-text-subtle"
+          role="status"
+          aria-live="polite"
+        >
+          slash routes to {modeLabel(livePreview().mode)} (one-shot
+          override)
+        </p>
+      </Show>
+
+      {/* Cycle UI v2.6.4 — Gemini-style footer layout: sol-grup
+          (attach + mode-pill) + flex-1 spacer + sağ-grup (hint focus-
+          only + send).  Paperclip'in justify-between'da ortaya
+          itilmesi sorunu çözüldü; visual rhythm sol-orta-sağ. */}
+      <div class="flex items-center gap-1.5">
+        {/* Sol: attach + mode pill */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="!px-1.5 h-7 w-7"
+          onClick={() => fileInputRef?.click()}
+          aria-label={t("common.attach")}
+          data-amor-attach="trigger"
+        >
+          <Paperclip class="h-4 w-4" />
+        </Button>
+        <ModePill
+          mode={effectiveMode()}
+          onClick={() => setPickerOpen((o: boolean) => !o)}
+          expanded={pickerOpen()}
+          badge={props.modeBadge}
+        />
+        <input
+          ref={(el: HTMLInputElement) => (fileInputRef = el)}
+          type="file"
+          multiple
+          class="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(e: Event & { currentTarget: HTMLInputElement }) => {
+            if (e.currentTarget.files) addFiles(e.currentTarget.files);
+            e.currentTarget.value = "";
+          }}
+        />
+
+        {/* Orta: flex-1 spacer + hint (focus-only) */}
+        <span
+          class="hidden flex-1 truncate text-[0.7rem] text-text-mute opacity-0 transition-opacity duration-200 group-focus-within:inline group-focus-within:opacity-100"
+        >
+          {t("chat.send_hint")}
+        </span>
+        {/* Spacer when hint hidden (group-not-focus state) */}
+        <span class="flex-1 group-focus-within:hidden" aria-hidden="true" />
+        <Show
+          when={!props.busy}
+          fallback={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => props.onCancel?.()}
+              type="button"
+            >
+              {t("common.cancel")}
+            </Button>
+          }
+        >
+          {/* Cycle UI v2.6.4 — Sağ: Send button kompakt + neutral.
+              h-8 w-8 → h-7 w-7 (28×28) Gemini ile aynı boyut.
+              Solid mode-accent (yeşil/mavi) yerine neutral text-display
+              (light siyah / dark beyaz) — composer pill içinde tek
+              vurgu noktası olmalı, mode-accent ModePill'de zaten var.
+              Disabled state'te text-mute (dim) ile, enabled'da display.
+              amor-touch ile coarse-pointer 44×44 garanti. */}
+          <button
+            type="submit"
+            disabled={!livePreview().text && attachments().length === 0}
+            aria-label={t("common.send")}
+            class={[
+              "amor-touch inline-flex h-7 w-7 items-center justify-center rounded-full",
+              "bg-text-display text-bg-canvas",
+              "transition-[transform,opacity,background-color] duration-150",
+              "hover:opacity-90 active:scale-[0.92] transform-gpu",
+              "disabled:bg-bg-hover disabled:text-text-mute disabled:cursor-not-allowed",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+            ].join(" ")}
+            data-amor-send=""
+          >
+            <SendArrow class="h-3.5 w-3.5 translate-y-[-0.5px]" />
+          </button>
+        </Show>
+      </div>
+
+      {/* Inline mode picker (Day 1 fallback — Kobalte combobox swap deferred
+          to a follow-up; the listbox-style picker keeps the bundle light
+          and Day 5's axe-core gate validates the ARIA bookkeeping). */}
+      <Show when={pickerOpen()}>
+        <ModePicker
+          activeMode={activeMode()}
+          onPick={pickMode}
+          onClose={() => setPickerOpen(false)}
+        />
+      </Show>
+    </form>
+  );
+};
+
+const ModePill: Component<{
+  mode: ModeKey;
+  onClick: () => void;
+  expanded: boolean;
+  /** Cycle UI 2026-05-20 — optional badge text rendered to the right
+   *  of the mode label, e.g. "auto" / "uncertain".  Parent owns the
+   *  string so it can be localised + driven by classifier state. */
+  badge?: string;
+}> = (props) => {
+  const meta = () => modeMeta(props.mode);
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      // Cycle UI v2.6.3 — compact pill: padding daha sıkı (px-2 py-0.5,
+      // önceden px-3 py-1), border kaldırıldı (sadece bg subtle), text
+      // daha sade (no font-medium).  Gemini "Pro" dropdown tarzı —
+      // küçük, baskın değil, mode bilgisi var ama dominant değil.
+      class="group flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.7rem] transition-[transform,background-color] duration-150 active:scale-[0.97] transform-gpu hover:bg-bg-hover"
+      style={{
+        background: "color-mix(in oklch, var(--mode-accent) 6%, transparent)",
+        color: "color-mix(in oklch, var(--mode-accent) 60%, var(--color-text-body) 40%)",
+      }}
+      aria-haspopup="listbox"
+      aria-expanded={props.expanded}
+      data-amor-mode={props.mode}
+    >
+      <span
+        class="flex h-3 w-3 items-center justify-center text-[0.75rem] leading-none"
+        aria-hidden="true"
+      >
+        {MODE_GLYPH[props.mode]}
+      </span>
+      <span class="font-normal">{modeLabel(meta())}</span>
+      <Show when={props.badge}>
+        <span
+          class="rounded bg-bg-hover px-1.5 py-0.5 text-[0.6rem] font-medium tracking-wide text-text-subtle"
+          data-amor-mode-badge=""
+        >
+          {localeUpper(props.badge ?? "")}
+        </span>
+      </Show>
+      {/* Cycle UI v2.6.2 (D3) — ChevronDown inline SVG, geometric
+          stroke 1.75; rotate-180 when expanded. */}
+      <ChevronDown
+        class={[
+          "h-3 w-3 text-text-subtle transition-transform duration-150",
+          props.expanded ? "rotate-180" : "",
+        ].join(" ")}
+      />
+    </button>
+  );
+};
+
+const ModePicker: Component<{
+  activeMode: ModeKey;
+  onPick: (mode: ModeKey) => void;
+  onClose: () => void;
+}> = (props) => {
+  // Cycle UI Phase 4.3 — Tailwind responsive variant.  Below `md`
+  // (768 px) the picker becomes a bottom-anchored sheet with
+  // safe-area-inset padding so iOS Safari's home indicator doesn't
+  // crop the last row.  Above `md` it's the same listbox dropdown
+  // as before.
+  //
+  // Cycle UI v2.5 Phase 3 — drag-to-dismiss on mobile.  touchstart
+  // records the starting Y; touchmove translates the sheet
+  // (positive deltas only — drag down to dismiss); touchend snaps
+  // back when delta < 80 px or calls onClose when ≥ 80 px.
+  // touch-action: none on the sheet element prevents iOS Safari
+  // pull-to-refresh during the gesture.  Desktop variant ignores
+  // these handlers entirely (no touch events fire).
+  const [dragY, setDragY] = createSignal(0);
+  const [isDragging, setIsDragging] = createSignal(false);
+  let startY = 0;
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    startY = t.clientY;
+    setIsDragging(true);
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (!isDragging()) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dy = Math.max(0, t.clientY - startY);  // only drag down
+    setDragY(dy);
+  };
+  const onTouchEnd = () => {
+    setIsDragging(false);
+    if (dragY() >= 80) {
+      props.onClose();
+    }
+    // Snap back regardless — onClose unmounts on dismiss anyway.
+    setDragY(0);
+  };
+  return (
+    <div
+      role="listbox"
+      aria-label="Pick mode"
+      class={[
+        "z-[var(--z-dropdown)] gap-0.5 rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md",
+        // Mobile (default): fixed bottom-sheet spanning width.
+        "fixed inset-x-0 bottom-0 grid grid-cols-2 gap-1 rounded-b-none pb-[max(env(safe-area-inset-bottom),0.5rem)] [touch-action:none]",
+        // Desktop: absolutely positioned just above the pill.
+        "md:absolute md:inset-x-auto md:bottom-[100%] md:left-5 md:mb-2 md:grid-cols-2 md:rounded-md md:pb-1 md:[touch-action:auto]",
+      ].join(" ")}
+      data-amor-mode-picker=""
+      // Cycle UI v2.5 Phase 3 — touch drag-to-dismiss (mobile only;
+      // touch events don't fire on non-touch devices).
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
+      style={{
+        transform: dragY() > 0 ? `translateY(${dragY()}px)` : undefined,
+        transition: isDragging() ? "none" : "transform 200ms cubic-bezier(0,0,0.2,1)",
+      }}
+    >
+      {/* Cycle UI v2.5 — drag handle (mobile only — md:hidden). */}
+      <div
+        class="col-span-2 mx-auto my-1 h-1 w-10 rounded-full bg-border-strong-v25 md:hidden"
+        aria-hidden="true"
+        data-amor-sheet-handle=""
+      />
+      {MODES.map((meta: ModeMeta) => (
+        <button
+          type="button"
+          role="option"
+          aria-selected={meta.key === props.activeMode}
+          onClick={() => props.onPick(meta.key)}
+          class="flex items-center gap-2 rounded px-3 py-1.5 text-left text-xs hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-1"
+          data-amor-mode={meta.key}
+          data-active={meta.key === props.activeMode ? "1" : "0"}
+        >
+          <span
+            class="flex h-3.5 w-3.5 items-center justify-center text-[0.85rem]"
+            style={{ color: "var(--mode-accent)" }}
+            aria-hidden="true"
+          >
+            {MODE_GLYPH[meta.key]}
+          </span>
+          <span class="font-medium">{modeLabel(meta)}</span>
+          <span class="ml-auto text-[0.65rem] text-text-subtle">
+            /{meta.key === "thinking" ? "think" : meta.key}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const MentionPicker: Component<{
+  matches: RepoSymbol[];
+  selected: number;
+  loading: boolean;
+  query: string;
+  onPick: (sym: RepoSymbol) => void;
+  onHover: (i: number) => void;
+}> = (props) => {
+  return (
+    <div
+      id="amor-mention-listbox"
+      role="listbox"
+      aria-label="Repo symbols"
+      class="absolute left-0 right-0 top-full z-[var(--z-dropdown)] mt-1 max-h-72 overflow-y-auto rounded-md border border-border-subtle bg-bg-elevated p-1 shadow-md"
+      data-amor-mention="picker"
+    >
+      <Show
+        when={props.matches.length > 0}
+        fallback={
+          <p class="px-3 py-2 text-xs text-text-subtle">
+            {props.loading
+              ? "Searching…"
+              : props.query
+                ? `No symbols match “${props.query}”`
+                : "Type to search the codebase…"}
+          </p>
+        }
+      >
+        <For each={props.matches}>
+          {(sym, i) => (
+            <button
+              type="button"
+              role="option"
+              id={`amor-mention-opt-${i()}`}
+              aria-selected={i() === props.selected}
+              onMouseDown={(e: MouseEvent) => {
+                e.preventDefault(); // keep textarea focus
+                props.onPick(sym);
+              }}
+              onMouseMove={() => props.onHover(i())}
+              class={[
+                "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs",
+                i() === props.selected
+                  ? "bg-bg-hover text-text-display"
+                  : "text-text-body",
+              ].join(" ")}
+              data-amor-mention-kind={sym.kind}
+            >
+              <span class="flex min-w-0 flex-col">
+                <span class="truncate font-mono text-[0.75rem] text-text-display">
+                  {sym.name}
+                </span>
+                <span class="truncate text-[0.65rem] text-text-subtle">
+                  {sym.path}:{sym.line}
+                  {sym.parent ? ` · ${sym.parent}` : ""}
+                </span>
+              </span>
+              <span class="text-[0.6rem] uppercase tracking-wide text-text-subtle">
+                {sym.kind}
+              </span>
+            </button>
+          )}
+        </For>
+      </Show>
+    </div>
+  );
+};

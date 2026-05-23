@@ -213,6 +213,10 @@ class ConsortiumStartRequest(BaseModel):
             "`quick_code` = 5-phase reasoning-first lite pipeline."
         ),
     )
+    # Cycle UI v2.7.1 (D9) — user-uploaded attachment IDs.  Resolver
+    # injects AMOR-ATTACH context blocks into `goal` before the
+    # consortium Scope phase fans out the project plan.
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class ConsortiumStartResponse(BaseModel):
@@ -253,6 +257,25 @@ async def start_consortium(
     client_id = _require_client_id(x_client_id)
     user_id = user.id if user else None
     session_id = str(uuid4())
+
+    # Cycle UI v2.7.1 — resolve attachments into goal.  Anonymous
+    # callers skip (tenancy unenforceable).
+    if body.attachment_ids and user_id:
+        try:
+            from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+            from .vision_capability import detect_vision_capability  # noqa: PLC0415
+            from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
+            _db = await _cs._db()
+            _has_vision = await detect_vision_capability()
+            enriched, _img, _msg = await resolve_and_inject(
+                _db, user_id=str(user_id),
+                attachment_ids=body.attachment_ids,
+                prompt=body.goal, has_vision_model=_has_vision,
+            )
+            body = body.model_copy(update={"goal": enriched})
+            logger.info("consortium_start attachments_resolved n=%d session=%s", len(_msg), session_id)
+        except Exception as exc:
+            logger.warning("consortium_start attachment_resolve_failed: %s", exc)
 
     depth = _normalize_tier(body.depth, "medium")
     impl_engine = (body.implementation_engine or "code_intelligence").strip().lower()

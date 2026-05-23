@@ -324,6 +324,11 @@ class CodeStartRequest(BaseModel):
     query_record_id: Optional[str] = Field(None, max_length=64)
     user_message_idempotency_key: Optional[str] = Field(None, max_length=64)
     assistant_message_idempotency_key: Optional[str] = Field(None, max_length=64)
+    # Cycle UI v2.7 (D9) — user-uploaded attachment IDs.  Resolver
+    # injects their content as AMOR-ATTACH context blocks into the
+    # prompt before triage runs.  Default `[]` keeps legacy clients
+    # untouched (backward-compat).
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class CodeStartResponse(BaseModel):
@@ -376,6 +381,40 @@ async def start_code_session(
     """
     session_id = str(uuid4())
     effort = payload.effort or "medium"
+
+    # Cycle UI v2.7 — resolve attachments into the prompt.  When the
+    # user attached one or more files via the composer, the resolver
+    # loads each blob, classifies inclusion (inline_text / image_ref /
+    # filename_only) and prepends one AMOR-ATTACH context block per
+    # file to the prompt.  No-op when attachment_ids is empty (legacy).
+    if payload.attachment_ids:
+        try:
+            from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+            from .vision_capability import detect_vision_capability  # noqa: PLC0415
+            from ..infrastructure.chat_store import chat_store  # noqa: PLC0415
+            _db = await chat_store._db()
+            # Cycle UI v2.7.2 (D7) — dynamic vision capability detect.
+            # When the user has pulled a vision-capable Ollama model
+            # (Qwen2-VL, LLaVA, Phi-3-Vision, etc.) the resolver
+            # forwards image bytes to the LLM via ChatMessage.images.
+            _has_vision = await detect_vision_capability()
+            enriched_prompt, _img_refs, _msg_refs = await resolve_and_inject(
+                _db,
+                user_id=str(user.id),
+                attachment_ids=payload.attachment_ids,
+                prompt=payload.prompt,
+                has_vision_model=_has_vision,
+            )
+            # Pydantic v2 model_copy keeps original payload immutable.
+            payload = payload.model_copy(update={"prompt": enriched_prompt})
+            logger.info(
+                "code_start attachments_resolved n=%d session=%s",
+                len(_msg_refs), session_id,
+            )
+        except Exception as exc:
+            # Don't fail the whole request if attachment resolution
+            # fails — log + proceed with original prompt (graceful).
+            logger.warning("code_start attachment_resolve_failed: %s", exc)
     max_debug = (
         payload.max_debug_iterations
         if payload.max_debug_iterations is not None

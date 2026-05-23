@@ -173,7 +173,81 @@ CODE_MODEL_CATALOGUE: list[ModelSpec] = [
         tier="balanced",
         license="Apache-2.0",
     ),
+    # Cycle H Phase A.1 — BitNet b1.58 2B4T native-ternary CPU planner.
+    # Microsoft's first natively-trained 1.58-bit (ternary) 2B model
+    # at 4T tokens (arXiv 2504.12285).  ~0.4 GB weight footprint;
+    # CPU inference via bitnet.cpp at 6-10 tok/s on RTX 4060 laptop
+    # class.  Measured 12× lower energy per inference vs Qwen2.5-2B.
+    # Strengths chosen to auto-route via ROLE_STRENGTH_MAP for
+    # "bitnet_shadow_planner" role; tier=lightweight + vram_gb=0
+    # means scorer never picks it for coder/critic roles unless
+    # operator explicitly opts in.  License: MIT.
+    ModelSpec(
+        ollama_tag="bitnet:b1.58-2b4t",
+        display_name="BitNet b1.58 2B4T",
+        params_b=2.0,
+        vram_gb=0,               # CPU-only
+        swebench_pct=0,          # not benchmarked on code
+        humaneval_pct=0,         # ditto
+        context_k=4,             # 4K context per official model card
+        strengths=[
+            "fast inference", "planning", "triage", "general",
+            "explanation",
+        ],
+        tier="lightweight",
+        license="MIT",
+    ),
+    # v18.1 Step 3 (Cycle G) — Phi-4 14B Q4_K_M out-of-family critic.
+    # Microsoft's Phi-4 is a different post-training corpus than the
+    # Qwen / DeepSeek family AMOR uses for coder / planner roles, so
+    # using it for `critic` role gives low self-correlation (Panickssery
+    # 2024 / Liu 2024).  GGUF already on disk (Sprint 0 fallback judge);
+    # operators on Ollama path can pull `phi4:14b` to populate the
+    # registry's installed-set.  Strengths chosen to match
+    # ROLE_STRENGTH_MAP["critic"] so the scorer prefers Phi-4 for
+    # critic-role at effort tiers deep/expert/ultra.  License: MIT.
+    ModelSpec(
+        ollama_tag="phi4:14b",
+        display_name="Phi-4 14B (Q4_K_M)",
+        params_b=14,
+        vram_gb=9,
+        swebench_pct=0,           # no published 8B-class Phi-4 SWE-bench
+        humaneval_pct=82.6,       # Phi-4 tech report
+        context_k=16,
+        strengths=[
+            "review", "reasoning", "step-by-step",
+            "explanation", "agentic loops",
+        ],
+        tier="balanced",
+        license="MIT",
+    ),
     # ── Lightweight tier (< 8 GB VRAM or CPU) ───────────────────────────────
+    # Cycle I.1 — LFM2-2.6B "associative cortex" (Liquid AI).
+    # Strengths chosen to auto-route the new `cortex` role here when
+    # the prompt+context window exceeds 16K tokens.  Liquid AI's
+    # benchmarks claim near-Qwen quality at <2× the params, with
+    # higher token throughput on the same hardware (vendor-reported;
+    # AMOR's own SWE-bench-Lite shadow gate in Sprint I.1 measures
+    # real performance before any production routing flip).
+    # Plan-agent locked: 2-week shadow before promote; ≥2pp
+    # SWE-bench-Lite drop = revert.  Currently OFF-by-default; opt
+    # in via settings.code_lfm2_cortex_enabled=True after the gate
+    # passes.
+    ModelSpec(
+        ollama_tag="lfm2:2.6b-q4",
+        display_name="LFM2 2.6B (cortex)",
+        params_b=2.6,
+        vram_gb=2,
+        swebench_pct=0,
+        humaneval_pct=0,
+        context_k=32,
+        strengths=[
+            "on-device", "long context", "fast prefill",
+            "associative", "general",
+        ],
+        tier="lightweight",
+        license="Apache-2.0",
+    ),
     ModelSpec(
         ollama_tag="qwen2.5-coder:3b",
         display_name="Qwen2.5-Coder 3B",
@@ -381,6 +455,21 @@ ROLE_STRENGTH_MAP: dict[str, list[str]] = {
         "step-by-step",
     ],
     "triage": ["fast generation", "explanation", "general"],
+    # Cycle I.1 — long-context "associative" track for prompts where
+    # the user-supplied context exceeds 16K tokens.  LFM2-2.6B picks
+    # itself up via strengths=["long context", "associative",
+    # "fast prefill"]; Qwen2.5-Coder-7B falls back when LFM2 isn't
+    # installed (qwen has context_k=128 + "long context" implicit).
+    "cortex": [
+        "long context", "associative", "fast prefill", "on-device",
+        "general",
+    ],
+    # Cycle H.1 — BitNet b1.58 ternary planner for the energy-
+    # efficiency comparator.  Routed via the shadow path (see
+    # bitnet_shadow.should_shadow_to_bitnet); never user-facing.
+    "bitnet_shadow_planner": [
+        "fast inference", "planning", "triage", "general",
+    ],
 }
 
 

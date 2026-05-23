@@ -155,6 +155,18 @@ class StorageManager:
                     database=settings.mongo_database,
                     attempt=attempt + 1,
                 )
+                # Cycle UI v2.7.1 — explicit attachments_meta index init
+                # (idempotent).  Lazy via Mongo auto-index would slow
+                # the first upload by ~50 ms; explicit upfront avoids
+                # cold-start penalty.  Failures here are non-fatal —
+                # log + continue (the upload route will surface a 500
+                # if a critical index is truly missing).
+                try:
+                    from .attachment_storage import ensure_attachments_indexes  # noqa: PLC0415
+                    await ensure_attachments_indexes(self.mongo_db)
+                    logger.info("attachments_indexes_ready")
+                except Exception as exc:
+                    logger.warning("attachments_indexes_init_failed error=%s", exc)
                 return
             except Exception as exc:
                 last_exc = exc

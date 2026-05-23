@@ -1,4 +1,4 @@
-import {
+﻿import {
   type Component,
   type JSX,
   createSignal,
@@ -77,7 +77,7 @@ export const Tooltip: Component<TooltipProps> = (props) => {
           class={[
             "pointer-events-none absolute z-[var(--z-toast)]",
             "whitespace-nowrap rounded-sm border border-border-subtle",
-            "bg-bg-elevated px-2 py-1 text-xs text-text-primary shadow-md",
+            "bg-bg-elevated px-2 py-1 text-xs text-text-display shadow-md",
             placementClass(),
           ].join(" ")}
         >

@@ -3,6 +3,39 @@ Main application entry point with FastAPI.
 Provides REST API for document processing and monitoring.
 """
 
+# v18.1.3 — LanceDB / lance uses Rust internals (DataFusion, Arrow
+# buffers, file-descriptor handles) that are NOT fork-safe.  On Linux
+# multiprocessing defaults to ``fork`` which inherits those handles
+# and can deadlock the child.  Switch to ``spawn`` BEFORE any module
+# imports lancedb so the warning ``lance is not fork-safe`` from
+# ``lancedb/__init__.py:294`` is suppressed AND any future use of
+# multiprocessing.Pool / Process inside the app gets a safe start
+# method.  Idempotent: if another module already set the method, the
+# subsequent call would raise RuntimeError — catch + log debug.
+import multiprocessing as _mp
+try:
+    _mp.set_start_method("spawn", force=False)
+except RuntimeError:
+    # Already set elsewhere (test runner, parent process, etc.) — fine.
+    pass
+
+# v18.1.3 — silence Pydantic v2 ``protected_namespaces`` UserWarning
+# emitted by THIRD-PARTY library models we can't patch (lancedb's
+# ``LanceModel`` ships ``model_name`` / ``model_link`` fields).  Our
+# own Pydantic models already opt out via
+# ``model_config = {"protected_namespaces": ()}``; this filter is
+# narrow enough that a regression in our OWN code (forgetting the
+# opt-out) is still caught by the test in
+# ``tests/api/test_pydantic_protected_namespaces.py`` which runs in
+# isolation without this filter.
+import warnings as _warnings
+_warnings.filterwarnings(
+    "ignore",
+    message=r'Field "model_.*" has conflict with protected namespace',
+    category=UserWarning,
+    module=r"pydantic\._internal\._fields",
+)
+
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
@@ -45,7 +78,47 @@ except ImportError:
 from .api.chat_sessions_routes import router as chat_sessions_router
 from .api.query_record_routes import router as query_record_router  # Phase B4
 from .api.chat_folders_routes import router as chat_folders_router
+# Cycle UI v2.7 — attachment system end-to-end.  Upload/download/delete
+# endpoints + canonical metadata stored in `attachments_meta` Mongo
+# collection.  6 chat /start endpoints inherit `AttachmentBearingRequest`
+# mixin to accept `attachment_ids[]` (see `api/attachment_models.py`).
+from .api.attachments_routes import attachments_router
 from .api.auth_routes import router as auth_router
+# Cycle UI 2026-05-20 — unified chat endpoints (Phase 1: classifier;
+# Phase 2 will add /start + /events dispatcher).  Lazy-import-friendly:
+# if sentence-transformers is unavailable on a stripped runtime, we
+# log + skip registration rather than crash startup.
+try:
+    from .api.chat import router as chat_router
+    CHAT_UNIFIED_AVAILABLE = True
+except Exception as _chat_import_exc:  # pragma: no cover - infra
+    CHAT_UNIFIED_AVAILABLE = False
+    logger.warning(
+        "Unified chat routes unavailable (intent classifier import failed): %s",
+        _chat_import_exc,
+    )
+# Cycle C Sprint 0 Day 3 — admin baselines dashboard.
+from .api.admin_baselines_routes import router as admin_baselines_router
+# Cycle C Sprint 1 Day 4 — admin LLM dashboard (resident models,
+# swap events, cache-reuse hits).
+from .api.admin_llm_routes import router as admin_llm_router
+# Cycle C Sprint 2 Day 1 — admin Eval harness routes (HumanEval+,
+# SWE-bench-Lite, RAGAS, sprint0 corpus replay).
+from .api.admin_evals_routes import (
+    router as admin_evals_router,
+    ensure_eval_runs_schema,
+)
+# Cycle C Sprint 4 Day 2 — repo symbol discovery for @-mention picker.
+from .api.repo_routes import router as repo_router
+# Cycle C Sprint 6 Day 1 — preference-pair ingestion for ORPO trainer.
+from .api.admin_training_routes import (
+    router as admin_training_router,
+    ensure_preference_pairs_schema,
+)
+# Cycle C Sprint 7 Day 2 — Mem0 OSS memory routes.
+from .api.admin_memory_routes import router as admin_memory_router
+# Cycle C Sprint 8 Day 4 — agentic ReAct loop routes.
+from .api.agent_routes import router as agent_router
 from .auth.service import auth_service
 
 # Thinking Mode — human-in-the-loop deep reasoning pipeline
@@ -124,6 +197,14 @@ try:
 except ImportError as _mcp_exc:  # pragma: no cover
     MCP_ROUTES_AVAILABLE = False
     logger.warning("MCP routes not available: %s", _mcp_exc)
+
+# Cycle F Sprint 5 — approval flow bridge
+try:
+    from .api.approval import approval_router
+    APPROVAL_ROUTES_AVAILABLE = True
+except ImportError as _appr_exc:  # pragma: no cover
+    APPROVAL_ROUTES_AVAILABLE = False
+    logger.warning("Approval routes not available: %s", _appr_exc)
 
 # Crawling and Translation API routes
 try:
@@ -258,6 +339,18 @@ async def lifespan(app: FastAPI):
             await auth_service.bootstrap()
         except Exception as e:
             logger.warning("auth_bootstrap_failed", error=str(e))
+
+        # Sprint 2 — ensure eval_runs table exists.
+        try:
+            await ensure_eval_runs_schema()
+        except Exception as e:
+            logger.warning("eval_runs_schema_failed", error=str(e))
+
+        # Sprint 6 — ensure preference_pairs table exists.
+        try:
+            await ensure_preference_pairs_schema()
+        except Exception as e:
+            logger.warning("preference_pairs_schema_failed", error=str(e))
 
         # Initialize Local AI if available
         if LOCAL_AI_AVAILABLE:
@@ -405,31 +498,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files and templates
+# Mount static files + templates
+#
+# The v1 monolithic UI was retired in favour of the SolidJS + Vite
+# v2 build under ``web_ui/v2/``.  Only the build output + favicons +
+# Jinja shell live on disk; everything else is the SPA.
+#
+# Mount order matters — ``/static/v2`` MUST register before
+# ``/static`` because Starlette greedy-matches mount prefixes.  In
+# the reverse order ``/static/v2/...`` would route into the public
+# ``/static`` mount which doesn't have that subtree, returning 404.
 import os
 web_ui_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web_ui")
 
-# ── v17 UI redesign — parallel v2 mount (PR-1) ─────────────────────────────
-#
-# MUST be mounted BEFORE the legacy ``/static`` mount because
-# Starlette matches mounts in registration order and ``/static`` is a
-# prefix of ``/static/v2``.  Wrong order → /static/v2/... gets routed
-# to the v1 StaticFiles which doesn't have that subtree, returning
-# 404.
-#
-# The v2 build (Vite + SolidJS + Tailwind v4) lives at ``web_ui/v2``.
-# Source: ``web_ui/v2/src/``.  Production output: ``web_ui/v2/dist/``.
-# Vite emits hashed asset filenames + a ``manifest.json`` that tells
-# us which entry chunk + CSS files to inject into the HTML shell.
-#
-# Behaviour:
-#  * GET /v2  → serves the v2 SPA shell.  Reads ``manifest.json`` to
-#    pull the latest hashed entry script + CSS, then injects them
-#    into a Jinja template.
-#  * GET /static/v2/*  → serves any file under ``web_ui/v2/dist/``.
-#
-# The legacy v1 UI at ``/`` is untouched.  Operators can flip the
-# default by setting ``AMOR_UI=v2`` env var (see /, below).
 _v2_dist_path = os.path.join(web_ui_path, "v2", "dist")
 _v2_available = os.path.isdir(_v2_dist_path) and os.path.isfile(
     os.path.join(_v2_dist_path, ".vite", "manifest.json")
@@ -441,15 +522,49 @@ if _v2_available:
         name="static_v2",
     )
     logger.info("v2_ui_mounted dist=%s", _v2_dist_path)
+
+    # Cycle C Sprint 12 Day 1 — PWA root-scoped artifacts.  The
+    # service worker MUST be served from ``/sw.js`` (root scope) so
+    # it can intercept fetches for every route the SPA owns.  The
+    # ``manifest.webmanifest`` + icons are also expected at the root
+    # by the browser's installable-app heuristic.  Explicitly route
+    # each before the SPA catch-all so Jinja's HTML fallback doesn't
+    # shadow them.
+    from fastapi.responses import FileResponse  # noqa: PLC0415
+
+    def _make_pwa_route(path: str, filename: str, media_type: str):
+        def _serve():
+            full = os.path.join(_v2_dist_path, filename)
+            if not os.path.isfile(full):
+                from fastapi import HTTPException as _HTTPException  # noqa: PLC0415
+                raise _HTTPException(status_code=404, detail=f"{filename} not built")
+            return FileResponse(full, media_type=media_type)
+        _serve.__name__ = f"pwa_{filename.replace('.', '_').replace('-', '_')}"
+        app.add_api_route(
+            path,
+            _serve,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+
+    _make_pwa_route("/manifest.webmanifest", "manifest.webmanifest", "application/manifest+json")
+    _make_pwa_route("/sw.js",                "sw.js",                "application/javascript")
+    _make_pwa_route("/icon-192.svg",         "icon-192.svg",         "image/svg+xml")
+    _make_pwa_route("/icon-512.svg",         "icon-512.svg",         "image/svg+xml")
+    logger.info("pwa_artifacts_mounted manifest+sw+icons")
 else:
-    logger.info(
+    logger.warning(
         "v2_ui_not_built path=%s — run `cd web_ui/v2 && npm run build`",
         _v2_dist_path,
     )
 
-app.mount("/static", StaticFiles(directory=os.path.join(web_ui_path, "static")), name="static")
+# ``/static`` only serves favicons + img assets now (web_ui/static/img/).
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(web_ui_path, "static")),
+    name="static",
+)
 templates = Jinja2Templates(directory=os.path.join(web_ui_path, "templates"))
-app.state.static_version = os.getenv("STATIC_VERSION") or str(int(time.time()))
 
 
 def _read_v2_manifest() -> Optional[Dict[str, Any]]:
@@ -498,56 +613,32 @@ async def _serve_v2_shell(request: Request) -> Response:
     )
 
 
-@app.get("/v2", include_in_schema=False)
-async def root_v2(request: Request):
-    """Serve the v2 SPA shell at the ``/v2`` entry point."""
-    return await _serve_v2_shell(request)
-
-
-@app.get("/v2/{rest:path}", include_in_schema=False)
-async def v2_spa_fallback(request: Request, rest: str):  # noqa: ARG001 — captures path
-    """SPA fallback — every ``/v2/*`` URL renders the same shell so
-    SolidJS Router (with ``base="/v2"``) can take over client-side.
-    Static assets bypass this via the earlier ``/static/v2`` mount."""
-    return await _serve_v2_shell(request)
-
-
-@app.get("/legacy", include_in_schema=False)
-async def root_legacy(request: Request):
-    """v1 monochrome chat UI — the pre-v2 default.  Kept as a safety
-    net while v2 reaches feature parity for every mode.  Linked from
-    the v2 sidebar's "Open legacy UI" item."""
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "static_version": app.state.static_version},
-    )
-
-
-@app.get("/v1", include_in_schema=False)
-async def root_v1(request: Request):
-    """Alias for ``/legacy`` so links written before the v2 cutover
-    keep working."""
-    return await root_legacy(request)
+# ── SPA paths that must NOT be intercepted by the catch-all below.
+# Anything starting with one of these prefixes is either a router
+# mount (``/api``, ``/static``, ``/grafana``, ``/prometheus``,
+# ``/v1`` for OpenAI-compat, ``/mcp`` for Model Context Protocol)
+# or an explicit endpoint registered above (``/health``, ``/metrics``,
+# ``/stats``, ``/process``, ``/api`` info).  The catch-all SPA
+# fallback only fires for paths NOT matched by any of those.
+_RESERVED_PREFIXES: tuple[str, ...] = (
+    "api/", "static/", "v1/", "mcp/",
+    "grafana/", "prometheus/",
+    "health", "metrics", "stats", "process",
+    "favicon.ico",
+)
 
 
 @app.get("/")
 async def root(request: Request):
-    """v17 UI cutover — ``/`` now serves the v2 SolidJS SPA when
-    the build artefacts are present.  Falls back to v1 (``/legacy``)
-    automatically if the build is missing.  Operators can opt back
-    out of v2 by setting ``AMOR_UI=v1`` in the environment.
-    """
-    forced = os.getenv("AMOR_UI", "").lower()
-    if forced == "v1":
-        return await root_legacy(request)
-    if _v2_available and forced != "v1":
-        # 302 to /v2/ so the URL bar shows the SPA's own root and the
-        # SolidJS Router's ``base="/v2"`` resolves cleanly.
-        from fastapi.responses import RedirectResponse  # noqa: PLC0415
-        return RedirectResponse(url="/v2/", status_code=302)
-    # Build artefacts missing — serve v1 directly so the user has a
-    # working surface while the build is rebuilt.
-    return await root_legacy(request)
+    """v17 UI cutover — ``/`` now serves the v2 SolidJS SPA directly.
+    No more ``/v2`` prefix in the URL bar; the legacy v1 monolith was
+    retired in this turn and removed from the codebase entirely.
+
+    The catch-all SPA fallback for client-side routes (e.g.
+    ``/research``, ``/build``) is registered at the BOTTOM of this
+    file, AFTER every ``app.include_router(...)`` call, so the API
+    routers + mounts always win match-priority over the SPA shell."""
+    return await _serve_v2_shell(request)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -643,9 +734,22 @@ if MCP_ROUTES_AVAILABLE:
     app.include_router(mcp_router)
     logger.info("MCP /mcp/v1 routes included")
 
+# Cycle F Sprint 5 — approval flow.  The router exposes
+# POST /api/approval/{request_id} so the browser can resolve
+# `approval_required` SSE events from the code-intelligence stream.
+if APPROVAL_ROUTES_AVAILABLE:
+    app.include_router(approval_router)
+    logger.info("Approval flow routes included")
+
 # Chat sessions persistence (MongoDB)
 app.include_router(chat_sessions_router)
 logger.info("Chat sessions routes included")
+
+# Cycle UI 2026-05-20 — Unified chat endpoints (Phase 1: classifier;
+# subsequent phases add /start + /events dispatcher).
+if CHAT_UNIFIED_AVAILABLE:
+    app.include_router(chat_router)
+    logger.info("Unified chat routes included (Cycle UI Phase 1)")
 
 # Query records — durable bridge between ephemeral pipeline state and
 # permanent chat history (Phase B4 of fancy-swinging-karp.md).
@@ -655,6 +759,57 @@ logger.info("Query record routes included")
 # Chat folders persistence (MongoDB)
 app.include_router(chat_folders_router)
 logger.info("Chat folders routes included")
+
+# Cycle UI v2.7 — attachment upload/download/delete (multipart endpoint).
+app.include_router(attachments_router)
+logger.info("Attachment routes included")
+
+# Sprint 0 admin baselines dashboard (Cycle C)
+app.include_router(admin_baselines_router)
+logger.info("Admin baselines routes included")
+
+# Sprint 1 admin LLM dashboard (Cycle C)
+app.include_router(admin_llm_router)
+logger.info("Admin LLM routes included")
+
+# Sprint 2 admin Eval routes (Cycle C)
+app.include_router(admin_evals_router)
+logger.info("Admin Evals routes included")
+
+# Sprint 4 Day 2 repo symbol discovery (Cycle C) — backs @-mention picker.
+app.include_router(repo_router)
+logger.info("Repo symbol routes included")
+
+# Sprint 6 Day 1 admin Training routes (Cycle C) — preference pairs.
+app.include_router(admin_training_router)
+logger.info("Admin Training routes included")
+
+# Sprint 7 Day 2 admin Memory routes (Cycle C) — Mem0 OSS adapter.
+app.include_router(admin_memory_router)
+logger.info("Admin Memory routes included")
+
+# Sprint 8 Day 4 agent routes (Cycle C) — ReAct loop with MCP tool dispatch.
+app.include_router(agent_router)
+logger.info("Agent routes included")
+
+# Sprint 2 — register concrete eval runners.  Import-only side-effect:
+# each module calls ``register_eval(...)`` at import time so the
+# manifest sees them.  Failures here are logged but non-fatal —
+# the dashboard still works without runners.
+def _register_eval_runners() -> None:
+    import importlib
+    for mod in (
+        "tools.eval.humaneval_plus",
+        "tools.eval.swebench_lite",
+        "tools.eval.ragas_lancedb",
+        "tools.eval.aider_polyglot",   # Cycle G G1 — 2026-05-16
+    ):
+        try:
+            importlib.import_module(mod)
+            logger.info("registered eval runner: %s", mod)
+        except Exception as exc:
+            logger.warning("eval runner %s register failed: %s", mod, exc)
+_register_eval_runners()
 
 # Crawling API routes
 if CRAWLING_AVAILABLE:
@@ -666,6 +821,11 @@ if TRANSLATION_AVAILABLE:
     app.include_router(translation_router)
     logger.info("Translation routes included")
 
+
+# SPA catch-all is registered at the absolute end of this file so
+# explicit routes like ``/health``, ``/metrics``, ``/stats`` (defined
+# below) win match-priority.  Earlier placement shadowed those routes
+# and they returned 404 via the catch-all's reserved-prefix block.
 
 @app.get("/health")
 async def health_check():
@@ -829,6 +989,26 @@ async def reset_metrics():
     """Reset processing metrics."""
     pipeline.reset_metrics()
     return {"message": "Metrics reset successfully"}
+
+
+# ── SPA catch-all — must be the LAST registered route ──────────────────────
+# FastAPI matches routes in registration order.  An earlier
+# ``/{spa_path:path}`` shadowed every explicit route registered after
+# it (``/health``, ``/metrics``, ``/stats``, ``/process``, …) — those
+# were silently 404'd by the catch-all's reserved-prefix block.
+# Putting the catch-all at the bottom of the file guarantees every
+# explicit endpoint above wins match-priority.
+@app.get("/{spa_path:path}", include_in_schema=False)
+async def spa_fallback(request: Request, spa_path: str):
+    """Catch-all SPA fallback — every unmatched GET URL renders the
+    same shell so SolidJS Router takes over client-side.  Reserved
+    prefixes like ``api/``, ``static/``, ``grafana/`` are blocked
+    here as a safety net even though their mounts win
+    match-priority above us."""
+    if any(spa_path.startswith(p) for p in _RESERVED_PREFIXES):
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await _serve_v2_shell(request)
 
 
 if __name__ == "__main__":

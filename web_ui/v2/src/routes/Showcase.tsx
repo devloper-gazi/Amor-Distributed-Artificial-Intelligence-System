@@ -1,4 +1,4 @@
-import { type Component, For, createSignal } from "solid-js";
+﻿import { type Component, For, Show, createSignal, lazy } from "solid-js";
 import {
   Avatar,
   Badge,
@@ -14,6 +14,30 @@ import {
   Tooltip,
   type Status,
 } from "../components/ui";
+
+// Lazy-loaded so diff2html ships in its own chunk (≈ 90 KB gz)
+// only when the showcase or Build mode renders a diff.
+const DiffBlock = lazy(() =>
+  import("../components/chat/DiffBlock").then((m) => ({
+    default: m.DiffBlock,
+  })),
+);
+
+const DEMO_DIFF = `\
+<<<<<<< SEARCH
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n-1) + fib(n-2)
+=======
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    a, b = 0, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return b
+>>>>>>> REPLACE`;
 
 /**
  * Component showcase — Storybook-lite preview surface.  Used to
@@ -56,17 +80,17 @@ export const Showcase: Component = () => {
   return (
     <main
       data-mode="system"
-      class="min-h-screen bg-bg-primary p-8 text-text-primary"
+      class="min-h-screen bg-bg-canvas p-8 text-text-display"
     >
       <header class="mx-auto mb-8 flex max-w-5xl items-center justify-between border-b border-border-subtle pb-4">
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">Component Showcase</h1>
-          <p class="mt-1 text-sm text-text-secondary">
+          <p class="mt-1 text-sm text-text-body">
             12 atoms &middot; Tailwind v4 @theme &middot; per-mode accents
           </p>
         </div>
         <div class="flex items-center gap-2 text-sm">
-          <a href="/v2" class="text-text-secondary hover:text-text-primary">
+          <a href="/v2" class="text-text-body hover:text-text-display">
             &larr; Back
           </a>
           <Button variant="secondary" size="sm" onClick={toggleTheme}>
@@ -96,8 +120,8 @@ export const Showcase: Component = () => {
                     />
                     <span class="font-medium">{mode.label}</span>
                   </div>
-                  <p class="mt-1 text-xs text-text-tertiary">{mode.subtitle}</p>
-                  <p class="mt-2 font-mono text-xs text-text-secondary">
+                  <p class="mt-1 text-xs text-text-subtle">{mode.subtitle}</p>
+                  <p class="mt-2 font-mono text-xs text-text-body">
                     icon: {mode.glyph}
                   </p>
                 </div>
@@ -171,7 +195,7 @@ export const Showcase: Component = () => {
               maxRows={8}
               placeholder="Type to grow…"
             />
-            <p class="mt-2 text-xs text-text-tertiary">
+            <p class="mt-2 text-xs text-text-subtle">
               {textValue().length} chars
             </p>
           </div>
@@ -208,11 +232,11 @@ export const Showcase: Component = () => {
           title="Spinner"
           subtitle="motion-safe spins; motion-reduce shows static dot"
         >
-          <div class="flex items-center gap-6 text-text-primary">
+          <div class="flex items-center gap-6 text-text-display">
             <Spinner size={16} />
             <Spinner size={20} />
             <Spinner size={24} />
-            <span class="text-sm text-text-tertiary">Loading…</span>
+            <span class="text-sm text-text-subtle">Loading…</span>
           </div>
         </Section>
 
@@ -235,7 +259,7 @@ export const Showcase: Component = () => {
               >
                 +10
               </Button>
-              <span class="text-sm text-text-tertiary">value: {progress()}</span>
+              <span class="text-sm text-text-subtle">value: {progress()}</span>
             </div>
             <ProgressBar value={null} label="indeterminate" />
           </div>
@@ -243,7 +267,7 @@ export const Showcase: Component = () => {
 
         {/* Kbd */}
         <Section title="Kbd" subtitle="auto-substitutes Mod for ⌘ / Ctrl per platform">
-          <div class="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+          <div class="flex flex-wrap items-center gap-3 text-sm text-text-body">
             <span class="inline-flex items-center gap-1.5">
               Open palette <Kbd>Mod+K</Kbd>
             </span>
@@ -302,8 +326,38 @@ export const Showcase: Component = () => {
             </div>
           </div>
         </Section>
+
+        {/* DiffBlock — lazy-loaded diff2html viewer */}
+        <Section
+          title="DiffBlock"
+          subtitle="lazy-loaded diff2html — accepts unified diffs OR SEARCH/REPLACE blocks"
+        >
+          <DiffDemo />
+        </Section>
       </div>
     </main>
+  );
+};
+
+const DiffDemo: Component = () => {
+  const [show, setShow] = createSignal(false);
+  return (
+    <div>
+      <Show
+        when={show()}
+        fallback={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShow(true)}
+          >
+            Render demo diff
+          </Button>
+        }
+      >
+        <DiffBlock diff={DEMO_DIFF} filename="fib.py" format="line-by-line" />
+      </Show>
+    </div>
   );
 };
 
@@ -315,7 +369,7 @@ const Section: Component<{
   <section>
     <h2 class="mb-1 text-lg font-medium">{props.title}</h2>
     {props.subtitle ? (
-      <p class="mb-4 text-sm text-text-secondary">{props.subtitle}</p>
+      <p class="mb-4 text-sm text-text-body">{props.subtitle}</p>
     ) : null}
     {props.children}
   </section>

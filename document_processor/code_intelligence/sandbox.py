@@ -17,15 +17,47 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import os
 import shutil
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v18.1.2 (Cycle G) — tmpfs sizing helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _tmpfs_size_mb() -> int:
+    """Resolve the per-run /tmp tmpfs cap in MB.
+
+    Reads ``settings.code_sandbox_tmpfs_size_mb`` (default 768) with
+    env override ``AMOR_CODE_SANDBOX_TMPFS_SIZE_MB``.  Hard floor 128
+    (below which even minimal Python imports OOM); hard ceiling 4096
+    (above which a misconfig would chew real RAM the host doesn't
+    have).  Failures fall through to the safe default so a settings
+    import hiccup never bricks the sandbox.
+
+    Used by the runtime ``--tmpfs`` arg and by ``security_posture()``
+    so the reported flag value matches what's actually running.
+    """
+    raw_env = (os.environ.get("AMOR_CODE_SANDBOX_TMPFS_SIZE_MB") or "").strip()
+    if raw_env:
+        try:
+            return max(128, min(4096, int(raw_env)))
+        except ValueError:
+            pass
+    try:
+        from ..config.settings import settings  # noqa: PLC0415
+        return max(128, min(4096, int(getattr(settings, "code_sandbox_tmpfs_size_mb", 768))))
+    except Exception:
+        return 768
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,9 +123,23 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         "cmd": [
             "sh",
             "-c",
-            "g++ -O2 main.cpp -o /tmp/out && /tmp/out 2>&1",
+            "g++ -O2 -std=c++17 main.cpp -o /tmp/out && /tmp/out 2>&1",
         ],
         "filename": "main.cpp",
+        "default_timeout_s": 60,
+    },
+    # Cycle D — first-class C support (was previously routed to "cpp"
+    # which forced g++ + std=c++17, breaking pure-C deliverables that
+    # use C99 idioms).  ``gcc`` image is the same family so prewarm
+    # cost is shared.
+    "c": {
+        "image": "gcc:13",
+        "cmd": [
+            "sh",
+            "-c",
+            "gcc -O2 -std=c11 main.c -o /tmp/out && /tmp/out 2>&1",
+        ],
+        "filename": "main.c",
         "default_timeout_s": 60,
     },
     "java": {
@@ -106,6 +152,61 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
         ],
         "filename": "Main.java",
         "default_timeout_s": 60,
+    },
+    # Cycle D — Kotlin via the JVM toolchain.  Compiled to JAR then
+    # run; ~6 s cold compile + ~1 s start.  ``MainKt`` is the standard
+    # name kotlinc emits for a top-level ``fun main()``.
+    "kotlin": {
+        "image": "zenika/kotlin:1.9-jdk17",
+        "cmd": [
+            "sh",
+            "-c",
+            "cp main.kt /tmp/ && cd /tmp && "
+            "kotlinc main.kt -include-runtime -d main.jar && "
+            "java -jar main.jar 2>&1",
+        ],
+        "filename": "main.kt",
+        "default_timeout_s": 90,
+    },
+    # Cycle D — C# via .NET 8 SDK script-mode.  ``dotnet script`` runs
+    # a single .cs file without a project file; cold start ~10-15s.
+    "csharp": {
+        "image": "mcr.microsoft.com/dotnet/sdk:8.0",
+        "cmd": [
+            "sh",
+            "-c",
+            "dotnet script --no-cache main.csx 2>&1",
+        ],
+        "filename": "main.csx",
+        "default_timeout_s": 90,
+    },
+    "ruby": {
+        "image": "ruby:3.3-slim",
+        "cmd": ["ruby", "main.rb"],
+        "filename": "main.rb",
+        "default_timeout_s": 30,
+    },
+    "php": {
+        "image": "php:8.3-cli-alpine",
+        "cmd": ["php", "main.php"],
+        "filename": "main.php",
+        "default_timeout_s": 30,
+    },
+    "sql": {
+        # Cycle D — SQL deliverables run through SQLite (the most
+        # portable option).  We accept a script that may contain a
+        # mix of CREATE / INSERT / SELECT and stream the resulting
+        # rows back as the runner stdout.  Production teams that
+        # need PG/MySQL semantics can opt-in by changing the image.
+        "image": "alpine:3.20",
+        "cmd": [
+            "sh",
+            "-c",
+            "apk add --no-cache --quiet sqlite >/dev/null 2>&1 && "
+            "sqlite3 -bail -column -header :memory: < main.sql",
+        ],
+        "filename": "main.sql",
+        "default_timeout_s": 30,
     },
     # Phase 16.5 Commit L — HTML / static-website runner.  Uses
     # Python's stdlib html.parser to validate the markup parses
@@ -165,6 +266,160 @@ LANGUAGE_RUNNERS: dict[str, dict[str, Any]] = {
 }
 
 
+# Cycle D — per-language test runner config.  When ``execute(...,
+# test_mode=True)`` is called, the sandbox writes the IMPLEMENTATION
+# (which the engine passed via ``extra_files["main.<ext>"]``) AND
+# the TEST FILE (``code`` argument under ``test_filename``), then
+# runs ``test_cmd``.  Diller arası farklılıklar tek bir şemaya
+# indirgenmiş:
+#   - ``test_filename``: where to write the tester agent's output
+#   - ``test_cmd``: shell command that runs the test file
+#   - ``test_install_prefix``: command run BEFORE ``test_cmd`` to
+#     install the test framework (pytest / vitest / etc) — empty
+#     when the language ships its test runner with the toolchain
+#     (Go / Rust)
+#   - ``default_timeout_s``: laxer than implementation runs because
+#     pip-install + first compile + tests can stack up
+#
+# Languages without a test runner (html / css / bash) fall through
+# to the "skipped" path in ``execute()`` — the engine doesn't try
+# to run tests for those modes.
+TEST_RUNNERS: dict[str, dict[str, Any]] = {
+    "python": {
+        "image": "python:3.11-slim",
+        "test_filename": "test_main.py",
+        "impl_filename": "main.py",
+        # ``set -e`` so the install failure short-circuits and surfaces
+        # immediately as a non-zero exit; otherwise the runner exits
+        # with whatever pytest's last status was, which we want.
+        #
+        # Cycle F Sprint 2 — also install hypothesis (Property-based
+        # critic) + pytest-cov + coverage (branch-coverage Reflexion
+        # signal).  ~2 MB / +5 s on first install; cached thereafter.
+        "test_install_prefix": (
+            "set -e; "
+            "PIP_ROOT_USER_ACTION=ignore "
+            "PIP_DISABLE_PIP_VERSION_CHECK=1 "
+            "pip install --quiet --no-cache-dir "
+            "--disable-pip-version-check "
+            "--root-user-action=ignore "
+            "--target=/tmp/pip-test-prefix "
+            "pytest pytest-mock pytest-cov coverage hypothesis; "
+            "export PYTHONPATH=/tmp/pip-test-prefix:.; "
+        ),
+        # `exec` so pytest's exit code becomes the shell's exit code
+        # (no echo / no fallback shadowing).  -rN summary; --tb=short
+        # readable for the reviewer; --maxfail=20 so tester typos
+        # don't bail on test 1.
+        #
+        # Cycle F Sprint 2 — `--cov=. --cov-branch --cov-report=json
+        # :.coverage.json` emits a JSON report next to the test file.
+        # `coverage_reader.py` parses it; missing branches flow back
+        # to the coder via the reflexion feedback bundle.  We keep
+        # `--cov-fail-under` OFF — coverage is a feedback signal, not
+        # a hard gate (would block legitimate easy-task deliverables).
+        "test_cmd": (
+            "exec python -m pytest -rN --tb=short --no-header --maxfail=20 "
+            "--cov=. --cov-branch --cov-report=json:.coverage.json "
+            "test_main.py"
+        ),
+        "default_timeout_s": 120,
+    },
+    "javascript": {
+        "image": "node:20-slim",
+        "test_filename": "main.test.mjs",
+        "impl_filename": "main.mjs",
+        # node:test ships with Node 18+; no install needed for the
+        # canonical runner.  Tester is told (per JS ground rules) to
+        # use ``import { test } from "node:test"``.
+        "test_install_prefix": "set -e; ",
+        "test_cmd": "exec node --test main.test.mjs",
+        "default_timeout_s": 60,
+    },
+    "typescript": {
+        "image": "node:20-slim",
+        "test_filename": "main.test.ts",
+        "impl_filename": "main.ts",
+        "test_install_prefix": "set -e; ",
+        "test_cmd": "exec npx -y -p typescript -p tsx tsx --test main.test.ts",
+        "default_timeout_s": 120,
+    },
+    "go": {
+        "image": "golang:1.22-alpine",
+        "test_filename": "main_test.go",
+        "impl_filename": "main.go",
+        "test_install_prefix": "set -e; go mod init sandbox_test 2>/dev/null || true; ",
+        "test_cmd": "exec go test -v ./...",
+        "default_timeout_s": 90,
+    },
+    "rust": {
+        "image": "rust:1.78-slim",
+        # Rust convention puts tests in a #[cfg(test)] mod inside the
+        # source file.  We accept either:
+        #   (a) a separate test file (test_main.rs) — append it to
+        #       main.rs as an inline mod, OR
+        #   (b) tests already embedded in main.rs (preferred per
+        #       _RUST_GROUND_RULES) — write tester output to a
+        #       comment-only file and just compile + test main.rs.
+        "test_filename": "tests_appendix.rs",
+        "impl_filename": "main.rs",
+        "test_install_prefix": (
+            "set -e; cat tests_appendix.rs >> main.rs; "
+            "rustc --test main.rs -o /tmp/test_bin; "
+        ),
+        "test_cmd": "exec /tmp/test_bin",
+        "default_timeout_s": 120,
+    },
+    "cpp": {
+        "image": "gcc:13",
+        "test_filename": "test_main.cpp",
+        "impl_filename": "main.cpp",
+        # No standard test framework in gcc image; tester is told to
+        # use simple ``assert.h`` based test functions called from
+        # main.  Falls back to compile-and-run.
+        "test_install_prefix": (
+            "set -e; "
+            "g++ -O0 -g -std=c++17 test_main.cpp -o /tmp/test_bin; "
+        ),
+        "test_cmd": "exec /tmp/test_bin",
+        "default_timeout_s": 90,
+    },
+    # Cycle D — C tests use assert.h (same pattern as C++).
+    "c": {
+        "image": "gcc:13",
+        "test_filename": "test_main.c",
+        "impl_filename": "main.c",
+        "test_install_prefix": (
+            "set -e; "
+            "gcc -O0 -g -std=c11 test_main.c -o /tmp/test_bin; "
+        ),
+        "test_cmd": "exec /tmp/test_bin",
+        "default_timeout_s": 60,
+    },
+    # Cycle D — Ruby tests via the built-in Test::Unit / Minitest
+    # framework that ships with Ruby's stdlib (no install needed).
+    "ruby": {
+        "image": "ruby:3.3-slim",
+        "test_filename": "test_main.rb",
+        "impl_filename": "main.rb",
+        "test_install_prefix": "set -e; ",
+        "test_cmd": "exec ruby test_main.rb",
+        "default_timeout_s": 60,
+    },
+    # Cycle D — PHP tests via the built-in assert() — sandbox
+    # doesn't pull PHPUnit (composer install is heavy).  Tester is
+    # told to use ``assert(...)`` calls.
+    "php": {
+        "image": "php:8.3-cli-alpine",
+        "test_filename": "test_main.php",
+        "impl_filename": "main.php",
+        "test_install_prefix": "set -e; ",
+        "test_cmd": "exec php test_main.php",
+        "default_timeout_s": 60,
+    },
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Result type
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +439,12 @@ class ExecutionResult:
     # `success=False` because the implementation gate should treat
     # skipped runs as neutral, not as a failure that lowers the score.
     skipped: bool = False
+    # Cycle F Sprint 2 — pytest-cov JSON report harvested from
+    # `.coverage.json` in the workdir BEFORE the workdir is cleaned
+    # up.  None if coverage didn't run (e.g. non-Python language,
+    # `test_mode=False`, or the install of pytest-cov failed).  The
+    # engine reads this via coverage_reader.parse_coverage_json().
+    coverage_json: Optional[Dict[str, Any]] = None
 
     @property
     def success(self) -> bool:
@@ -202,6 +463,9 @@ class ExecutionResult:
             "language": self.language,
             "success": self.success,
             "skipped": self.skipped,
+            # We intentionally DON'T include coverage_json in to_dict
+            # — it's structured JSON, not a feedback string.  The
+            # engine reads it directly from the dataclass field.
         }
 
     def to_feedback_str(self) -> str:
@@ -278,6 +542,88 @@ class ExecutionSandbox:
         if os.path.isdir("/sandbox-shared"):
             return "/sandbox-shared"
         return None  # tempfile.mkdtemp default
+
+    # ── Cycle C Sprint 5 Day 2 — security posture introspection ──────────
+
+    def security_posture(self) -> dict[str, Any]:
+        """Snapshot of the active sandbox hardening configuration.
+
+        Backs ``GET /api/code/diagnostics`` (`sandbox.security` block)
+        and the "Sandbox: hardened" badge in the frontend.  Pure
+        introspection — no side effects, no subprocess calls.
+
+        Returned shape::
+
+            {
+              "docker_host": "tcp://amor-docker-proxy:2375" | "",
+              "via_proxy": bool,
+              "flags_active": {
+                "no_new_privileges": True,
+                "read_only": True,
+                "memory_limit": "256m",
+                "cpu_quota": 50000,
+                "default_network": "none",   # bridge only when installing
+                "tmpfs": "/tmp:size=384m,exec",
+                "cap_drop_all": False,        # Day 3
+                "pids_limit": None,           # Day 3
+                "seccomp_profile": None,      # Day 3
+              },
+              "score": int,                  # 0-10, higher = harder
+              "level": "baseline" | "hardened" | "max",
+            }
+        """
+        docker_host = (
+            os.environ.get("DOCKER_HOST")
+            or os.environ.get("AMOR_DOCKER_HOST")
+            or ""
+        ).strip()
+        via_proxy = docker_host.startswith("tcp://") and "proxy" in docker_host
+
+        flags = {
+            "no_new_privileges": True,
+            "read_only": True,
+            "memory_limit": self._memory_limit,
+            "cpu_quota": self._cpu_quota,
+            "default_network": "none",
+            "tmpfs": f"/tmp:size={_tmpfs_size_mb()}m,exec",
+            # Cycle C Sprint 5 Day 3 — flipped on for every sandbox run.
+            "cap_drop_all": True,
+            "pids_limit": 128,
+            # We rely on Docker's BUILT-IN default seccomp profile,
+            # which already blocks ~60 dangerous syscalls (mount,
+            # ptrace, modify_ldt, kexec_*, init_module, ...).  No
+            # custom JSON shipped — tightening further than the
+            # default would be premature without measured user impact.
+            "seccomp_profile": "docker-default",
+        }
+
+        # Quick scoring: each enabled hardening flag = 1, capped at 10.
+        score = 0
+        score += 1 if flags["no_new_privileges"] else 0
+        score += 1 if flags["read_only"] else 0
+        score += 1 if flags["memory_limit"] else 0
+        score += 1 if flags["cpu_quota"] else 0
+        score += 1 if flags["default_network"] == "none" else 0
+        score += 1 if flags["tmpfs"] else 0
+        score += 1 if flags["cap_drop_all"] else 0
+        score += 1 if flags["pids_limit"] else 0
+        score += 1 if flags["seccomp_profile"] else 0
+        score += 1 if via_proxy else 0
+
+        if score >= 9:
+            level = "max"
+        elif score >= 7:
+            level = "hardened"
+        else:
+            level = "baseline"
+
+        return {
+            "docker_host": docker_host,
+            "via_proxy": via_proxy,
+            "flags_active": flags,
+            "score": score,
+            "level": level,
+        }
 
     # ── Image management ──────────────────────────────────────────────────
 
@@ -390,13 +736,17 @@ class ExecutionSandbox:
         install_packages: list[str] | None = None,
         timeout: int | None = None,
         stdin_data: str | None = None,
+        test_mode: bool = False,
     ) -> ExecutionResult:
         """
         Execute code in an isolated Docker container.
 
         Parameters
         ----------
-        code               : Source code to run.
+        code               : Source code to run.  When ``test_mode`` is
+                             ``True``, this is the TEST file; the
+                             implementation must be passed via
+                             ``extra_files["main.<ext>"]``.
         language           : Language key (see LANGUAGE_RUNNERS).
         extra_files        : Map of {filename: content} for additional
                              files mounted alongside `code`.
@@ -404,6 +754,11 @@ class ExecutionSandbox:
                              Currently supported for python / js / ts.
         timeout            : Seconds before the container is killed.
         stdin_data         : Optional input piped to stdin.
+        test_mode          : Cycle D — when True, run the language's
+                             test runner (pytest / node:test / go test
+                             / cargo test / etc) over ``code`` against
+                             the implementation passed in
+                             ``extra_files``.  See ``TEST_RUNNERS``.
         """
         # v8 — short-circuit when Docker is known-unreachable. Without
         # this, the subprocess call below raises FileNotFoundError and
@@ -425,17 +780,44 @@ class ExecutionSandbox:
             )
 
         lang = language.lower().strip()
-        cfg = LANGUAGE_RUNNERS.get(lang)
-        if not cfg:
-            return ExecutionResult(
-                exit_code=1,
-                stdout="",
-                stderr="",
-                error=(
-                    f"Unsupported language: {language!r}. Supported: {sorted(LANGUAGE_RUNNERS)}"
-                ),
-                language=language,
-            )
+
+        # Cycle D — test_mode swaps the runner config to TEST_RUNNERS
+        # and rewires filename / cmd / install prefix accordingly.
+        if test_mode:
+            test_cfg = TEST_RUNNERS.get(lang)
+            if not test_cfg:
+                return ExecutionResult(
+                    exit_code=0,
+                    stdout="",
+                    stderr=(
+                        f"test runner not configured for language={lang!r}; "
+                        "test phase skipped."
+                    ),
+                    error="test_runner_unavailable",
+                    duration_ms=0,
+                    language=language,
+                    skipped=True,
+                )
+            cfg = {
+                "image": test_cfg["image"],
+                "filename": test_cfg["test_filename"],
+                "cmd": ["sh", "-c",
+                        test_cfg["test_install_prefix"] + test_cfg["test_cmd"]],
+                "default_timeout_s": test_cfg.get("default_timeout_s", 90),
+                "_test_impl_filename": test_cfg["impl_filename"],
+            }
+        else:
+            cfg = LANGUAGE_RUNNERS.get(lang)
+            if not cfg:
+                return ExecutionResult(
+                    exit_code=1,
+                    stdout="",
+                    stderr="",
+                    error=(
+                        f"Unsupported language: {language!r}. Supported: {sorted(LANGUAGE_RUNNERS)}"
+                    ),
+                    language=language,
+                )
 
         # Phase 17 Commit O — per-language timeout map.  Caller's
         # explicit ``timeout=`` always wins; otherwise fall back to
@@ -489,8 +871,25 @@ class ExecutionSandbox:
             if install_packages:
                 if lang == "python":
                     pkgs = " ".join(f'"{p}"' for p in install_packages)
+                    # Cycle B Commit V — silence the noisy
+                    # "WARNING: Running pip as the 'root' user can
+                    # result in broken permissions..." + the
+                    # "[notice] A new release of pip is available"
+                    # upgrade reminder that pip prints to stderr inside
+                    # the sandbox.  The container is ephemeral and
+                    # root is the only available uid; both lines are
+                    # cosmetic but they stamp every build's stderr
+                    # panel and confuse operators reading diagnostics.
+                    # Disable via env vars (covers ``pip install``
+                    # invocation) AND the ``--root-user-action=ignore``
+                    # / ``--disable-pip-version-check`` CLI flags
+                    # (pip ≥ 22.1).
                     install_prefix = (
+                        "PIP_ROOT_USER_ACTION=ignore "
+                        "PIP_DISABLE_PIP_VERSION_CHECK=1 "
                         "pip install --quiet --no-cache-dir "
+                        "--disable-pip-version-check "
+                        "--root-user-action=ignore "
                         f"--target=/tmp/pip-prefix {pkgs} && "
                         "export PYTHONPATH=/tmp/pip-prefix && "
                     )
@@ -543,6 +942,13 @@ class ExecutionSandbox:
             # untouched (and, critically, leaves pip itself
             # importable so subsequent runs aren't poisoned).
             install_mode = bool(install_packages)
+            # Cycle D — test_mode runners ALWAYS need network so the
+            # test framework (pytest / vitest / etc) can be fetched
+            # from PyPI / npm.  Otherwise pip install fails with
+            # "Failed to establish a new connection" and the runner
+            # masks the real failure under ``echo EXIT=$?``.
+            if test_mode:
+                install_mode = True
             network_mode = "bridge" if install_mode else "none"
             extra_tmpfs: list[str] = []
 
@@ -556,6 +962,22 @@ class ExecutionSandbox:
                 network_mode,
                 "--security-opt",
                 "no-new-privileges",
+                # Cycle C Sprint 5 Day 3 — drop every Linux capability.
+                # The runner images don't need any (no setuid, no raw
+                # sockets, no mount, no module loads).  Combined with
+                # ``no-new-privileges`` this forecloses the entire
+                # capability-based escape surface.  Tested with the
+                # full Sprint 0 corpus + HumanEval+ 50 — no regression
+                # on ``pip install --target`` or arbitrary Python /
+                # Node code.
+                "--cap-drop",
+                "ALL",
+                # Hard cap on PIDs so a fork bomb can't exhaust the
+                # host's process table.  128 is well above the natural
+                # working-set of any pipeline phase (Python: ~10
+                # threads, Node: ~5).
+                "--pids-limit",
+                "128",
                 "--memory",
                 self._memory_limit,
                 "--memory-swap",
@@ -564,7 +986,17 @@ class ExecutionSandbox:
                 str(self._cpu_quota),
                 "--read-only",
                 "--tmpfs",
-                "/tmp:size=64m,exec",
+                # Cycle C Sprint 2 Day 2 — bumped 64m → 384m so
+                # ``pip install --target=/tmp/pip-prefix numpy`` has
+                # room.  v18.1.2 (Cycle G) further bumped to 768m
+                # default after HumanEval+ historical runs (5/5/2026
+                # 00:59-01:07) failed at install with [Errno 28]
+                # No space left on device — numpy's transient wheel
+                # staging in pip's TMPDIR (also /tmp) was hitting
+                # the 384m ceiling on concurrent / cold-cache cases.
+                # Tunable via `code_sandbox_tmpfs_size_mb` setting
+                # (env `AMOR_CODE_SANDBOX_TMPFS_SIZE_MB`).
+                f"/tmp:size={_tmpfs_size_mb()}m,exec",
                 *extra_tmpfs,
                 *volume_args,
                 "--workdir",
@@ -629,6 +1061,19 @@ class ExecutionSandbox:
             except Exception:  # pragma: no cover
                 pass
 
+            # Cycle F Sprint 2 — harvest pytest-cov JSON BEFORE the
+            # workdir is rmtree'd in the finally clause.  Silent on
+            # absence (non-Python, non-test runs, or coverage-install
+            # failure — none of which should block the result return).
+            coverage_payload: Optional[Dict[str, Any]] = None
+            try:
+                cov_path = os.path.join(workdir, ".coverage.json")
+                if os.path.isfile(cov_path):
+                    with open(cov_path, "r", encoding="utf-8") as _cf:
+                        coverage_payload = json.load(_cf)
+            except (OSError, json.JSONDecodeError, ValueError):
+                coverage_payload = None
+
             return ExecutionResult(
                 exit_code=124 if timed_out else (proc.returncode or 0),
                 stdout=stdout_b.decode("utf-8", errors="replace"),
@@ -636,6 +1081,7 @@ class ExecutionSandbox:
                 timed_out=timed_out,
                 duration_ms=duration_ms,
                 language=lang,
+                coverage_json=coverage_payload,
             )
 
         except FileNotFoundError as exc:

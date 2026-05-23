@@ -1,4 +1,4 @@
-import { type Component, type JSX, splitProps } from "solid-js";
+﻿import { type Component, type JSX, splitProps } from "solid-js";
 
 export interface KbdProps extends JSX.HTMLAttributes<HTMLElement> {
   /** Auto-substitutes ``Mod`` for the platform-correct meta key glyph
@@ -56,8 +56,8 @@ export const Kbd: Component<KbdProps> = (props) => {
     <kbd
       class={[
         "inline-flex h-5 items-center rounded-sm border px-1.5",
-        "border-border-subtle bg-bg-tertiary",
-        "font-mono text-[0.7rem] font-medium text-text-secondary",
+        "border-border-subtle bg-bg-elevated-v25",
+        "font-mono text-[0.7rem] font-medium text-text-body",
         local.class ?? "",
       ].join(" ")}
       {...rest}

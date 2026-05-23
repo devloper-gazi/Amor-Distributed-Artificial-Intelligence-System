@@ -1,10 +1,23 @@
-import { type Component, For, Show, createEffect } from "solid-js";
+﻿import { type Component, For, Show, createEffect } from "solid-js";
 import type { ChatTurn } from "../../lib/types";
+import { ApprovalPrompt } from "./ApprovalPrompt";
 import { MessageBubble } from "./MessageBubble";
+// Cycle UI v2.5 Phase 2 — Build-engine tool-call card.  Replaces the
+// previous behaviour of UNIFIED_REDUCER appending markdown fences
+// for code_ready/test_ready/execution_result/review_ready events.
+import { ToolCallCardBuild } from "./ToolCallCardBuild";
 
 interface MessageThreadProps {
   turns: ChatTurn[];
   emptyState?: import("solid-js").JSX.Element;
+  /** Optional message-action handlers forwarded to every bubble.
+   *  Day 3 introduces the hover-actions bar (copy / edit /
+   *  regenerate / branch / rate); each handler is independent and
+   *  any can be omitted — the bubble omits the corresponding button. */
+  onEdit?: (turn: ChatTurn) => void;
+  onRegenerate?: (turn: ChatTurn) => void;
+  onBranch?: (turn: ChatTurn) => void;
+  onRate?: (turn: ChatTurn, value: 0 | 1 | -1) => void;
 }
 
 /**
@@ -54,7 +67,7 @@ export const MessageThread: Component<MessageThreadProps> = (props) => {
         fallback={
           <div class="flex h-full items-center justify-center px-8 py-12">
             {props.emptyState ?? (
-              <div class="max-w-md text-center text-sm text-text-tertiary">
+              <div class="max-w-md text-center text-sm text-text-subtle">
                 No messages yet.  Type below to start.
               </div>
             )}
@@ -62,7 +75,31 @@ export const MessageThread: Component<MessageThreadProps> = (props) => {
         }
       >
         <For each={props.turns}>
-          {(turn) => <MessageBubble turn={turn} />}
+          {(turn) => {
+            // Cycle UI v2.5 Phase 2 — route to one of three renderers
+            // depending on the turn's role + payload:
+            //   1. role=="approval" + approval payload → ApprovalPrompt
+            //      (Cycle F Sprint 5 inline approval card; manages own
+            //      resolution via POST /api/approval/{request_id}).
+            //   2. role=="tool" + buildCard → ToolCallCardBuild
+            //      (Build pipeline structured tool-call card).
+            //   3. everything else → MessageBubble (default).
+            if (turn.role === "approval" && turn.approval) {
+              return <ApprovalPrompt payload={turn.approval} />;
+            }
+            if (turn.role === "tool" && turn.buildCard) {
+              return <ToolCallCardBuild card={turn.buildCard} />;
+            }
+            return (
+              <MessageBubble
+                turn={turn}
+                onEdit={props.onEdit}
+                onRegenerate={props.onRegenerate}
+                onBranch={props.onBranch}
+                onRate={props.onRate}
+              />
+            );
+          }}
         </For>
         <div class="h-2" aria-hidden="true" />
       </Show>

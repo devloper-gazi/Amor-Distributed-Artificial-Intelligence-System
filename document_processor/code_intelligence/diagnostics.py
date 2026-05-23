@@ -192,7 +192,10 @@ async def collect_models(*, base_url: str | None = None) -> dict:
         )
         reg = CodeModelRegistry(url)
         installed = await reg.probe()
-        roles = ["planner", "coder", "tester", "debugger", "critic"]
+        # v17 PR #1 — use architect/editor (the engine fires those at
+        # phase boundaries).  Keeps the diagnostics role table in
+        # sync with what the live pipeline actually routes.
+        roles = ["architect", "editor", "tester", "debugger", "critic"]
         chosen = reg.select_models_for_session(
             roles, effort=getattr(settings, "code_default_effort", "medium"),
             spread=True,
@@ -227,6 +230,12 @@ async def collect_sandbox(probe: bool = True) -> dict:
         from .sandbox import ExecutionSandbox  # noqa: PLC0415
         sb = ExecutionSandbox()
         out["workdir_root"] = sb._workdir_root  # noqa: SLF001
+        # Cycle C Sprint 5 Day 2 — security posture (proxy / cap-drop /
+        # seccomp / etc).  Pure introspection — no probe latency.
+        try:
+            out["security"] = sb.security_posture()
+        except Exception as exc:  # pragma: no cover
+            out["security"] = {"error": f"{type(exc).__name__}: {exc}"}
         if probe:
             t0 = time.monotonic()
             ok = await sb.docker_available(force_refresh=False)

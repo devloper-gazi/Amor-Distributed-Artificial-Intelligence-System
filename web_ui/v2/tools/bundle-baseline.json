@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "captured_at_iso": "2026-05-05T05:03:32.958Z",
+  "total_js_gz_bytes": 98506,
+  "max_growth_bytes": 40960,
+  "files": {
+    "diff2html.D_GoJOkl.js": 12278,
+    "DiffBlock.CCUexAIq.js": 1056,
+    "highlight.l0sNRNKZ.js": 68,
+    "index.BcvUNRMk.js": 85104
+  }
+}

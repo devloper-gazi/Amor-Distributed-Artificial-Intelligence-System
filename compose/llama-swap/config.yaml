@@ -1,0 +1,199 @@
+# Sprint 1 v18 — KV-cache quantization: Q8_0 variant (CONSERVATIVE).
+#
+# Differences vs the q4_0 sibling:
+#   * `-ctk q8_0 -ctv q8_0` — ~0.7 GB more VRAM at 16K context per
+#     model, near-zero PPL regression on Qwen2.5-Coder (smcleod.net
+#     benchmark).  Tighter VRAM budget when Sprint 3 LoRA adapters
+#     + Sprint 4 BGE-reranker land, but safer for v18 launch if the
+#     Sprint 1 A/B baseline shows the q4_0 PPL hit costs >0.15 mean
+#     correctness on the Sprint-0 corpus.
+#
+# Common to both variants:
+#   * --cache-reuse 256                — prefix cache reuse
+#   * -fa on                          — Flash Attention fast path
+#   * --parallel 2                    — AMOR's nominal concurrency
+#   * -ub 2048 -b 4096                — Ada Lovelace 8 GB tuning
+#
+# Note: the host-memory prompt cache (llama.cpp PR #16391) is now
+# ON BY DEFAULT at 8192 MiB in current llama-server builds (the
+# roadmap's `--cram 512` would actually SHRINK the cache below
+# the default).  Override with `--cache-ram <MiB>` only if you
+# need to reduce host-RAM usage.
+#
+# Selected via env var AMOR_KV_QUANT=q8_0 (default) — see
+# tools/llamaswap/select_kv_quant.py for the symlink/copy mechanic.
+
+healthCheckTimeout: 90
+logLevel: info
+metricsMaxInMemory: 500
+startPort: 9100
+
+models:
+  "amor-architect":
+    name: "DeepSeek R1 0528 Qwen3 8B"
+    cmd: |
+      llama-server
+      -m /models/llamaswap/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf
+      --port ${PORT}
+      -ngl 99
+      --ctx-size 16384
+      --cache-reuse 256
+      -fa on
+      -ctk q8_0 -ctv q8_0
+      --parallel 2
+      --reasoning-format deepseek
+      --jinja
+      --temp 0.6 --top-p 0.95 --min-p 0
+      -ub 2048 -b 4096
+      --metrics
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 1800
+    checkEndpoint: /health
+    aliases:
+      - "architect"
+      - "deepseek-r1-qwen3"
+      - "deepseek-r1:7b"
+      - "deepseek-r1:8b"
+
+  "amor-editor":
+    name: "Qwen2.5-Coder 7B"
+    cmd: |
+      llama-server
+      -m /models/llamaswap/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf
+      --port ${PORT}
+      -ngl 99
+      --ctx-size 16384
+      --cache-reuse 256
+      -fa on
+      -ctk q8_0 -ctv q8_0
+      --parallel 2
+      --jinja
+      -ub 2048 -b 4096
+      --metrics
+      # Cycle F Sprint 3 — LoRA adapter mount points (PR #10994).
+      # Adapter IDs are assigned in mount order: coder=0, tester=1,
+      # debugger=2.  Keep IDs stable across reloads so
+      # `settings.code_lora_role_adapters` doesn't drift.
+      # `--lora-init-without-apply` means the adapter is LOADED but
+      # not active until a request sends `"lora":[{"id":N,"scale":1.0}]`.
+      # Uncomment + restart llama-swap after running
+      # `tools/training/orpo_role_adapter.py --role <coder|tester|debugger>`.
+      #
+      #--lora-init-without-apply /models/lora/coder-r16.gguf
+      #--lora-init-without-apply /models/lora/tester-r16.gguf
+      #--lora-init-without-apply /models/lora/debugger-r16.gguf
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 1800
+    checkEndpoint: /health
+    aliases:
+      - "editor"
+      - "qwen-coder"
+      - "qwen2.5-coder:7b"
+      - "qwen2.5-coder"
+
+  "amor-fast":
+    name: "Qwen3 8B non-thinking"
+    cmd: |
+      llama-server
+      -m /models/llamaswap/Qwen3-8B-Q4_K_M.gguf
+      --port ${PORT}
+      -ngl 99
+      --ctx-size 8192
+      --cache-reuse 256
+      -fa on
+      -ctk q8_0 -ctv q8_0
+      --parallel 2
+      --jinja
+      -ub 2048 -b 4096
+      --metrics
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 600
+    checkEndpoint: /health
+    aliases:
+      - "fast"
+      - "qwen3"
+      - "qwen3:8b"
+      - "qwen2.5:7b"
+
+  # Cycle H.1 — BitNet b1.58 3B shadow planner (CPU-only).
+  #
+  # Microsoft's `bitnet-b1.58-2B-4T-gguf` repo ships only one tensor
+  # variant (`ggml-model-i2_s.gguf`) packaged with the deprecated
+  # `TYPE_IQ4_NL_4_4` quantisation — current llama.cpp ≥b9010 REMOVED
+  # that type (commit log: "use IQ4_NL with runtime repacking").
+  # Microsoft's setup_env.py codegen wrapper that would produce a
+  # compatible build hits `NotImplementedError` for the 2B-4T model
+  # shape (no pre-tuned kernel config matches its tensor layout).
+  #
+  # Workaround: use the 3B b1.58 GGUF in standard Q3_K_S quantisation
+  # from `BoscoTheDog/bitnet_b1_58_3B_gguf` — same BitNet architecture
+  # (gemma-style i1.58 ternary weights), packaged in mainline-llama.cpp-
+  # compatible format, ~1.8 GB on disk.  Shadow-mode quality is OK; the
+  # main planner is the user-visible path so the slight quality hit vs
+  # the unreleased 2B-4T variant doesn't matter for shadow comparison.
+  #
+  # Plan-agent locked: 8s hard timeout + silent fallback to the main
+  # planner; shadow mode never blocks user requests.  ttl=600s short
+  # keepalive keeps VRAM free when shadow traffic is sparse.  -ngl 0
+  # forces full CPU execution (BitNet shadow is the energy-efficiency
+  # comparator; GPU offload defeats the purpose).
+  # Cycle I.1 — LFM2-2.6B "associative cortex" (Liquid AI).
+  #
+  # Routed via the cortex role when prompt+context exceeds
+  # ``code_cortex_threshold_tokens`` (default 16K).  Q4_K_M
+  # quantisation ~1.5 GB on disk, ~2 GB resident VRAM with full
+  # offload — well under the 8 GB envelope.  ctx=32K matches the
+  # vendor-published context window.  Plan-agent locked: 2-week
+  # SWE-bench-Lite shadow gate before promote; ≥2pp resolved-rate
+  # drop = revert (no production routing flip until measured).
+  "amor-cortex-lfm2":
+    name: "LFM2 2.6B (cortex)"
+    cmd: |
+      llama-server
+      -m /lfm2-models/LFM2-2.6B-Q4_K_M.gguf
+      --port ${PORT}
+      -ngl 99
+      --ctx-size 32768
+      --cache-reuse 256
+      -fa on
+      -ctk q8_0 -ctv q8_0
+      --parallel 2
+      --jinja
+      -ub 2048 -b 4096
+      --metrics
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 1200
+    checkEndpoint: /health
+    aliases:
+      - "cortex"
+      - "lfm2"
+      - "lfm2:2.6b-q4"
+
+  "amor-bitnet-shadow":
+    name: "BitNet b1.58 3B (shadow planner)"
+    cmd: |
+      llama-server
+      -m /bitnet-models/bitnet_b1_58-3b.Q3_K_S.gguf
+      --port ${PORT}
+      -ngl 0
+      --ctx-size 2048
+      --threads 8
+      --jinja
+      -ub 1024 -b 2048
+      --metrics
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 600
+    checkEndpoint: /health
+    aliases:
+      - "bitnet"
+      - "bitnet-b1.58"
+      - "bitnet-b1.58-2b4t"
+      - "bitnet-b1.58-3b"
+      - "bitnet-shadow"
+
+groups:
+  resident:
+    swap: false
+    exclusive: false
+    members:
+      - "amor-architect"

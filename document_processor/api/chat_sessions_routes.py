@@ -88,6 +88,13 @@ class MessageAppendRequest(BaseModel):
         None, max_length=64,
         description="Optional dedupe key — POST safe to retry",
     )
+    # Cycle UI v2.7.1 (D3 + D9) — attachment refs persisted on the
+    # message doc.  Denormalized name/mime/size + canonical
+    # attachment_id ref so message replay stays truthful even if the
+    # underlying attachments_meta doc is TTL-pruned.  Schema mirrors
+    # MessageAttachmentRef in attachment_models.py — passed through
+    # as-is into chat_messages.attachments[].
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, max_length=10)
 
 
 class SessionSummary(BaseModel):
@@ -259,6 +266,155 @@ async def get_session(
         pinned=bool(session.get("pinned", False)),
         messages=messages,
     )
+
+
+@router.get("/{session_id}/branch")
+async def get_active_branch(
+    session_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI 2026-05-20 — Return the active branch (chronological,
+    root-first) for a conversation via ``$graphLookup``.  Falls back
+    to a flat chronological read when no ``current_leaf_id`` is set
+    (legacy session, pre-Cycle-UI-backfill).
+
+    Powers the UnifiedChat thread hydration on deep-link
+    (``GET /?c=<sid>``) and the BranchNavigator sibling counter."""
+    client_id = _require_client_id(x_client_id)
+    try:
+        msgs = await chat_store.get_active_branch(
+            client_id=client_id,
+            user_id=user.id,
+            session_id=session_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Normalize the cursor docs into a UI-friendly shape: drop the
+    # internal $graphLookup `_depth` field, format timestamps, and
+    # expose the new branching fields (parent_id, state, mode,
+    # classifier_meta) so the frontend can render the BranchNavigator
+    # without a second roundtrip.
+    rendered: List[Dict[str, Any]] = []
+    for m in msgs:
+        created = m.get("created_at")
+        rendered.append({
+            "id": str(m.get("_id")),
+            "role": m.get("role"),
+            "content": m.get("content"),
+            "format": m.get("format", "text"),
+            "createdAt": _dt_utc(created) if isinstance(created, datetime) else created,
+            "parent_id": m.get("parent_id"),
+            "state": m.get("state", "finished"),
+            "mode": m.get("mode"),
+            "classifier_meta": m.get("classifier_meta"),
+            "extras": m.get("extras") or {},
+        })
+    return {"messages": rendered, "count": len(rendered)}
+
+
+class LeafFlipRequest(BaseModel):
+    """Cycle UI Phase 4 — request body for POST /api/sessions/{id}/leaf.
+
+    Pointing ``message_id`` at one of a parent's siblings switches
+    the active branch.  ``null`` is allowed (sentinel = "no leaf",
+    i.e. an empty conversation).  Ownership of the message is NOT
+    verified here for performance; the auth + session-ownership
+    check on the wrapping endpoint is the protection layer."""
+    message_id: Optional[str] = Field(
+        default=None,
+        description="Target leaf message id (must belong to the same "
+                    "session_id) or null to clear the leaf.",
+    )
+
+
+@router.post("/{session_id}/leaf")
+async def set_current_leaf(
+    session_id: str,
+    req: LeafFlipRequest,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI Phase 4 — Flip the active branch by pointing
+    ``conversations.current_leaf_id`` at a different message.
+
+    Powers BranchNavigator's `< N/M >` UI: clicking an arrow
+    POSTs the sibling's ``_id`` here, after which the next
+    /branch read returns the new chain.
+
+    Validation: the supplied message_id must belong to this
+    session_id (we check by querying chat_messages — cheaper
+    than aggregation; one indexed lookup)."""
+    client_id = _require_client_id(x_client_id)
+    try:
+        session = await chat_store.get_session(
+            client_id=client_id, user_id=user.id,
+            session_id=session_id, include_messages=False,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if req.message_id is not None:
+        # Verify the message belongs to this session.  Avoids the
+        # cross-session leak where a malicious caller could try to
+        # bind another user's message id as their leaf.
+        db = await chat_store._db()
+        msg = await db["chat_messages"].find_one(
+            {"_id": req.message_id, "session_id": session_id},
+            projection={"_id": 1},
+        )
+        if not msg:
+            raise HTTPException(
+                status_code=400,
+                detail="message_id does not belong to this session",
+            )
+
+    await chat_store.set_current_leaf(
+        session_id=session_id, message_id=req.message_id,
+    )
+    return {
+        "session_id": session_id,
+        "current_leaf_id": req.message_id,
+        "previous_leaf_id": session.get("current_leaf_id"),
+    }
+
+
+@router.get("/{session_id}/siblings/{parent_id}")
+async def get_message_siblings(
+    session_id: str,
+    parent_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    user: User = Depends(get_current_user),
+):
+    """Cycle UI 2026-05-20 — List all sibling messages under
+    ``parent_id`` for the BranchNavigator's ``< 2/4 >`` counter.
+
+    The ``parent_id`` path segment uses the string literal
+    ``"root"`` to mean "siblings of root-level messages"
+    (parent_id IS NULL in MongoDB)."""
+    client_id = _require_client_id(x_client_id)
+    # Ownership check via get_session — cheap.
+    try:
+        await chat_store.get_session(
+            client_id=client_id, user_id=user.id, session_id=session_id,
+            include_messages=False,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    parent_lookup: Optional[str] = None if parent_id == "root" else parent_id
+    siblings = await chat_store.get_sibling_branches(
+        session_id=session_id, parent_id=parent_lookup,
+    )
+    rendered = [
+        {"id": str(s["_id"]), "role": s.get("role"),
+         "createdAt": _dt_utc(s["created_at"])
+                      if isinstance(s.get("created_at"), datetime)
+                      else s.get("created_at")}
+        for s in siblings
+    ]
+    return {"siblings": rendered, "count": len(rendered)}
 
 
 @router.post("/{session_id}/messages")

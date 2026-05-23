@@ -1,5 +1,6 @@
 import { type Component, Show } from "solid-js";
 import type { StreamStatus } from "../../lib/sse";
+import { t } from "../../i18n";
 
 interface ConnectionBannerProps {
   status: StreamStatus;
@@ -33,8 +34,8 @@ export const ConnectionBanner: Component<ConnectionBannerProps> = (props) => {
         <span class="motion-safe:animate-pulse motion-reduce:hidden">●</span>
         <span class="ml-2">
           {props.status === "offline"
-            ? "Reconnecting to backend…  Events may be delayed."
-            : "Reconnecting…"}
+            ? t("shell.offline_long")
+            : t("shell.offline")}
         </span>
       </div>
     </Show>

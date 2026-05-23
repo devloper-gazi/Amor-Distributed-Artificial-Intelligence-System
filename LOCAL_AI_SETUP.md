@@ -2,6 +2,20 @@
 
 **Complete autonomous research system optimized for RTX 4060 8GB VRAM + 16GB RAM**
 
+> **🆕 Cycle E v18 (2026-05-11):** the old `start.sh` / `start.ps1` /
+> `validate_setup.ps1` scripts are now thin shims forwarding to the new
+> cross-platform installer at `tools/setup/`.  See **`QUICK_START.md`**
+> for the one-page bootstrap and **`docs/setup_system.md`** for the
+> full operator reference.  Quick examples:
+>
+> ```bash
+> ./setup.sh install            # POSIX (Linux / macOS / Git-Bash / WSL)
+> .\setup.ps1 install           # Windows PowerShell
+> make install                  # Unix convenience
+> ./setup.sh doctor             # diagnose what's wrong
+> ./setup.sh verify             # live smoke against running stack
+> ```
+
 ---
 
 ## 🎯 System Overview

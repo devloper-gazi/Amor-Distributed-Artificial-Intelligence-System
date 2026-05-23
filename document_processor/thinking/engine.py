@@ -215,6 +215,8 @@ class ThinkingEngine:
         provider: Literal["local", "claude"],
         llm_call: LLMCall,
         on_event: Optional[EventCallback] = None,
+        phase_timeout_s: Optional[float] = None,
+        session_timeout_s: Optional[float] = None,
     ) -> None:
         self.prompt = prompt
         self.clarifications = clarifications or {}
@@ -225,6 +227,13 @@ class ThinkingEngine:
         self.llm_call = llm_call
         self._on_event = on_event or _noop_event
         self._budgets = _EFFORT_BUDGETS[self.effort]
+        # v18.1.5 (Cycle H gate-gap fix) — per-phase + session wall-clock
+        # caps to bound worst-case Sprint-0 latency.  Settings resolved
+        # lazily so tests can construct an engine without booting the full
+        # Pydantic settings tree; explicit kwargs override settings.
+        self._phase_timeout_s = phase_timeout_s if phase_timeout_s is not None else _resolve_phase_timeout()
+        self._session_timeout_s = session_timeout_s if session_timeout_s is not None else _resolve_session_timeout()
+        self._session_started_monotonic: Optional[float] = None
 
         self.phases: List[ThinkingPhase] = [
             ThinkingPhase("understand", "Understanding"),
@@ -259,12 +268,37 @@ class ThinkingEngine:
         runner: Callable[[], Awaitable[Dict[str, Any]]],
     ) -> Optional[Dict[str, Any]]:
         phase = self._phase_index[name]
+
+        # v18.1.5 — global session budget short-circuit.  If we've already
+        # spent the wall-clock budget on prior phases, skip this one with a
+        # clear marker so the UI shows "skipped (session budget exhausted)"
+        # rather than yet another timed-out phase.
+        if self._session_timeout_s > 0 and self._session_started_monotonic is not None:
+            elapsed = asyncio.get_event_loop().time() - self._session_started_monotonic
+            if elapsed >= self._session_timeout_s:
+                phase.status = "skipped"
+                phase.completed_at = _now()
+                phase.detail = {"reason": "session_budget_exhausted", "elapsed_s": round(elapsed, 1)}
+                await self._emit(
+                    {
+                        "type": "phase_skipped",
+                        "phase": name,
+                        "label": phase.label,
+                        "reason": "session_budget_exhausted",
+                    }
+                )
+                return None
+
         phase.status = "in_progress"
         phase.started_at = _now()
         await self._emit({"type": "phase_start", "phase": name, "label": phase.label})
 
         try:
-            result = await runner()
+            # v18.1.5 — per-phase wall-clock timeout.  0 → disabled (legacy).
+            if self._phase_timeout_s > 0:
+                result = await asyncio.wait_for(runner(), timeout=self._phase_timeout_s)
+            else:
+                result = await runner()
             phase.status = "completed"
             phase.completed_at = _now()
             phase.detail = result or {}
@@ -277,6 +311,23 @@ class ThinkingEngine:
                 }
             )
             return result
+        except asyncio.TimeoutError:
+            phase.status = "failed"
+            phase.completed_at = _now()
+            phase.detail = {"error": f"timeout_after_{self._phase_timeout_s:.0f}s", "timed_out": True}
+            logger.warning(
+                "thinking.phase_timeout phase=%s budget=%.0fs", name, self._phase_timeout_s,
+            )
+            await self._emit(
+                {
+                    "type": "phase_failed",
+                    "phase": name,
+                    "label": phase.label,
+                    "error": f"timeout_after_{self._phase_timeout_s:.0f}s",
+                    "timed_out": True,
+                }
+            )
+            return None
         except Exception as exc:
             phase.status = "failed"
             phase.completed_at = _now()
@@ -446,6 +497,9 @@ class ThinkingEngine:
     # ------------------------------------------------------------------ run
 
     async def run(self) -> Dict[str, Any]:
+        # v18.1.5 — anchor the session-wide wall-clock budget.  All
+        # per-phase decisions check elapsed time against this anchor.
+        self._session_started_monotonic = asyncio.get_event_loop().time()
         await self._run_phase("understand", self._phase_understand)
         if self.understanding:
             await self._run_phase("decompose", self._phase_decompose)
@@ -492,6 +546,29 @@ class ThinkingEngine:
 
 async def _noop_event(_event: Dict[str, Any]) -> None:
     return None
+
+
+def _resolve_phase_timeout() -> float:
+    """Resolve the per-phase wall-clock cap from settings, defaulting to
+    120s if the settings module fails to import (test environments).
+    Returns 0 to disable when settings is `None` or value is non-positive."""
+    try:
+        from ..config.settings import settings  # noqa: PLC0415
+        val = float(getattr(settings, "code_thinking_phase_timeout_s", 120.0))
+        return max(val, 0.0)
+    except Exception:
+        return 120.0
+
+
+def _resolve_session_timeout() -> float:
+    """Resolve the per-session wall-clock cap from settings, defaulting to
+    540s (9 min total, leaving headroom for the runner's 600s cap)."""
+    try:
+        from ..config.settings import settings  # noqa: PLC0415
+        val = float(getattr(settings, "code_thinking_session_timeout_s", 540.0))
+        return max(val, 0.0)
+    except Exception:
+        return 540.0
 
 
 def _slug(text: str) -> str:

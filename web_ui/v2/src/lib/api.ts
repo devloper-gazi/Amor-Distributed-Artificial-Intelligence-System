@@ -43,6 +43,26 @@ export function getAccessToken(): string | null {
   return _accessToken;
 }
 
+/** Stable per-browser client id used as the ``X-Client-Id`` header
+ *  every consortium / sentinel / chat-session API call requires.
+ *  Persisted in localStorage so the same id flows across reloads.
+ */
+export function getClientId(): string {
+  try {
+    let v = localStorage.getItem("amor.client_id");
+    if (!v) {
+      v =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `cli-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("amor.client_id", v);
+    }
+    return v;
+  } catch {
+    return `cli-${Date.now().toString(36)}`;
+  }
+}
+
 /** Subscribe to access-token changes.  Returns the unsubscribe
  *  function.  Used by the auth store + by the SSE wrapper to
  *  re-establish the EventSource when the token rotates. */
@@ -83,7 +103,11 @@ interface RefreshBody {
   user?: unknown;
 }
 
-/** Hit /api/auth/refresh.  Returns the new access_token or throws. */
+/** Hit /api/auth/refresh.  Returns the new access_token or throws.
+ *  On a hard 401 (no valid refresh cookie), broadcast the logout
+ *  via ``setAccessToken(null)`` so subscribers (auth store, SSE
+ *  wrapper, route guard) can cascade-clear their state instead of
+ *  leaving the UI in a half-authenticated zombie. */
 async function refreshAccessToken(): Promise<string> {
   const resp = await fetch("/api/auth/refresh", {
     method: "POST",
@@ -97,10 +121,12 @@ async function refreshAccessToken(): Promise<string> {
     } catch {
       // ignore
     }
+    setAccessToken(null);
     throw new AuthError(body);
   }
   const json = (await resp.json()) as RefreshBody;
   if (!json.access_token) {
+    setAccessToken(null);
     throw new AuthError(json);
   }
   setAccessToken(json.access_token);
@@ -145,6 +171,12 @@ async function call<T>(
   }
   if (_accessToken) {
     headers["Authorization"] = `Bearer ${_accessToken}`;
+  }
+  // X-Client-Id is required by consortium + sentinel + chat-session
+  // endpoints and accepted (ignored) by every other route.  Always
+  // include it unless the caller explicitly set it.
+  if (headers["X-Client-Id"] === undefined) {
+    headers["X-Client-Id"] = getClientId();
   }
 
   let resp: Response;
@@ -223,3 +255,118 @@ export const api = {
 };
 
 export type { FetchOptions };
+
+// ─── Cycle UI v2.7 (D13) — multipart attachment upload helper ────────
+
+export interface AttachmentUploadResponse {
+  attachment_id: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  status: "uploaded" | "scanned" | "expired";
+  text_extracted_preview?: string | null;
+  original_name: string;
+}
+
+/**
+ * Upload a single File to ``POST /api/attachments/upload``.  Uses
+ * ``XMLHttpRequest`` because ``fetch`` doesn't expose progress events
+ * before Streams API support landed cross-browser (Safari < 17 gap).
+ * onProgress fires with 0..1 fraction while the body uploads.
+ *
+ * Returns the canonical metadata so the composer can stash
+ * ``attachment_id`` against the chip state + later submit it as part
+ * of ``chat /start`` body.  Auth header attached automatically via
+ * the same Bearer token used by ``api.post`` (read from
+ * ``localStorage["amor.auth.token"]``).
+ *
+ * Errors:
+ *   * 415 — MIME rejected (server-side defence-in-depth).
+ *   * 413 — over 10 MB single-file cap.
+ *   * 401 — auth expired; caller should trigger refresh-then-retry.
+ * Throws an ``ApiError``-shaped object so consumers can switch on
+ * ``err.status``.
+ */
+export async function uploadAttachment(
+  file: File,
+  options?: {
+    sessionId?: string;
+    onProgress?: (fraction: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<AttachmentUploadResponse> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  if (options?.sessionId) form.append("session_id", options.sessionId);
+
+  return new Promise<AttachmentUploadResponse>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/attachments/upload");
+
+    // Auth: same Bearer token chain as `api.post`.  Cookie auth is
+    // fallback (FastAPI dependency reads both).
+    try {
+      const token = localStorage.getItem("amor.auth.token");
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    } catch {
+      // localStorage disabled — cookie auth still works.
+    }
+    xhr.withCredentials = true;
+
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && options?.onProgress) {
+        options.onProgress(ev.loaded / ev.total);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as AttachmentUploadResponse);
+        } catch (e) {
+          reject({ status: 500, message: "Invalid JSON response", body: xhr.responseText });
+        }
+      } else {
+        // Match ApiError shape so callers can `err.status` switch.
+        let body: unknown = undefined;
+        try { body = JSON.parse(xhr.responseText); } catch { body = xhr.responseText; }
+        reject({
+          status: xhr.status,
+          message: xhr.statusText || `Upload failed (${xhr.status})`,
+          body,
+        });
+      }
+    };
+    xhr.onerror = () => reject({ status: 0, message: "Network error" });
+    xhr.onabort = () => reject({ status: 0, message: "Upload aborted" });
+
+    if (options?.signal) {
+      options.signal.addEventListener("abort", () => xhr.abort());
+    }
+
+    xhr.send(form);
+  });
+}
+
+/** Convenience: upload an array of Files in parallel.  Returns the
+ *  list of attachment IDs in input order.  Partial failures throw
+ *  with the first error; callers responsible for retry semantics. */
+export async function uploadAttachments(
+  files: File[],
+  options?: {
+    sessionId?: string;
+    onItemProgress?: (index: number, fraction: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<AttachmentUploadResponse[]> {
+  return Promise.all(
+    files.map((f, i) =>
+      uploadAttachment(f, {
+        sessionId: options?.sessionId,
+        onProgress: options?.onItemProgress
+          ? (frac) => options.onItemProgress!(i, frac)
+          : undefined,
+        signal: options?.signal,
+      }),
+    ),
+  );
+}

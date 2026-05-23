@@ -156,6 +156,10 @@ class LocalAIResearchRequest(BaseModel):
         None, max_length=120,
         description="Override Ollama tag for this run (else OLLAMA_MODEL)",
     )
+    # Cycle UI v2.7.1 (D9) — user-uploaded attachment IDs. Resolver
+    # injects AMOR-ATTACH context blocks into `topic` before research
+    # planner sees it.  No-op when empty (legacy clients).
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 class LocalAIResearchResponse(BaseModel):
@@ -1334,13 +1338,47 @@ async def _call_ollama_uncached_with(
     if backend is not None and getattr(backend, "name", "") != "ollama":
         merged_opts = _merge_profile_options(max_tokens)
         effective_system = system or _resolve_system_prompt() or ""
+        extra_payload: dict[str, Any] = {
+            k: v for k, v in merged_opts.items()
+            if k not in ("temperature", "num_predict")
+        }
+        # Cycle F Sprint 3 — per-request LoRA adapter routing
+        # (llama.cpp PR #10994).  Attached only when the master gate
+        # is on AND the active role maps to an adapter ID.  When
+        # either condition fails the `lora` body field is omitted
+        # entirely (zero behaviour change for Sprint 2 deployments).
+        try:
+            from ..config.settings import settings as _settings  # noqa: PLC0415
+            from tools.lora_runtime import (  # noqa: PLC0415
+                lora_payload_for_role,
+                parse_role_adapter_map,
+            )
+            _lora_enabled = bool(getattr(_settings, "code_lora_enabled", False))
+            if _lora_enabled:
+                _adapters = parse_role_adapter_map(
+                    getattr(_settings, "code_lora_role_adapters", "{}")
+                )
+                _role = _ACTIVE_ROLE.get()
+                _scale = float(
+                    getattr(_settings, "code_lora_default_scale", 1.0)
+                )
+                _lora_payload = lora_payload_for_role(
+                    _role,
+                    enabled=True,
+                    adapters=_adapters,
+                    default_scale=_scale,
+                )
+                if _lora_payload:
+                    extra_payload["lora"] = _lora_payload
+                    logger.debug(
+                        "lora_attached role=%s payload=%s", _role, _lora_payload,
+                    )
+        except Exception as exc:  # pragma: no cover (defensive)
+            logger.warning("lora_attach_failed err=%s", exc)
         opts = ChatOptions(
             temperature=float(merged_opts.get("temperature", _OLLAMA_TEMPERATURE)),
             max_tokens=int(merged_opts.get("num_predict", max_tokens)),
-            extra={
-                k: v for k, v in merged_opts.items()
-                if k not in ("temperature", "num_predict")
-            },
+            extra=extra_payload,
         )
         try:
             return await backend.complete(
@@ -1518,7 +1556,7 @@ async def research_health():
         "ollama_model": OLLAMA_MODEL,
         "ollama_url": OLLAMA_BASE_URL,
         "details": details,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1539,7 +1577,7 @@ async def health_check():
             "ollama_available": status.get("ollama_available", False),
             "model_installed": status.get("model_installed", False),
             "models": status.get("models", []),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except HTTPException as e:
         logger.error(f"Ollama health check failed: {e.detail}")
@@ -1550,7 +1588,7 @@ async def health_check():
             "ollama_url": OLLAMA_BASE_URL,
             "ollama_model": OLLAMA_MODEL,
             "ollama_auto_pull": OLLAMA_AUTO_PULL,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
 
@@ -1610,6 +1648,27 @@ async def start_research(
         # Create session
         session_id = str(uuid4())
 
+        # Cycle UI v2.7.1 — resolve attachments into the research topic.
+        if request.attachment_ids:
+            try:
+                from .attachment_resolver import resolve_and_inject  # noqa: PLC0415
+                from .vision_capability import detect_vision_capability  # noqa: PLC0415
+                from ..infrastructure.chat_store import chat_store as _cs  # noqa: PLC0415
+                _db = await _cs._db()
+                _has_vision = await detect_vision_capability()
+                enriched, _img_refs, _msg_refs = await resolve_and_inject(
+                    _db, user_id=str(user.id),
+                    attachment_ids=request.attachment_ids,
+                    prompt=request.topic, has_vision_model=_has_vision,
+                )
+                request = request.model_copy(update={"topic": enriched})
+                logger.info(
+                    "research_start attachments_resolved n=%d session=%s",
+                    len(_msg_refs), session_id,
+                )
+            except Exception as exc:
+                logger.warning("research_start attachment_resolve_failed: %s", exc)
+
         # Server-side model resolution. Order:
         #   1. request.preferred_model (the picker JS sets this when the
         #      user explicitly chose a tag for this run)
@@ -1650,7 +1709,7 @@ async def start_research(
             "progress": 0,
             "current_agent": None,
             "current_task": "Initializing research",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             # Phase C — persistence + cancellation linkage
             "chat_session_id": request.chat_session_id,
             "query_record_id": request.query_record_id,
@@ -1865,7 +1924,7 @@ Return:
             session["confidence"] = confidence
             session["translated"] = translated_any
             session["depth"] = depth
-            session["completed_at"] = datetime.utcnow().isoformat()
+            session["completed_at"] = datetime.now(timezone.utc).isoformat()
             await _persist_session(session_id, session)
 
             logger.info(f"Quick research completed for session {session_id} with {len(scraped_content)} sources (translated: {translated_any})")
@@ -2079,7 +2138,7 @@ The summary should be clear, informative, and suitable for a general audience.""
         session["confidence"] = confidence
         session["translated"] = translated_any
         session["depth"] = depth
-        session["completed_at"] = datetime.utcnow().isoformat()
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
         await _persist_session(session_id, session)
 
         logger.info(f"Research completed for session {session_id} with {len(scraped_content)} sources (translated: {translated_any})")
@@ -2388,7 +2447,7 @@ async def execute_advanced_research(
     session["confidence"] = result["confidence"]
     session["translated"] = result["translated_any"]
     session["depth"] = result["depth"]
-    session["completed_at"] = datetime.utcnow().isoformat()
+    session["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # Derive a short summary for compatibility with earlier UI rendering
     first_para = ""
@@ -2411,6 +2470,31 @@ async def execute_advanced_research(
     ]
 
     await _persist_session(session_id, session)
+
+    # Cycle C polish (post-close-out) — belt-and-suspenders
+    # ``research_complete`` event carrying the final markdown.  The
+    # canonical render path is the earlier ``report_ready`` event
+    # (emitted by AdvancedResearcher.run); this duplicate emission
+    # guards against future event-shape drift and matches what
+    # SIMPLE_TEXT_REDUCER's legacy code path expected.  Frontends
+    # that already read ``report_ready`` ignore this; frontends that
+    # only know ``research_complete`` (older v1 clients) get the
+    # markdown here.
+    final_markdown = (
+        session.get("report_markdown")
+        or session.get("report")
+        or result.get("markdown")
+        or ""
+    )
+    if final_markdown:
+        await _publish(
+            session_id,
+            {
+                "type": "research_complete",
+                "markdown": final_markdown,
+                "session_id": session_id,
+            },
+        )
     await _publish(session_id, {"type": "done", "session_id": session_id})
 
     # ── Phase C — server-side persistence + query_record completion ──
@@ -2499,7 +2583,7 @@ async def cancel_research(
     session["status"] = "cancelled"
     session["cancel_requested"] = True
     session["error"] = "Cancelled by user."
-    session["completed_at"] = datetime.utcnow().isoformat()
+    session["completed_at"] = datetime.now(timezone.utc).isoformat()
     await _persist_session(session_id, session)
     await _publish(session_id, {"type": "cancelled", "session_id": session_id})
 
@@ -2737,6 +2821,13 @@ class ThinkingRequest(BaseModel):
     mode: Optional[str] = Field("thinking", description="Mode identifier")
     history: Optional[List[dict]] = Field(None, description="Conversation history")
     max_tokens: int = Field(2048, description="Maximum tokens in response")
+    # Cycle UI v2.7.1 (D9) — accept attachment_ids for graceful FE↔BE
+    # compat.  The Thinking endpoint is anonymous (no get_current_user),
+    # so true tenancy-guarded resolve_and_inject can't run here; we
+    # accept the field, log, and skip resolution (frontend's attachments
+    # land on the user's own chat_message persist via the chat_sessions
+    # MessageAppendRequest path).  v2.7.2 will gate this on auth.
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 
 @router.post("/thinking")

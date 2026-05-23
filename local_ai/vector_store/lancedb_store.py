@@ -5,15 +5,31 @@ Serverless, embedded vector database for RAG
 
 import asyncio
 import logging
+import time
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 
 # Optional ML dependencies — Phase 16 lets the helper API (BM25
 # scoring, RRF fusion, settings resolution) load without lancedb /
 # sentence-transformers / pyarrow installed.  ``LanceDBVectorStore``
 # constructor still requires them; ``__new__()`` does not.
+#
+# v18.1.5 — suppress the LanceDB-internal Pydantic v2 protected-
+# namespace warning before it fires.  lancedb.pydantic.LanceModel
+# declares a ``model_*`` field somewhere in its hierarchy without
+# the ConfigDict(protected_namespaces=()) opt-out, which spams a
+# UserWarning on first import.  This is third-party noise (upstream
+# fix lives in lancedb >= a future release); the filter scope is
+# tight enough that any AMOR-side `model_name` collision we
+# accidentally introduce still surfaces.
+import warnings as _warnings
+_warnings.filterwarnings(
+    "ignore",
+    message=r'Field "model_name" has conflict with protected namespace "model_".*',
+    category=UserWarning,
+)
 try:
     import lancedb
     from lancedb.pydantic import LanceModel, Vector
@@ -153,6 +169,17 @@ class LanceDBVectorStore:
         # on the first ``rag_reranker_enabled`` request; ``None``
         # means "not yet initialised" or "init failed gracefully".
         self._reranker = None
+
+        # Cycle H.0.2 — LazyGraphRAG knowledge-layer state.  Default
+        # OFF (``settings.rag_graphrag_enabled=False``).  When enabled,
+        # the search() path runs an entity-graph community pre-filter
+        # before vector retrieval; without an index, falls through to
+        # the legacy LanceDB-only path silently.  Build cost is one-
+        # shot ~20-40 min on AMOR's ~50K-LOC corpus (Plan-agent risk
+        # H.0.b), so the index is constructed via the admin /api/rag
+        # endpoint or first-call (lazy) — see _ensure_lazy_graphrag_index.
+        self._lazy_graphrag_index: Optional[Dict[str, Any]] = None
+        self._lazy_graphrag_config = None
 
         logger.info(f"LanceDB initialized at {db_path} with {embedding_model}")
 
@@ -391,13 +418,58 @@ class LanceDBVectorStore:
                 self._reranker_top_k(rerank_top_k) if do_rerank else 0,
             )
 
-            # Search in LanceDB
+            # Cycle H.0.2 — optional LazyGraphRAG community pre-filter.
+            # When enabled AND the entity-graph index has been built,
+            # narrow the candidate set to source_ids that belong to
+            # communities sharing entities with the query.  This
+            # reduces the dense-vector search space + improves
+            # multi-hop precision (Microsoft 2024 measured 10-90%
+            # cheaper than full GraphRAG; AMOR v20 gate condition #5
+            # locks ≥15% nDCG@10 uplift on the 100-q bench).
+            candidate_source_ids: Optional[set[str]] = None
+            gr_config = self._load_lazy_graphrag_config()
+            if (
+                gr_config is not None
+                and gr_config.enabled
+                and self._lazy_graphrag_index is not None
+            ):
+                try:
+                    candidate_source_ids = await self._lazy_graphrag_prefilter(
+                        query, gr_config,
+                    )
+                except Exception as exc:  # pragma: no cover (defensive)
+                    logger.debug(
+                        "lazy_graphrag_prefilter failed; falling through to "
+                        "LanceDB-only path: %s", exc,
+                    )
+                    candidate_source_ids = None
+
+            # Search in LanceDB.  When a candidate set is present,
+            # widen the limit so post-filtering doesn't starve the
+            # dense ranking; LanceDB doesn't support set-IN filters
+            # directly so we filter the hits in-process after the
+            # ANN call returns (the candidate set is small relative
+            # to corpus, so this is cheap).
+            effective_wide = wide_limit
+            if candidate_source_ids is not None:
+                effective_wide = max(wide_limit * 3, 32)
+
             search_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.table.search(query_vector)
-                    .limit(wide_limit)
+                    .limit(effective_wide)
                     .to_list()
             )
+            if candidate_source_ids is not None:
+                kept = [
+                    r for r in search_results
+                    if str(r.get("document_id") or r.get("source_id") or r.get("id") or "")
+                       in candidate_source_ids
+                ]
+                # If the prefilter wipes everything (shouldn't happen
+                # in practice, but defensive), keep the original
+                # search results — never starve the user.
+                search_results = kept or search_results
 
             # Process and filter results
             results = []
@@ -657,3 +729,128 @@ class LanceDBVectorStore:
         """Cleanup resources."""
         # LanceDB handles cleanup automatically
         logger.info("Vector store closed")
+
+    # ─── Cycle H.0.2 — LazyGraphRAG knowledge-layer helpers ────────────
+
+    def _load_lazy_graphrag_config(self):
+        """Resolve LazyGraphRAGConfig from settings; cached on instance.
+
+        Returns the dataclass or ``None`` when the module is unavailable
+        or the import itself raises (keeps the LanceDB path resilient).
+        """
+        if self._lazy_graphrag_config is None:
+            try:
+                from document_processor.rag.lazy_graphrag import (  # noqa: PLC0415
+                    load_config_from_settings,
+                )
+                self._lazy_graphrag_config = load_config_from_settings()
+            except Exception as exc:
+                logger.debug("lazy_graphrag config import failed: %s", exc)
+                self._lazy_graphrag_config = None
+        return self._lazy_graphrag_config
+
+    async def _lazy_graphrag_prefilter(
+        self,
+        query: str,
+        config,
+    ) -> set[str]:
+        """Return the set of source_ids belonging to communities whose
+        top entities Jaccard-overlap with the query's entities.
+
+        Uses ``filter_communities_by_relevance`` on the cached index
+        (built via ``build_lazy_graphrag_index``).  Returns an empty
+        set if the index is missing — caller falls through to the
+        legacy LanceDB-only path.
+        """
+        if self._lazy_graphrag_index is None:
+            return set()
+        from document_processor.rag.lazy_graphrag import (  # noqa: PLC0415
+            filter_communities_by_relevance,
+        )
+        communities = self._lazy_graphrag_index.get("communities") or []
+        if not communities:
+            return set()
+        # Run the (CPU-bound) relevance ranking off the event loop so
+        # we don't stall the FastAPI worker for big community sets.
+        scored = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: filter_communities_by_relevance(
+                query, communities,
+                top_k=10,
+                entity_min_length=config.entity_min_length,
+            ),
+        )
+        candidate_ids: set[str] = set()
+        for community, _score in scored:
+            for sid in community.get("members") or []:
+                candidate_ids.add(str(sid))
+        return candidate_ids
+
+    async def build_lazy_graphrag_index(
+        self,
+        chunks: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Build (or rebuild) the in-process LazyGraphRAG index from
+        the current corpus.  When ``chunks`` is omitted, pulls them
+        from the LanceDB table.  Caches the resulting
+        ``{inv_index, communities, signature}`` on ``self`` so
+        ``search()`` can use it.
+
+        This is a heavy operation (~20-40 min on 50K chunks); the
+        admin endpoint at ``POST /api/admin/rag/graphrag/build``
+        runs it as a background task.  Returns an IndexStats payload.
+        """
+        from document_processor.rag.lazy_graphrag import (  # noqa: PLC0415
+            build_entity_graph,
+            detect_communities,
+            stable_index_signature,
+            IndexStats,
+        )
+        config = self._load_lazy_graphrag_config()
+        if config is None:
+            raise RuntimeError("lazy_graphrag module unavailable")
+
+        # Pull the entire table as a chunk list when caller didn't
+        # supply one.  At AMOR's hundreds-of-thousands chunk scale
+        # this is a single LanceDB scan — accepted as a one-shot.
+        if chunks is None:
+            chunks = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.table.to_pandas().to_dict("records"),
+            )
+
+        t0 = time.time()
+        inv_index = build_entity_graph(
+            chunks, entity_min_length=config.entity_min_length,
+        )
+        communities = detect_communities(
+            inv_index, min_size=config.community_min_size,
+        )
+        signature = stable_index_signature(chunks, config)
+
+        elapsed = time.time() - t0
+        self._lazy_graphrag_index = {
+            "inv_index": inv_index,
+            "communities": communities,
+            "signature": signature,
+            "built_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        stats = IndexStats(
+            documents_indexed=len(chunks),
+            entities_extracted=len(inv_index),
+            communities_detected=len(communities),
+            wall_clock_s=elapsed,
+        )
+        logger.info(
+            "lazy_graphrag.index_built chunks=%d entities=%d communities=%d "
+            "elapsed=%.1fs",
+            stats.documents_indexed, stats.entities_extracted,
+            stats.communities_detected, stats.wall_clock_s,
+        )
+        return {
+            "chunk_count": stats.documents_indexed,
+            "entity_count": stats.entities_extracted,
+            "community_count": stats.communities_detected,
+            "build_duration_s": stats.wall_clock_s,
+            "signature": signature,
+        }

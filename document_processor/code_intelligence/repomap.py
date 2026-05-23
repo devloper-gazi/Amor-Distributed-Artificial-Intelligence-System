@@ -36,10 +36,20 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings as _warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# v18.1.5 — silence networkx's internal pagerank_scipy deprecation.
+# AMOR calls ``nx.pagerank(...)`` (the new API); networkx falls back
+# internally on sparse-matrix inputs.  Upstream fix in networkx >=3.4.
+_warnings.filterwarnings(
+    "ignore",
+    message=r"networkx\.pagerank_scipy is deprecated.*",
+    category=DeprecationWarning,
+)
 
 logger = logging.getLogger(__name__)
 

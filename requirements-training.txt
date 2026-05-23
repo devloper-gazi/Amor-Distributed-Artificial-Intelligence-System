@@ -1,0 +1,38 @@
+# Cycle H.3 — GRPO + verifier-reward LoRA training dependencies.
+#
+# These deps are HEAVY (~3 GB of CUDA wheels) and only needed on the
+# host GPU machine that runs `tools/training/orpo_qwen_coder.py`.
+# The runtime AMOR app container deliberately omits them.
+#
+# Plan-agent locked:
+#   * trl>=0.18 ships GRPOTrainer with `beta` + scalar
+#     `reward_chosen`/`reward_rejected` semantics.  Tight upper bound
+#     so the next API drift (likely 0.19+) is caught at install time.
+#   * Unsloth's PatchORPOTrainer / PatchGRPOTrainer patches the TRL
+#     trainer with 4-bit aware kernels — 30-40% faster on a 4060.
+#   * bitsandbytes wheels are not published for Windows AVX-512
+#     paths; the conditional `sys_platform != 'win32'` keeps the
+#     install graph clean.  Operators on Windows can use WSL2.
+#
+# Install:
+#     python -m venv .venv-training
+#     source .venv-training/bin/activate          # (or .venv-training/Scripts/activate on Windows)
+#     pip install --upgrade pip
+#     pip install -r requirements-training.txt
+#
+# Then run training:
+#     python tools/training/orpo_qwen_coder.py \
+#         --jsonl data/preference_pairs/coder.rewards.jsonl \
+#         --out models/lora/coder-r16-grpo \
+#         --trainer-type grpo
+
+torch>=2.3,<3.0
+trl>=0.18,<0.19
+peft>=0.11,<0.15
+unsloth>=2024.10
+transformers>=4.45,<4.50
+accelerate>=0.30
+datasets>=2.20
+sentencepiece>=0.2
+protobuf>=4.25
+bitsandbytes>=0.43 ; sys_platform != 'win32'

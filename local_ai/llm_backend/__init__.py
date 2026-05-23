@@ -59,7 +59,12 @@ def _resolve_kind() -> str:
             return kind
     except Exception:
         pass
-    return os.environ.get("AMOR_LLM_BACKEND", "ollama").strip().lower()
+    # v18.1 bug-pattern fix — os.environ.get(KEY, default) returns ""
+    # when KEY exists but is empty (the docker-compose
+    # ``AMOR_LLM_BACKEND=`` case).  Falsy-skip so empty falls through
+    # to the explicit default.
+    env_kind = (os.environ.get("AMOR_LLM_BACKEND") or "").strip().lower()
+    return env_kind if env_kind else "ollama"
 
 
 def _resolve_url() -> str:
@@ -74,10 +79,15 @@ def _resolve_url() -> str:
             return url
     except Exception:
         pass
-    return os.environ.get(
-        "AMOR_LLM_BACKEND_URL",
-        os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
-    )
+    # v18.1 bug-pattern fix — same falsy-skip as _resolve_kind so an
+    # empty AMOR_LLM_BACKEND_URL falls through to OLLAMA_BASE_URL
+    # falls through to the localhost default (instead of returning
+    # the literal "" from a defined-but-empty env var).
+    for key in ("AMOR_LLM_BACKEND_URL", "OLLAMA_BASE_URL"):
+        v = (os.environ.get(key) or "").strip()
+        if v:
+            return v
+    return "http://localhost:11434"
 
 
 def make_backend(kind: str, *, url: Optional[str] = None) -> LLMBackend:
@@ -98,6 +108,13 @@ def make_backend(kind: str, *, url: Optional[str] = None) -> LLMBackend:
     if k in {"llama-cpp", "llama_cpp", "llamacpp", "llama.cpp"}:
         from .llama_cpp import LlamaCppBackend  # noqa: PLC0415
         return LlamaCppBackend(base_url=base_url)
+    if k in {"bitnet-cpu", "bitnet_cpu", "bitnet", "bitnetcpu"}:
+        # Cycle H Phase A.1 — BitNet b1.58 2B4T ternary CPU planner.
+        # `url=None` lets the backend pick its own default port (8081)
+        # so the operator running BOTH llama-cpp (:8080) AND bitnet-cpu
+        # side-by-side doesn't get a bind conflict.
+        from .bitnet_cpu import BitNetCpuBackend  # noqa: PLC0415
+        return BitNetCpuBackend(base_url=url)
     if k in {"openai-compat", "openai_compat", "openai-compatible"}:
         from .openai_compat import OpenAICompatibleBackend  # noqa: PLC0415
         return OpenAICompatibleBackend(base_url=base_url)

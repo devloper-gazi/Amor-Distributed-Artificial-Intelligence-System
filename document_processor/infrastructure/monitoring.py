@@ -256,6 +256,29 @@ CRAWL_REQUESTS_PER_SECOND = Gauge(
     registry=REGISTRY,
 )
 
+# Cycle C Sprint 6 Day 5 — ORPO training observability.
+TRAINING_RUNS_TOTAL = Counter(
+    "amor_training_runs_total",
+    "ORPO training runs created, by terminal status.",
+    ["status"],  # pending|running|trained|evaluated|promoted|failed|rejected
+    registry=REGISTRY,
+)
+
+TRAINING_PAIRS_INGESTED = Counter(
+    "amor_training_pairs_ingested_total",
+    "Preference pairs persisted from the rate ± buttons.",
+    ["mode", "opt_in_raw"],
+    registry=REGISTRY,
+)
+
+LORA_ACTIVE_ID = Gauge(
+    "amor_lora_active_id",
+    "Currently-active LoRA adapter id (-1 = none).",
+    registry=REGISTRY,
+)
+# Default to "no adapter" so a fresh process surfaces a clean signal.
+LORA_ACTIVE_ID.set(-1)
+
 CRAWL_DOMAIN_DELAYS = Histogram(
     "crawl_domain_delay_seconds",
     "Per-domain crawl delays",
