@@ -1,14 +1,93 @@
 # Amor — Distributed Artificial Intelligence System
 
+[![Latest release](https://img.shields.io/github/v/release/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System?label=release&color=8b5cf6)](https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System/releases/latest)
+[![Tags](https://img.shields.io/github/v/tag/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System?label=tag&color=06b6d4)](https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System/tags)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Local-first](https://img.shields.io/badge/local--first-100%25-success)](#)
+[![SolidJS](https://img.shields.io/badge/UI-SolidJS%201.9-blue)](#)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)](#)
+
 A multi-mode local-first AI workstation: research, deep reasoning,
 multi-agent code generation, a reactor-driven empirical-perf code
 pipeline, and a fully-automated end-to-end consortium that chains
 all four. FastAPI + MongoDB + Redis + Postgres + Kafka under an
 nginx gateway, Ollama for local inference, optional Claude API.
 
-![Amor — welcome screen with 5 capability modes](docs/screenshots/welcome.png)
+![Amor v2.8.4 — unified chat surface with halo composer + smart sessions sidebar](docs/screenshots/v2.8.4/02-wide-hero.png)
 
 100% local out of the box. Zero paid-API cost unless you opt in.
+
+---
+
+## What's new in v2.8.4 — Cycle UI: Halo + Attachments + Sessions Overhaul
+
+**Released 2026-05-23.** 13-tag birikim (v2.6.0 → v2.8.4), frontend
+yüzeyini "kontrol paneli"nden 2026 frontier "alan" yüzeyine
+(Gemini / Claude.ai / ChatGPT seviyesi) taşır. Full release notes:
+[**v2.8.4 release page**](https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System/releases/tag/v2.8.4).
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Cycle UI v2.6 — Minimal chat surface**
+- **Halo**: composer'ı saran mode-tinted 480px radial gradient + 14s blob drift, `prefers-reduced-motion` guard
+- **Greeting**: saat-dilimi koşullu kişiselleştirilmiş selam, Türkçe `localeUpper` casing
+- **EmptyState**: 4-row seed grid (Build / Research / Thinking / QuickCode)
+- **Sidebar şeffaflaşma**: `bg-bg-elevated-v25/70 backdrop-blur-md`, accordion sections
+- **Native keyboard shortcuts**: Cmd+K palette, Cmd+N new session, Cmd+B sidebar
+- **Composer premium polish**: card shell + icon-only ↑ Send + pastel mode pill
+
+</td>
+<td width="50%" valign="top">
+
+**Cycle UI v2.7 — Attachment system E2E**
+- **Multipart upload** → filesystem `data/attachments/{user_id}/{yyyy-mm}/{uuid}.{ext}`
+- **MongoDB persist** `attachments_meta` collection + sha256 dedup + 60s cache
+- **LLM context inject** AMOR-ATTACH:START/END sentinel blocks, 32 KB/file, 96 KB/total
+- **6 endpoint extended** (code / research / thinking / consortium / sentinel / quickcode)
+- **Vision capability detect**: Ollama `/api/tags` → 11-pattern whitelist (qwen2-vl, llava, phi3-vision, …)
+- **Approval policy hook**: >5MB / image / PDF → policy event
+- **Drag-drop + paste-clipboard** + size/MIME validation
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**Cycle UI v2.8 — Sessions system (Gemini + Claude best-of)**
+- Sidebar action buttons (+ Yeni sohbet / ⌕ Ara / ⚙ Ayarlar)
+- Suggestion chips below composer
+- **Inline session search** (`/` shortcut)
+- **Density toggle** (compact ↔ comfortable, localStorage persist)
+- **Refined recency** (today / yesterday / past_week / past_month / older)
+- **Mode filter chip bar** (multi-select)
+- **Double-click inline rename**, **keyboard arrow nav** (Up/Down/Enter, Cmd+P pin)
+- **Hover-pin** + polished empty state
+
+</td>
+<td valign="top">
+
+**Setup reliability**
+- **start.cmd + setup.cmd wrappers**: PowerShell ExecutionPolicy bypass per-invocation
+- **UTF-8 BOM + ASCII em-dash** in `.ps1` (PS 5.1 CP-1252 parse hatası fix)
+- **Auto-heal gateway 502/503/504**: nginx upstream DNS cache stale → otomatik `compose restart gateway` + re-probe
+- **263 vitest pass**, axe-core 0 serious/critical, WCAG 2.2 AA
+- **Bundle**: 112 → 125.54 KB gz (+13.5 KB, 30 KB budget'in %45'i)
+
+</td>
+</tr>
+</table>
+
+### Feature gallery (v2.8.4)
+
+| Sessions sidebar (chip filter + search + density + recency groups) | Settings (theme + language + account) |
+|---|---|
+| ![Sessions sidebar](docs/screenshots/v2.8.4/01-hero-empty-state.png) | ![Settings page](docs/screenshots/v2.8.4/03-settings-page.png) |
+
+| Admin LLM (resident models + p50/p95 + cache hits) | Composer halo + suggestion chips |
+|---|---|
+| ![Admin LLM dashboard](docs/screenshots/v2.8.4/04-admin-llm.png) | ![Wide hero](docs/screenshots/v2.8.4/02-wide-hero.png) |
 
 ---
 
@@ -27,15 +106,21 @@ chmod +x start.sh
 ./start.sh
 ```
 
-**Windows (PowerShell)**
+**Windows (PowerShell or cmd or double-click)** — v2.8.4 added a
+`.cmd` wrapper that **automatically bypasses** the default
+ExecutionPolicy. No more `Set-ExecutionPolicy` ritual.
 
 ```powershell
 git clone https://github.com/devloper-gazi/Amor-Distributed-Artificial-Intelligence-System.git
 cd Amor-Distributed-Artificial-Intelligence-System
 Copy-Item .env.example .env
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-.\start.ps1
+.\start.cmd                # bring all 12 services up + self-heal gateway
+.\setup.cmd status         # health probe + URL list
+.\setup.cmd stop           # graceful teardown
 ```
+
+The wrapper invokes PowerShell with `-ExecutionPolicy Bypass` for
+THAT run only — it does NOT modify your system policy.
 
 The script pulls images, builds the app, brings the stack up, and
 pulls `qwen2.5:7b` into Ollama (5–10 min on first run). For the
