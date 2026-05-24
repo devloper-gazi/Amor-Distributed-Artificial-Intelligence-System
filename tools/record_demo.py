@@ -67,10 +67,26 @@ def navigate_via_keys(url: str) -> None:
     ps_script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[System.Windows.Forms.SendKeys]::SendWait('^l'); "
-        "Start-Sleep -Milliseconds 250; "
-        f"[System.Windows.Forms.SendKeys]::SendWait('{url}'); "
+        "Start-Sleep -Milliseconds 400; "
+        "[System.Windows.Forms.SendKeys]::SendWait('{DELETE}'); "
         "Start-Sleep -Milliseconds 200; "
+        f"[System.Windows.Forms.SendKeys]::SendWait('{url}'); "
+        "Start-Sleep -Milliseconds 300; "
         "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}');"
+    )
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", ps_script],
+        capture_output=True, check=False,
+    )
+
+
+def dismiss_overlays() -> None:
+    """Press Escape to dismiss any extension popups (Google Translate,
+    autofill prompts, etc) BEFORE capturing frames so they don't
+    appear in the demo GIF."""
+    ps_script = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "[System.Windows.Forms.SendKeys]::SendWait('{ESC}');"
     )
     subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command", ps_script],
@@ -83,8 +99,14 @@ def capture_burst(
     n_frames: int,
     fps: int,
     target_width: int = 1024,
+    crop_chrome_top: int = 115,
+    crop_chrome_bottom: int = 0,
 ) -> list[Image.Image]:
-    """Grab n_frames at fps over the bbox area; resize + palette-quantize."""
+    """Grab n_frames at fps over the bbox area, then crop browser
+    chrome (title bar + tab strip + URL bar = ~115 px on Chrome's
+    default density), resize, and palette-quantize.  Result frames
+    show ONLY the AMOR page content (no Chrome UI).
+    """
     frames: list[Image.Image] = []
     start = time.time()
     for i in range(n_frames):
@@ -94,9 +116,17 @@ def capture_burst(
             time.sleep(rem)
         img = ImageGrab.grab(bbox=bbox)
         w, h = img.size
+        # Strip browser chrome — only the AMOR page content is wanted.
+        if crop_chrome_top or crop_chrome_bottom:
+            img = img.crop(
+                (0, crop_chrome_top, w, h - crop_chrome_bottom)
+            )
+            w, h = img.size
         if w > target_width:
             ratio = target_width / w
-            img = img.resize((target_width, int(h * ratio)), Image.LANCZOS)
+            img = img.resize(
+                (target_width, int(h * ratio)), Image.LANCZOS
+            )
         frames.append(img.convert("P", palette=Image.ADAPTIVE, colors=128))
     return frames
 
@@ -124,7 +154,8 @@ def main() -> int:
     navigate_via_keys("http://localhost:8000/")
     time.sleep(2.5)  # let render settle
     bring_to_front(hwnd)
-    time.sleep(0.3)
+    dismiss_overlays()
+    time.sleep(0.4)
     s1 = capture_burst(bbox, n_frames=25, fps=fps)
     all_frames.extend(s1)
     print(f"  captured {len(s1)} frames")

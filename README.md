@@ -15,13 +15,11 @@ nginx gateway, Ollama for local inference, optional Claude API.
 
 ![Amor v2.8.4 — unified chat surface with halo composer + smart sessions sidebar](docs/screenshots/v2.8.4/02-wide-hero.png)
 
-### Live demo (8 s tour)
+### Live demo
 
-`/`  →  `/settings`  →  `/admin/llm`  →  `/`  — sidebar chip filter / density toggle, theme + locale picker, Ollama backend dashboard, halo composer döngüsü.
+Halo composer + sidebar (chip filter + search + density + recency groups) + greeting + suggestion chips — sadece AMOR yüzeyi, tarayıcı çerçevesi yok.
 
-![AMOR v2.8.4 — 8s tour: empty-state, settings, admin LLM dashboard](docs/screenshots/v2.8.4/demo-tour.gif)
-
-> Daha uzun 6s halo-only döngü için: [`demo-empty-state.gif`](docs/screenshots/v2.8.4/demo-empty-state.gif)
+![AMOR v2.8.4 — empty-state demo loop (composer halo + sidebar + sessions + suggestions)](docs/screenshots/v2.8.4/demo-empty-state.gif)
 
 100% local out of the box. Zero paid-API cost unless you opt in.
 
