@@ -83,6 +83,8 @@ from .api.chat_folders_routes import router as chat_folders_router
 # collection.  6 chat /start endpoints inherit `AttachmentBearingRequest`
 # mixin to accept `attachment_ids[]` (see `api/attachment_models.py`).
 from .api.attachments_routes import attachments_router
+# Cycle UI v2.8.7 — per-user preferences (auto_mode toggle etc.)
+from .api.preferences_routes import router as preferences_router
 from .api.auth_routes import router as auth_router
 # Cycle UI 2026-05-20 — unified chat endpoints (Phase 1: classifier;
 # Phase 2 will add /start + /events dispatcher).  Lazy-import-friendly:
@@ -762,6 +764,7 @@ logger.info("Chat folders routes included")
 
 # Cycle UI v2.7 — attachment upload/download/delete (multipart endpoint).
 app.include_router(attachments_router)
+app.include_router(preferences_router)
 logger.info("Attachment routes included")
 
 # Sprint 0 admin baselines dashboard (Cycle C)

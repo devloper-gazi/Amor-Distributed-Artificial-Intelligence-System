@@ -10,6 +10,7 @@ import {
   setLocale,
   t,
 } from "../i18n";
+import { preferences, updatePreferences, syncFromServer } from "../lib/preferences";
 
 type Theme = "light" | "dark" | "system";
 const THEMES: ReadonlyArray<{ key: Theme; label_key: string; subtitle_key: string }> = [
@@ -29,6 +30,9 @@ export const Settings: Component = () => {
     } catch {
       // ignore
     }
+    // v2.8.7 — pull latest preferences from server so a setting
+    // toggled on another device shows up here without manual refresh.
+    void syncFromServer();
   });
 
   const applyTheme = (t: Theme) => {
@@ -120,6 +124,56 @@ export const Settings: Component = () => {
                   </button>
                 )}
               </For>
+            </div>
+          </section>
+
+          {/* Otomatik mod — Cycle UI v2.8.7 */}
+          <section>
+            <h2 class="text-base font-semibold tracking-tight">
+              {t("settings.auto_mode.heading")}
+            </h2>
+            <p class="mt-1 text-sm text-text-body">
+              {t("settings.auto_mode.description")}
+            </p>
+            <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => updatePreferences({ auto_mode: true })}
+                class={[
+                  "rounded-md border px-4 py-3 text-left transition-colors",
+                  preferences().auto_mode
+                    ? "border-text-primary bg-bg-hover"
+                    : "border-border-subtle bg-bg-elevated hover:bg-bg-hover",
+                ].join(" ")}
+                aria-pressed={preferences().auto_mode}
+                data-amor-auto-mode="on"
+              >
+                <div class="text-sm font-medium">
+                  {t("settings.auto_mode.on")}
+                </div>
+                <div class="text-xs text-text-subtle">
+                  {t("settings.auto_mode.on_subtitle")}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => updatePreferences({ auto_mode: false })}
+                class={[
+                  "rounded-md border px-4 py-3 text-left transition-colors",
+                  !preferences().auto_mode
+                    ? "border-text-primary bg-bg-hover"
+                    : "border-border-subtle bg-bg-elevated hover:bg-bg-hover",
+                ].join(" ")}
+                aria-pressed={!preferences().auto_mode}
+                data-amor-auto-mode="off"
+              >
+                <div class="text-sm font-medium">
+                  {t("settings.auto_mode.off")}
+                </div>
+                <div class="text-xs text-text-subtle">
+                  {t("settings.auto_mode.off_subtitle")}
+                </div>
+              </button>
             </div>
           </section>
 

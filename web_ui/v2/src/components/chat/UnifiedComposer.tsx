@@ -62,6 +62,7 @@ import {
 // composer-parsers via the overlay.
 import { SlashCommandOverlay } from "./SlashCommandOverlay";
 import { classifyByHeuristic } from "../../lib/intent-heuristic";
+import { preferences } from "../../lib/preferences";
 // Cycle UI v2.6.2 (D3) — inline SVG icon set for the composer's
 // premium icon polish (Send + Attach + Chevron).
 import { SendArrow, Paperclip, ChevronDown } from "../ui/icons";
@@ -321,24 +322,24 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
 
   const submit = () => {
     if (props.busy) return;
-    // Cycle UI v2.8.6 — "tam otomatik mod" — kullanici talebi:
-    // 'ben mod vb. secmek zorunda kalmak istemiyorum'.  Submit
-    // aninda eger:
-    //  - kullanici ModePicker'a tiklamamissa (userPickedMode false)
-    //  - prompt slash command degilse (/ ile baslamiyor)
-    // Heuristic SYNCHRONOUSLY calistir + mode'u uygula.  Bu fixes:
-    //  (a) Klavyeden hizli Enter -> classifier 150ms debounce
-    //      bitmeden submit -> stale activeMode kullaniliyordu
-    //  (b) low_confidence sonuclar drop ediliyordu, sebep degil
-    //      effectiveMode() default mode'a duser + yanlis route
+    // Cycle UI v2.8.6 — "tam otomatik mod" — submit-time heuristic.
+    // v2.8.7 — auto_mode preference (Settings'ten kontrol edilir).
+    //   ON  (default): heuristic her zaman calisir, manuel pick yok say.
+    //   OFF (legacy):  klasik akis (user pick > modeOverride > active).
+    const autoMode = preferences().auto_mode;
     let effective = effectiveMode();
     const rawText = text();
     const isSlash = rawText.trim().startsWith("/");
-    if (!userPickedMode() && !isSlash) {
+    if (autoMode && !isSlash) {
+      // Tam otomatik: kullanicinin manuel pick'i bile classifier'i
+      // override etmesin (lock degisirse Settings'ten ON/OFF yapsin).
       const hit = classifyByHeuristic(rawText);
       if (hit) effective = hit.mode;
-      // Heuristic null donerse activeMode (last picked / default) kullan;
-      // server classifier zaten degerlendiriyor + composer pill'i guncelliyor.
+      else if (props.modeOverride) effective = props.modeOverride;
+    } else if (!autoMode && !userPickedMode() && !isSlash) {
+      // Legacy: classifier suggestion'i sadece user pick yoksa uygula.
+      const hit = classifyByHeuristic(rawText);
+      if (hit) effective = hit.mode;
     }
     const parsed = parseSlashCommand(rawText, effective);
     if (!parsed.text && attachments().length === 0) return;
@@ -654,9 +655,19 @@ export const UnifiedComposer: Component<UnifiedComposerProps> = (props) => {
         </Button>
         <ModePill
           mode={effectiveMode()}
-          onClick={() => setPickerOpen((o: boolean) => !o)}
-          expanded={pickerOpen()}
-          badge={props.modeBadge}
+          onClick={() => {
+            // Cycle UI v2.8.7 — auto_mode ON: pill is read-only,
+            // click is a no-op (user can still toggle in Settings).
+            // OFF: classic open/close picker.
+            if (preferences().auto_mode) return;
+            setPickerOpen((o: boolean) => !o);
+          }}
+          expanded={!preferences().auto_mode && pickerOpen()}
+          badge={
+            preferences().auto_mode
+              ? t("composer.auto_mode_pill")
+              : props.modeBadge
+          }
         />
         <input
           ref={(el: HTMLInputElement) => (fileInputRef = el)}

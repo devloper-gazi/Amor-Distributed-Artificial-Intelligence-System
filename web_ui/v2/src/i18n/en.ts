@@ -104,6 +104,15 @@ export const en: Record<string, string> = {
   "settings.language.tr":        "Türkçe",
   "settings.language.tr_subtitle":  "Türkiye Türkçesi; locale tr-TR",
 
+  // ── Settings → Auto mode (v2.8.7) ───────────────────────────
+  "settings.auto_mode.heading":     "Auto-mode",
+  "settings.auto_mode.description": "Let AMOR pick the right engine (Build / Research / Thinking / …) from your prompt.  No mode picker needed.",
+  "settings.auto_mode.on":          "On (recommended)",
+  "settings.auto_mode.on_subtitle": "Mode is auto-detected on every message — heuristic + classifier.",
+  "settings.auto_mode.off":         "Off",
+  "settings.auto_mode.off_subtitle": "Manual: click the mode pill or use /build, /research, …",
+  "composer.auto_mode_pill":        "auto",
+
   // ── Settings → Account ──────────────────────────────────────
   "settings.account.heading":    "Account",
   "settings.account.signed_in_as": "Signed in as",

@@ -104,6 +104,15 @@ export const tr: Record<string, string> = {
   "settings.language.tr":        "Türkçe",
   "settings.language.tr_subtitle":  "Türkiye Türkçesi; locale tr-TR",
 
+  // ── Ayarlar → Otomatik mod (v2.8.7) ─────────────────────────
+  "settings.auto_mode.heading":     "Otomatik mod",
+  "settings.auto_mode.description": "AMOR mesajınızdan doğru engine'i (İnşa / Araştır / Düşün / …) kendisi seçsin.  Mod seçici görmezsiniz.",
+  "settings.auto_mode.on":          "Açık (önerilen)",
+  "settings.auto_mode.on_subtitle": "Her mesajda mod otomatik tespit edilir — heuristic + classifier.",
+  "settings.auto_mode.off":         "Kapalı",
+  "settings.auto_mode.off_subtitle": "Manuel: mod chip'ine tıkla veya /build, /research, … yaz.",
+  "composer.auto_mode_pill":        "otomatik",
+
   // ── Ayarlar → Hesap ─────────────────────────────────────────
   "settings.account.heading":    "Hesap",
   "settings.account.signed_in_as": "Oturum açan kullanıcı",
