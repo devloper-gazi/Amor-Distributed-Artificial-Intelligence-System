@@ -21,6 +21,7 @@
 import { createSignal, onCleanup } from "solid-js";
 import type { Accessor } from "solid-js";
 import { api } from "./api";
+import { classifyByHeuristic, heuristicToResult } from "./intent-heuristic";
 
 /** The 6 classes the classifier ever returns.  Kept in sync with the
  *  backend constant document_processor/services/intent_classifier.py:CLASSES.
@@ -162,6 +163,22 @@ export function createDebouncedClassifier(
       setResult(null);
       return;
     }
+
+    // Cycle UI v2.8.5 — heuristic-first pass.  Deterministic
+    // patterns (URL detected, code fence, language+verb, question
+    // stem, chitchat) win immediately + skip the server classify.
+    // Saves 50-200 ms of network latency AND fixes Turkish-prompt
+    // mis-routes the MiniLM corpus has trouble with.
+    const hit = classifyByHeuristic(trimmed);
+    if (hit) {
+      // Cancel any in-flight classify — heuristic wins.
+      inFlightToken += 1;
+      setPending(false);
+      setError(null);
+      setResult(heuristicToResult(hit));
+      return;
+    }
+
     timer = setTimeout(() => {
       timer = null;
       inFlightToken += 1;
