@@ -139,19 +139,18 @@ export const UnifiedChat: Component = () => {
   // passes mode/badge as the ``modeOverride`` + ``modeBadge`` props.
   const classifier = createDebouncedClassifier();
 
-  // The composer's modeOverride is the classifier's suggestion (when
-  // confidence is high) OR null when low.  The composer maintains its
-  // own "user picked" lock; once they click ModePicker, the override
-  // is ignored.
+  // Cycle UI v2.8.6 — "tam otomatik mod" — kullanici talebi:
+  // 'ben mod vb. secmek zorunda kalmak istemiyorum'.  Heuristic prepass
+  // (v2.8.5) artik confident sonuclar dondurdugu icin low_confidence
+  // sadece classifier'in REAL belirsiz oldugu durumlarda olur.  Yine
+  // de o durumda EN IYI tahmin ile devam et — UI'da 'unsure' badge
+  // gosterilir ama composer mode auto-uygulanir.  Composer kendi
+  // tarafinda user-pick lock yapar (manual ModePicker), submit aninda
+  // tekrar heuristic sync calistirir.
   const suggestedMode = createMemo<ModeKey | undefined>(() => {
     const r = classifier.result();
     if (!r) return undefined;
-    if (r.low_confidence) {
-      // Still surface the guess via badge text but don't override the
-      // composer's mode — let user explicit-pick or default ride.
-      return undefined;
-    }
-    return r.mode as ModeKey;
+    return r.mode as ModeKey;  // her durumda uygula, low_confidence dahil
   });
 
   const badgeText = createMemo<string | undefined>(() => {
