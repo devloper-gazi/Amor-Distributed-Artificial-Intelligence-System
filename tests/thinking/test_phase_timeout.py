@@ -201,3 +201,99 @@ async def test_happy_path_no_timeout():
     statuses = {p["name"]: p["status"] for p in snapshot["phases"]}
     assert statuses.get("understand") == "completed"
     assert statuses.get("synthesize") in {"completed", "failed"}, statuses
+
+
+@pytest.mark.asyncio
+async def test_session_cap_is_hard_ceiling_not_overshoot_by_a_phase():
+    """Regression for the Sprint-0 600s Thinking hangs.
+
+    Before the clamp fix, the session budget was only checked at phase
+    *boundaries*, so a phase that STARTED just under the session cap could
+    still run a full ``phase_timeout_s`` — pushing total wall-clock to
+    ``session_timeout + phase_timeout`` (the observed 540 + 120 ≈ 660s,
+    which blew past the eval client's 600s cap and surfaced as 5 phases ×
+    120s ≈ 600s hard timeouts).  With the clamp, each phase's effective
+    timeout = ``min(phase_timeout, remaining_session_budget)``, so the
+    session can NEVER overshoot its ceiling by a full phase.
+    """
+    import time
+
+    events: list[dict] = []
+
+    async def _on_event(ev):
+        events.append(ev)
+
+    eng = ThinkingEngine(
+        prompt="A train problem",
+        clarifications={},
+        deliverable="report",
+        effort="basic",
+        provider="local",
+        llm_call=_stub_llm_factory(hang_call_indices={0}),   # understand hangs 60s
+        on_event=_on_event,
+        phase_timeout_s=5.0,      # LARGE per-phase cap …
+        session_timeout_s=0.5,    # … but a SMALL session ceiling
+    )
+
+    started = time.monotonic()
+    snapshot = await eng.run()
+    elapsed = time.monotonic() - started
+
+    # Pre-fix: the hung `understand` phase runs the full 5.0s per-phase cap,
+    # overshooting the 0.5s session ceiling 10×.  Post-fix: clamped to the
+    # ~0.5s remaining session budget, so run() returns well under the phase
+    # cap.  `< 3.0s` cleanly distinguishes clamped (~0.5s) from unclamped
+    # (~5.0s) while tolerating CI jitter.
+    assert elapsed < 3.0, f"session cap overshoot: run() took {elapsed:.2f}s (phase cap 5.0s)"
+
+    understand = next(p for p in snapshot["phases"] if p["name"] == "understand")
+    assert understand["status"] == "failed"
+    assert understand["detail"].get("timed_out") is True
+
+
+def test_effort_tier_scales_timeouts_within_setting_ceiling():
+    """Effort-aware wall-clock caps: latency scales with reasoning depth.
+
+    `ultra` = the full setting ceiling (back-compat with the flat 540/120
+    defaults); lighter tiers get proportionally tighter caps so a
+    `basic`/`medium` request returns fast while `deep`/`expert`/`ultra`
+    keep room for long reasoning.  The setting is the absolute ceiling.
+    """
+    from document_processor.thinking.engine import (
+        _resolve_phase_timeout,
+        _resolve_session_timeout,
+    )
+
+    # ultra == full ceiling (settings defaults 540 / 120) — unchanged.
+    assert _resolve_session_timeout("ultra") == 540.0
+    assert _resolve_phase_timeout("ultra") == 120.0
+
+    # Strictly monotonic: basic < medium < deep < expert < ultra.
+    sess = [_resolve_session_timeout(t)
+            for t in ("basic", "medium", "deep", "expert", "ultra")]
+    assert sess == sorted(sess) and len(set(sess)) == 5, sess
+    phase = [_resolve_phase_timeout(t)
+             for t in ("basic", "medium", "deep", "expert", "ultra")]
+    assert phase == sorted(phase) and len(set(phase)) == 5, phase
+
+    # Alias resolution ("standard" → medium) and unknown → medium fallback.
+    assert _resolve_session_timeout("standard") == _resolve_session_timeout("medium")
+    assert _resolve_session_timeout("bogus") == _resolve_session_timeout("medium")
+
+
+def test_engine_picks_up_effort_tier_timeouts_when_kwargs_omitted():
+    """Constructed without explicit timeout kwargs, the engine resolves
+    tier-appropriate caps from its `effort` — `medium` strictly tighter
+    than `ultra`."""
+    common = dict(
+        prompt="x", clarifications={}, deliverable="report",
+        provider="local", llm_call=_stub_llm_factory(),
+    )
+    eng_medium = ThinkingEngine(effort="medium", **common)
+    eng_ultra = ThinkingEngine(effort="ultra", **common)
+
+    assert eng_medium._session_timeout_s < eng_ultra._session_timeout_s
+    assert eng_medium._phase_timeout_s < eng_ultra._phase_timeout_s
+    # ultra preserves the legacy flat defaults exactly.
+    assert eng_ultra._session_timeout_s == 540.0
+    assert eng_ultra._phase_timeout_s == 120.0
