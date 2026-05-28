@@ -21,6 +21,7 @@ export const tr: Record<string, string> = {
   "suggest.research":             "Araştır",
   "suggest.thinking":             "Düşün",
   "suggest.quickcode":            "Hızlı düzelt",
+  "suggest.chat":                 "Sohbet",
   // Cycle UI v2.8 — Gemini-pattern sidebar top-level actions
   "sidebar.new_chat":             "Yeni sohbet",
 
@@ -151,6 +152,9 @@ export const tr: Record<string, string> = {
   "mode.system.subtitle":        "tanılama, bellek",
   "mode.quickcode.label":        "Hızlı Kod",
   "mode.quickcode.subtitle":     "hızlı hedefli düzenleme",
+  // Cycle UI v2.9 — hızlı sohbet şeridi (selamlaşma / günlük konuşma).
+  "mode.chat.label":             "Sohbet",
+  "mode.chat.subtitle":          "hızlı sohbet yanıtları",
 
   // ── Sidebar krom ────────────────────────────────────────────
   "sidebar.brand":               "AMOR",

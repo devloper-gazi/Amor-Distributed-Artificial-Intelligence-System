@@ -14,7 +14,11 @@ export type ModeKey =
   // chat composer but is intentionally not in MODES below — the
   // sidebar's mode-color groups + the legacy /<mode> routes are
   // 6-mode shaped; QuickCode is composer-only.
-  | "quickcode";
+  | "quickcode"
+  // Cycle UI v2.9 — "chat" is the fast conversational lane (greetings,
+  // chitchat, identity questions).  Composer-only like quickcode: not a
+  // sidebar mode, label/colour come from i18n + mode-color fallback.
+  | "chat";
 
 export interface ModeMeta {
   key: ModeKey;
