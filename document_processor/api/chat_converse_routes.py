@@ -18,14 +18,22 @@ Endpoints (mirrors the thinking/research SSE trio so the existing
     GET   /api/chat/converse/{sid}/events     -> SSE stream
     POST  /api/chat/converse/{sid}/cancel     -> stop a run
 
-Wire format reuses the cross-cutting events the reducer already
-handles: ``text_chunk`` (appended) then ``done`` (terminal).  No new
-event types are needed (see lib/chat/event_registry.ts:isTextChunk).
+Design note (v2.9 fix): a chat turn is a SINGLE-SHOT reply, so the LLM
+call runs INLINE inside the ``/events`` stream generator rather than in
+a fire-and-forget background task fanned out over a per-session queue +
+Redis pub/sub.  The queue/pub-sub pattern (cloned from thinking_routes)
+raced a fast reply: pub/sub does not buffer, so if the producer emitted
+before the ``/events`` subscriber attached (or the subscriber landed on
+a different worker), the events were lost and the client hung at
+"(starting…)".  Doing the work in the stream means the producer IS the
+streamer — no queue, no fanout, no race.  Wire format reuses the
+cross-cutting events the reducer already handles: ``text_chunk``
+(appended) then ``done`` (terminal); see
+lib/chat/event_registry.ts:isTextChunk.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -87,24 +95,17 @@ class ConverseResponse(BaseModel):
     mode: str = "chat"
 
 
-# ─── Session + event-queue store (mirrors thinking_routes) ─────────
+# ─── Session store (Redis-backed, mirrors thinking_routes) ─────────
 
 _SESSION_PREFIX = "chat_converse_session:"
 _SESSION_TTL_S = 7200
-_EVENT_QUEUE_MAXSIZE = 200
-_EVENT_CHANNEL = "amor:chat_converse:events:{session_id}"
 
-try:  # bounded hot cache; Redis is the durable store
+try:  # bounded hot cache; Redis is the durable cross-worker store
     from cachetools import TTLCache
 
     _sessions: Dict[str, Dict[str, Any]] = TTLCache(maxsize=512, ttl=7800)
-    _event_queues: Dict[str, asyncio.Queue] = TTLCache(maxsize=512, ttl=7800)
 except ImportError:  # pragma: no cover
     _sessions = {}
-    _event_queues = {}
-
-# Hold references to background tasks so they aren't GC'd mid-run.
-_tasks: Dict[str, asyncio.Task] = {}
 
 
 def _now() -> str:
@@ -137,95 +138,18 @@ async def _load(session_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _event_queue(session_id: str) -> asyncio.Queue:
-    q = _event_queues.get(session_id)
-    if q is None:
-        q = asyncio.Queue(maxsize=_EVENT_QUEUE_MAXSIZE)
-        _event_queues[session_id] = q
-    return q
-
-
-async def _publish(session_id: str, event: Dict[str, Any]) -> None:
-    """Push an event to the local SSE queue (sliding-window drop on a
-    stalled subscriber) + fan out over Redis for cross-replica clients.
-    Auto-stamps an ``event_id`` for the frontend dedup logic."""
-    if "event_id" not in event:
-        event = {**event, "event_id": uuid4().hex}
-    queue = _event_queue(session_id)
-    try:
-        queue.put_nowait(event)
-    except asyncio.QueueFull:
-        try:
-            queue.get_nowait()
-            queue.put_nowait(event)
-        except (asyncio.QueueEmpty, asyncio.QueueFull):
-            pass
-    try:
-        await cache_manager.publish_event(
-            _EVENT_CHANNEL.format(session_id=session_id), event
-        )
-    except Exception as exc:  # pragma: no cover — pub/sub best-effort
-        logger.debug("chat_converse redis fanout failed: %s", exc)
-
-
 def _require_owner(session: Dict[str, Any], user: Any) -> None:
     owner = session.get("user_id")
     if owner and str(owner) != str(getattr(user, "id", "")):
         raise HTTPException(status_code=404, detail="Session not found")
 
 
-# ─── Background run ────────────────────────────────────────────────
-
-
-async def _run_session(session_id: str) -> None:
-    """Single persona-driven LLM call → stream the reply + terminate."""
-    session = await _load(session_id)
-    if session is None:
-        return
-    if session.get("status") == "cancelled":
-        return
-
-    session["status"] = "running"
-    await _persist(session_id, session)
-
-    prompt = session.get("prompt") or ""
-    try:
-        # Lazy import keeps this module importable even if local_ai
-        # isn't wired in a given deployment.
-        from .local_ai_routes_simple import call_ollama  # noqa: PLC0415
-
-        reply = await call_ollama(prompt, AMOR_PERSONA_SYSTEM, max_tokens=_MAX_TOKENS)
-        reply = (reply or "").strip()
-
-        # Re-check cancellation that may have landed during the call.
-        latest = await _load(session_id)
-        if latest and latest.get("status") == "cancelled":
-            return
-
-        if not reply:
-            reply = (
-                "Merhaba! Ben Amor, kişisel asistanın. Şu an yanıt üretemedim — "
-                "tekrar dener misin?"
-            )
-        await _publish(session_id, {"type": "text_chunk", "content": reply})
-        session = await _load(session_id) or session
-        session["status"] = "completed"
-        session["reply"] = reply
-        session["completed_at"] = _now()
-        await _persist(session_id, session)
-        await _publish(session_id, {"type": "done", "session_id": session_id})
-    except Exception as exc:  # pragma: no cover — surface to client
-        logger.warning("chat_converse run failed session=%s err=%s", session_id, exc)
-        session = await _load(session_id) or session
-        session["status"] = "failed"
-        session["error"] = str(exc)[:500]
-        await _persist(session_id, session)
-        await _publish(
-            session_id,
-            {"type": "error", "message": "Sohbet yanıtı üretilemedi.", "recoverable": True},
-        )
-    finally:
-        _tasks.pop(session_id, None)
+def _sse(event: Dict[str, Any]) -> str:
+    """Frame an event as an SSE ``data:`` line, stamping an event_id for
+    the frontend's dedup (sse.ts)."""
+    if "event_id" not in event:
+        event = {**event, "event_id": uuid4().hex}
+    return f"data: {json.dumps(event)}\n\n"
 
 
 # ─── Routes ────────────────────────────────────────────────────────
@@ -237,8 +161,8 @@ async def start_converse(
     user: Any = Depends(get_current_user),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> ConverseResponse:
-    """Start a fast chat turn.  Returns immediately; the reply streams
-    over ``/converse/{sid}/events``."""
+    """Create a chat turn.  Returns immediately; the reply is generated
+    + streamed by ``/converse/{sid}/events`` (single-shot, inline)."""
     session_id = str(uuid4())
     session: Dict[str, Any] = {
         "session_id": session_id,
@@ -250,7 +174,6 @@ async def start_converse(
         "started_at": _now(),
     }
     await _persist(session_id, session)
-    _tasks[session_id] = asyncio.create_task(_run_session(session_id))
     return ConverseResponse(session_id=session_id, mode="chat")
 
 
@@ -265,10 +188,6 @@ async def cancel_converse(
     _require_owner(session, user)
     session["status"] = "cancelled"
     await _persist(session_id, session)
-    task = _tasks.get(session_id)
-    if task is not None and not task.done():
-        task.cancel()
-    await _publish(session_id, {"type": "cancelled", "session_id": session_id})
     return {"session_id": session_id, "status": "cancelled"}
 
 
@@ -284,74 +203,76 @@ async def stream_converse_events(
     _require_owner(snapshot, user)
 
     async def event_stream():
-        from collections import deque
+        # 1. Opening snapshot (lets the UI show the turn shell).
+        snap = await _load(session_id) or snapshot
+        yield _sse(
+            {
+                "type": "snapshot",
+                "session_id": session_id,
+                "status": snap.get("status"),
+                "mode": "chat",
+                "prompt": snap.get("prompt"),
+                "reply": snap.get("reply"),
+            }
+        )
 
-        queue = _event_queue(session_id)
-        seen_ids: deque = deque(maxlen=200)
+        status = snap.get("status")
+        # 2a. Reconnect to an already-finished turn → replay + terminate.
+        if status == "completed" and snap.get("reply"):
+            yield _sse({"type": "text_chunk", "content": snap["reply"]})
+            yield _sse({"type": "done", "session_id": session_id})
+            return
+        if status == "cancelled":
+            yield _sse({"type": "cancelled", "session_id": session_id})
+            return
+        if status == "failed":
+            yield _sse(
+                {"type": "error", "message": "Sohbet yanıtı üretilemedi.", "recoverable": True}
+            )
+            return
 
-        channel = _EVENT_CHANNEL.format(session_id=session_id)
-        sub_iter = cache_manager.subscribe_events(channel).__aiter__()
-
-        async def _redis_pump():
-            try:
-                async for event in sub_iter:
-                    await queue.put(event)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                pass
-
-        pump_task = asyncio.create_task(_redis_pump())
+        # 2b. Live turn — do the single persona-driven LLM call INLINE and
+        #     stream the reply.  No background task / queue / pub-sub, so
+        #     there is no producer/subscriber race for a fast reply.
+        session = dict(snap)
         try:
-            snap = await _load(session_id)
-            if snap:
-                payload = json.dumps(
-                    {
-                        "type": "snapshot",
-                        "session_id": session_id,
-                        "status": snap.get("status"),
-                        "mode": "chat",
-                        "prompt": snap.get("prompt"),
-                        "reply": snap.get("reply"),
-                    }
-                )
-                yield f"data: {payload}\n\n"
-                # If the run already finished before the client connected,
-                # replay the reply + terminate so we don't hang.
-                if snap.get("status") == "completed" and snap.get("reply"):
-                    yield (
-                        "data: "
-                        + json.dumps({"type": "text_chunk", "content": snap["reply"]})
-                        + "\n\n"
-                    )
-                    yield "data: " + json.dumps({"type": "done", "session_id": session_id}) + "\n\n"
-                    return
-                if snap.get("status") in {"failed", "cancelled"}:
-                    return
+            from .local_ai_routes_simple import call_ollama  # noqa: PLC0415
 
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
-                    continue
-                eid = event.get("event_id")
-                if eid:
-                    if eid in seen_ids:
-                        continue
-                    seen_ids.append(eid)
-                yield f"data: {json.dumps(event)}\n\n"
-                if event.get("type") in {"done", "error", "cancelled"}:
-                    break
-        finally:
-            pump_task.cancel()
-            try:
-                await pump_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            _event_queues.pop(session_id, None)
+            reply = await call_ollama(
+                session.get("prompt") or "", AMOR_PERSONA_SYSTEM, max_tokens=_MAX_TOKENS
+            )
+            reply = (reply or "").strip()
+
+            # Cancellation may have landed during the call.
+            latest = await _load(session_id)
+            if latest and latest.get("status") == "cancelled":
+                yield _sse({"type": "cancelled", "session_id": session_id})
+                return
+
+            if not reply:
+                reply = (
+                    "Merhaba! Ben Amor, kişisel asistanın. Şu an yanıt üretemedim — "
+                    "tekrar dener misin?"
+                )
+            session["status"] = "completed"
+            session["reply"] = reply
+            session["completed_at"] = _now()
+            await _persist(session_id, session)
+
+            yield _sse({"type": "text_chunk", "content": reply})
+            yield _sse({"type": "done", "session_id": session_id})
+        except Exception as exc:  # noqa: BLE001 — surface to client
+            # NB: asyncio.CancelledError (client disconnect) is a
+            # BaseException in 3.11+, so it is NOT caught here — it
+            # propagates and the stream simply ends, leaving the session
+            # "started" so a reconnect re-runs the turn.
+            logger.warning("chat_converse stream failed session=%s err=%s", session_id, exc)
+            session["status"] = "failed"
+            session["error"] = str(exc)[:500]
+            await _persist(session_id, session)
+            yield _sse(
+                {"type": "error", "message": "Sohbet yanıtı üretilemedi.", "recoverable": True}
+            )
 
     return StreamingResponse(
         event_stream(),

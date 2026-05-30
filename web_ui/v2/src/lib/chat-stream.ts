@@ -485,10 +485,13 @@ export const SIMPLE_TEXT_REDUCER: EventReducer = (ev) => {
     };
   }
 
-  // Streaming text — the backends use various keys.
+  // Streaming text — the backends use various keys.  v2.9 added
+  // ``text_chunk`` as the canonical name (matches event_registry's
+  // isTextChunk + the fast-chat /api/chat/converse endpoint).
   if (
     type === "chunk" ||
     type === "delta" ||
+    type === "text_chunk" ||
     type === "research_chunk" ||
     type === "synthesis_chunk" ||
     type === "thinking_chunk"
