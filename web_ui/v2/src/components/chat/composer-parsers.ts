@@ -109,11 +109,36 @@ export const MODE_GLYPH: Record<ModeKey, string> = {
   quickcode: "⚡",  // Cycle UI 2026-05-20 — fast-edit variant
 };
 
-/** Look up a mode's metadata, falling back to the first defined mode
- *  if the requested key is missing.  ``MODES`` is non-empty by
- *  construction, so this fallback satisfies strict-null checks
- *  without runtime cost. */
+/** Composer-only modes (NOT in MODES catalogue — see types.ts).  Still
+ *  need a pill meta for rendering; without these the pill falls back to
+ *  MODES[0] (research) and shows the WRONG label + colour for chat /
+ *  quickcode.  Cycle UI v2.9 — chat-mode regression fix. */
+const COMPOSER_ONLY_META: Record<string, ModeMeta> = {
+  chat: {
+    key: "chat",
+    label: "Chat",
+    subtitle: "fast conversational replies",
+    glyph: "message-circle",
+    href: "/",
+    wired: true,
+  },
+  quickcode: {
+    key: "quickcode",
+    label: "QuickCode",
+    subtitle: "fast targeted edits",
+    glyph: "zap",
+    href: "/",
+    wired: true,
+  },
+};
+
+/** Look up a mode's metadata.  MODES catalogue is checked first, then
+ *  the composer-only set (chat / quickcode), then a defensive fallback
+ *  to MODES[0] for any truly unknown key. */
 export function modeMeta(mode: ModeKey) {
   const found = MODES.find((m) => m.key === mode);
-  return found ?? MODES[0]!;
+  if (found) return found;
+  const composerOnly = COMPOSER_ONLY_META[mode];
+  if (composerOnly) return composerOnly;
+  return MODES[0]!;
 }

@@ -27,9 +27,9 @@ import {
 // ─── ALL_MODES + class sets ─────────────────────────────────────────
 
 describe("ALL_MODES", () => {
-  it("is exactly the 6 expected classes", () => {
+  it("is exactly the 7 expected classes", () => {
     expect([...ALL_MODES].sort()).toEqual([
-      "build", "consortium", "quickcode", "research", "sentinel", "thinking",
+      "build", "chat", "consortium", "quickcode", "research", "sentinel", "thinking",
     ]);
   });
 });

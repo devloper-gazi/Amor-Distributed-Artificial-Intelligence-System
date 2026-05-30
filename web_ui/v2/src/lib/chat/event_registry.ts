@@ -33,7 +33,11 @@ export type ChatMode =
   | "thinking"
   | "consortium"
   | "sentinel"
-  | "quickcode";
+  | "quickcode"
+  // Cycle UI v2.9 — fast conversational lane (greetings / chitchat).
+  // Reuses the generic ``text_chunk`` + ``done`` cross-cutting events;
+  // no mode-specific event catalogue needed.
+  | "chat";
 
 export const ALL_MODES: readonly ChatMode[] = [
   "build",
@@ -42,6 +46,7 @@ export const ALL_MODES: readonly ChatMode[] = [
   "consortium",
   "sentinel",
   "quickcode",
+  "chat",
 ] as const;
 
 /* ─── Cross-cutting event types ─────────────────────────────────── */

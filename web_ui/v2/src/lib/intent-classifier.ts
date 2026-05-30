@@ -33,7 +33,11 @@ export type ChatMode =
   | "thinking"
   | "consortium"
   | "sentinel"
-  | "quickcode";
+  | "quickcode"
+  // Cycle UI v2.9 — fast conversational lane.  Greetings / chitchat /
+  // identity questions route here (NOT thinking) for an instant Amor
+  // persona reply.  Backend: POST /api/chat/converse.
+  | "chat";
 
 export const CHAT_MODES: readonly ChatMode[] = [
   "build",
@@ -42,6 +46,7 @@ export const CHAT_MODES: readonly ChatMode[] = [
   "consortium",
   "sentinel",
   "quickcode",
+  "chat",
 ] as const;
 
 export interface ClassifyResult {

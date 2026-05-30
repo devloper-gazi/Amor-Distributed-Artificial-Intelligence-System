@@ -21,6 +21,7 @@ export const en: Record<string, string> = {
   "suggest.research":             "Research",
   "suggest.thinking":             "Think",
   "suggest.quickcode":            "Quick fix",
+  "suggest.chat":                 "Chat",
   // Cycle UI v2.8 — Gemini-pattern sidebar top-level actions
   "sidebar.new_chat":             "New chat",
 
@@ -151,6 +152,9 @@ export const en: Record<string, string> = {
   "mode.system.subtitle":        "diagnostics, memory",
   "mode.quickcode.label":        "QuickCode",
   "mode.quickcode.subtitle":     "fast targeted edits",
+  // Cycle UI v2.9 — fast conversational lane (greetings / chitchat).
+  "mode.chat.label":             "Chat",
+  "mode.chat.subtitle":          "fast conversational replies",
 
   // ── Sidebar chrome ──────────────────────────────────────────
   "sidebar.brand":               "AMOR",

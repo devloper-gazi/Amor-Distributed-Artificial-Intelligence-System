@@ -231,8 +231,8 @@ class ThinkingEngine:
         # caps to bound worst-case Sprint-0 latency.  Settings resolved
         # lazily so tests can construct an engine without booting the full
         # Pydantic settings tree; explicit kwargs override settings.
-        self._phase_timeout_s = phase_timeout_s if phase_timeout_s is not None else _resolve_phase_timeout()
-        self._session_timeout_s = session_timeout_s if session_timeout_s is not None else _resolve_session_timeout()
+        self._phase_timeout_s = phase_timeout_s if phase_timeout_s is not None else _resolve_phase_timeout(self.effort)
+        self._session_timeout_s = session_timeout_s if session_timeout_s is not None else _resolve_session_timeout(self.effort)
         self._session_started_monotonic: Optional[float] = None
 
         self.phases: List[ThinkingPhase] = [
@@ -293,10 +293,37 @@ class ThinkingEngine:
         phase.started_at = _now()
         await self._emit({"type": "phase_start", "phase": name, "label": phase.label})
 
+        # Clamp this phase's wall-clock cap to the REMAINING session budget
+        # so the session can never overshoot `_session_timeout_s` by a full
+        # phase.  Previously the session cap was only checked at phase
+        # boundaries (above), so a phase that STARTED just under the cap
+        # could still run a full `_phase_timeout_s` — pushing total
+        # wall-clock to `session_timeout + phase_timeout` (e.g. 540 + 120 ≈
+        # 660s).  In the Sprint-0 corpus this surfaced as Thinking prompts
+        # hanging at the eval client's 600s cap (5 phases × 120s) and
+        # registering as hard "no terminal event" timeouts instead of a
+        # bounded, truncated result.  `min(phase, remaining)` makes
+        # `_session_timeout_s` a hard ceiling.
+        effective_timeout = self._phase_timeout_s
+        if (
+            self._session_timeout_s > 0
+            and self._session_started_monotonic is not None
+        ):
+            remaining = self._session_timeout_s - (
+                asyncio.get_event_loop().time() - self._session_started_monotonic
+            )
+            remaining = max(remaining, 0.0)
+            effective_timeout = (
+                min(self._phase_timeout_s, remaining)
+                if self._phase_timeout_s > 0
+                else remaining
+            )
+
         try:
-            # v18.1.5 — per-phase wall-clock timeout.  0 → disabled (legacy).
-            if self._phase_timeout_s > 0:
-                result = await asyncio.wait_for(runner(), timeout=self._phase_timeout_s)
+            # Per-phase wall-clock timeout, clamped to the remaining session
+            # budget above.  0 → disabled (legacy; only when BOTH caps off).
+            if effective_timeout > 0:
+                result = await asyncio.wait_for(runner(), timeout=effective_timeout)
             else:
                 result = await runner()
             phase.status = "completed"
@@ -314,16 +341,17 @@ class ThinkingEngine:
         except asyncio.TimeoutError:
             phase.status = "failed"
             phase.completed_at = _now()
-            phase.detail = {"error": f"timeout_after_{self._phase_timeout_s:.0f}s", "timed_out": True}
+            phase.detail = {"error": f"timeout_after_{effective_timeout:.0f}s", "timed_out": True}
             logger.warning(
-                "thinking.phase_timeout phase=%s budget=%.0fs", name, self._phase_timeout_s,
+                "thinking.phase_timeout phase=%s budget=%.0fs (phase_cap=%.0fs session_cap=%.0fs)",
+                name, effective_timeout, self._phase_timeout_s, self._session_timeout_s,
             )
             await self._emit(
                 {
                     "type": "phase_failed",
                     "phase": name,
                     "label": phase.label,
-                    "error": f"timeout_after_{self._phase_timeout_s:.0f}s",
+                    "error": f"timeout_after_{effective_timeout:.0f}s",
                     "timed_out": True,
                 }
             )
@@ -548,27 +576,54 @@ async def _noop_event(_event: Dict[str, Any]) -> None:
     return None
 
 
-def _resolve_phase_timeout() -> float:
-    """Resolve the per-phase wall-clock cap from settings, defaulting to
-    120s if the settings module fails to import (test environments).
-    Returns 0 to disable when settings is `None` or value is non-positive."""
-    try:
-        from ..config.settings import settings  # noqa: PLC0415
-        val = float(getattr(settings, "code_thinking_phase_timeout_s", 120.0))
-        return max(val, 0.0)
-    except Exception:
-        return 120.0
+# Effort-tier wall-clock scaling.  The flat settings
+# (`code_thinking_{phase,session}_timeout_s`) define the CEILING — applied
+# to the deepest tier — while lighter tiers get proportionally tighter caps
+# so a "basic"/"medium" reasoning request returns fast and "deep"/"expert"/
+# "ultra" keep room for genuinely long reasoning.  This aligns wall-clock
+# latency with the user-selected reasoning DEPTH instead of one flat 540s
+# budget for everyone (the Sprint-0 corpus runs "medium", which previously
+# inherited the full 540s session budget and hit the runner's 600s cap).
+# The setting always wins as an absolute ceiling, so operators can still
+# cap globally or disable entirely (=0).
+_SESSION_TIMEOUT_BY_TIER_S: Dict[str, float] = {
+    "basic": 100.0, "medium": 180.0, "deep": 320.0, "expert": 450.0, "ultra": 540.0,
+}
+_PHASE_TIMEOUT_BY_TIER_S: Dict[str, float] = {
+    "basic": 35.0, "medium": 55.0, "deep": 90.0, "expert": 110.0, "ultra": 120.0,
+}
 
 
-def _resolve_session_timeout() -> float:
-    """Resolve the per-session wall-clock cap from settings, defaulting to
-    540s (9 min total, leaving headroom for the runner's 600s cap)."""
+def _resolve_phase_timeout(effort: str = "ultra") -> float:
+    """Resolve the per-phase wall-clock cap, scaled by effort tier and
+    bounded by the ``code_thinking_phase_timeout_s`` setting (the ceiling).
+    Falls back to the tier value if settings import fails (test envs);
+    returns 0 to disable when the setting is non-positive."""
+    tier_cap = _PHASE_TIMEOUT_BY_TIER_S.get(_canonical_effort(effort), 120.0)
     try:
         from ..config.settings import settings  # noqa: PLC0415
-        val = float(getattr(settings, "code_thinking_session_timeout_s", 540.0))
-        return max(val, 0.0)
+        ceiling = float(getattr(settings, "code_thinking_phase_timeout_s", 120.0))
     except Exception:
-        return 540.0
+        return max(tier_cap, 0.0)
+    if ceiling <= 0:
+        return 0.0   # operator disabled the cap entirely
+    return max(min(tier_cap, ceiling), 0.0)
+
+
+def _resolve_session_timeout(effort: str = "ultra") -> float:
+    """Resolve the per-session wall-clock cap, scaled by effort tier and
+    bounded by the ``code_thinking_session_timeout_s`` setting (the ceiling,
+    default 540s — 9 min, leaving headroom under the runner's 600s cap).
+    Falls back to the tier value if settings import fails; 0 disables."""
+    tier_cap = _SESSION_TIMEOUT_BY_TIER_S.get(_canonical_effort(effort), 540.0)
+    try:
+        from ..config.settings import settings  # noqa: PLC0415
+        ceiling = float(getattr(settings, "code_thinking_session_timeout_s", 540.0))
+    except Exception:
+        return max(tier_cap, 0.0)
+    if ceiling <= 0:
+        return 0.0   # operator disabled the cap entirely
+    return max(min(tier_cap, ceiling), 0.0)
 
 
 def _slug(text: str) -> str:

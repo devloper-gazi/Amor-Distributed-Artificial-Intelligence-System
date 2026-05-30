@@ -73,8 +73,10 @@ describe("classifyByHeuristic — code detection", () => {
 
 describe("classifyByHeuristic — question stems", () => {
   it("routes 'ne / nedir / nasıl' to research", () => {
-    expect(classifyByHeuristic("amor ne yapar")?.mode).toBe("research");
-    expect(classifyByHeuristic("AMOR nedir")?.mode).toBe("research");
+    // NB: questions ABOUT Amor ("amor ne yapar") route to chat (identity),
+    // not research — so use generic factual questions here.
+    expect(classifyByHeuristic("fotosentez ne işe yarar")?.mode).toBe("research");
+    expect(classifyByHeuristic("blockchain nedir")?.mode).toBe("research");
     expect(classifyByHeuristic("nasıl çalışır")?.mode).toBe("research");
   });
 
@@ -96,21 +98,29 @@ describe("classifyByHeuristic — question stems", () => {
 
 
 describe("classifyByHeuristic — chitchat / greetings", () => {
-  it("routes 'merhaba' / 'selam' / 'nasılsın' to thinking", () => {
-    expect(classifyByHeuristic("merhaba")?.mode).toBe("thinking");
-    expect(classifyByHeuristic("selam")?.mode).toBe("thinking");
-    expect(classifyByHeuristic("nasılsın")?.mode).toBe("thinking");
-    expect(classifyByHeuristic("naber")?.mode).toBe("thinking");
+  // Cycle UI v2.9 — greetings/chitchat now route to the fast "chat"
+  // lane (was "thinking", the slow 6-phase pipeline).
+  it("routes 'merhaba' / 'selam' / 'nasılsın' to chat", () => {
+    expect(classifyByHeuristic("merhaba")?.mode).toBe("chat");
+    expect(classifyByHeuristic("selam")?.mode).toBe("chat");
+    expect(classifyByHeuristic("nasılsın")?.mode).toBe("chat");
+    expect(classifyByHeuristic("naber")?.mode).toBe("chat");
   });
 
-  it("routes 'hi / hello / how are you' to thinking", () => {
-    expect(classifyByHeuristic("hi there")?.mode).toBe("thinking");
-    expect(classifyByHeuristic("how are you")?.mode).toBe("thinking");
+  it("routes 'hi / hello / how are you' to chat", () => {
+    expect(classifyByHeuristic("hi there")?.mode).toBe("chat");
+    expect(classifyByHeuristic("how are you")?.mode).toBe("chat");
   });
 
-  it("routes 'teşekkür / thanks' to thinking", () => {
-    expect(classifyByHeuristic("teşekkür ederim")?.mode).toBe("thinking");
-    expect(classifyByHeuristic("thanks")?.mode).toBe("thinking");
+  it("routes 'teşekkür / thanks' to chat", () => {
+    expect(classifyByHeuristic("teşekkür ederim")?.mode).toBe("chat");
+    expect(classifyByHeuristic("thanks")?.mode).toBe("chat");
+  });
+
+  it("routes identity questions ('sen kimsin' / 'what can you do') to chat", () => {
+    expect(classifyByHeuristic("sen kimsin")?.mode).toBe("chat");
+    expect(classifyByHeuristic("what can you do")?.mode).toBe("chat");
+    expect(classifyByHeuristic("amor ne yapar")?.mode).toBe("chat");
   });
 });
 

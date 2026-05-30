@@ -127,6 +127,16 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     buildStartBody: (prompt) => ({ prompt, effort: "medium" }),
     chatSessionMode: "thinking",
   },
+  // Cycle UI v2.9 — fast conversational lane.  Single persona-driven
+  // LLM call (~1-5s); bypasses every heavy pipeline.  Greetings /
+  // chitchat / identity questions land here via the rule heuristic.
+  chat: {
+    startPath: "/api/chat/converse",
+    eventsPath: (sid) => `/api/chat/converse/${sid}/events`,
+    cancelPath: (sid) => `/api/chat/converse/${sid}/cancel`,
+    buildStartBody: (prompt) => ({ prompt }),
+    chatSessionMode: "chat",
+  },
 };
 
 export const UnifiedChat: Component = () => {

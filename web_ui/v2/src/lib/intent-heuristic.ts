@@ -62,10 +62,18 @@ const QUESTION_STEMS_MIDDLE_RE =
   /\b(ne|nedir|nas[ıi]l|neden|kim|hangi|niye|ka[çc])\b/i;
 const QUESTION_END_RE = /\?\s*$/;
 
-/** Casual chitchat / greeting — should go to thinking (no heavy
- *  pipeline; a quick conversational reply is enough). */
+/** Casual chitchat / greeting — fast conversational lane (``chat``).
+ *  A quick Amor persona reply is enough; heavy pipelines (esp.
+ *  Thinking) would be wildly overkill for "merhaba". */
 const CHITCHAT_RE =
   /^\s*(merhaba|selam|sa|s\.a\.?|hi|hello|hey|nas[ıi]ls[ıi]n|how are you|good morning|g[üu]naydin|iyi (g[üu]nler|ak[şs]amlar)|te[şs]ekk[üu]r|thank you|thanks|sa[ğg] ol|naber|n'aber|hosca kal|g[öo]r[üu][şs][üu]r[üu]z|bye)\b/i;
+
+/** Identity / capability questions about Amor itself → ``chat`` (the
+ *  assistant should introduce itself, not spin up Research/Thinking).
+ *  Checked BEFORE the generic question→research rule because these
+ *  contain question words ("ne", "kim", "what", "who"). */
+const IDENTITY_RE =
+  /\b(sen kimsin|kimsin( sen)?|sen nesin|nesin sen|ad[ıi]n (ne|nedir)|ismin (ne|nedir)|ne(ler)? yapabilirsin|ne i[şs]e yar[ıi]yorsun|kendini tan[ıi]t|who are you|what are you|what can you do|your name|introduce yourself|amor (nedir|kimdir|kim|ne)\b)/i;
 
 /** Audit / security keywords → sentinel. */
 const SENTINEL_RE =
@@ -183,6 +191,17 @@ export function classifyByHeuristic(rawPrompt: string): HeuristicHit | null {
     };
   }
 
+  // 3.5 Identity / capability question about Amor → chat (fast persona
+  //     reply).  MUST precede the question→research rule below, since
+  //     "sen kimsin?" / "what can you do?" contain question words.
+  if (IDENTITY_RE.test(prompt)) {
+    return {
+      mode: "chat",
+      reason: "identity / capability question → Amor persona",
+      confidence: 0.9,
+    };
+  }
+
   // 4. Deep-think / compare / tradeoff → thinking
   if (THINKING_RE.test(prompt) || VS_COMPARE_RE.test(prompt)) {
     return {
@@ -210,12 +229,13 @@ export function classifyByHeuristic(rawPrompt: string): HeuristicHit | null {
     };
   }
 
-  // 6. Chitchat / greeting — thinking (lightweight conversational
-  //    reply; build/research engines would be overkill for "merhaba").
+  // 6. Chitchat / greeting — fast conversational lane (chat).  A quick
+  //    Amor persona reply; build/research/thinking engines would be
+  //    wildly overkill for "merhaba".
   if (CHITCHAT_RE.test(prompt)) {
     return {
-      mode: "thinking",
-      reason: "greeting / chitchat",
+      mode: "chat",
+      reason: "greeting / chitchat → fast chat",
       confidence: 0.9,
     };
   }
@@ -232,7 +252,7 @@ export function heuristicToResult(hit: HeuristicHit): ClassifyResult {
   // surfaces only look at .mode + .confidence + .low_confidence; the
   // tail is just for shape compatibility.
   const others: Array<[ChatMode, number]> = [
-    "build", "research", "thinking", "consortium", "sentinel", "quickcode",
+    "build", "research", "thinking", "consortium", "sentinel", "quickcode", "chat",
   ]
     .filter((m): m is ChatMode => m !== hit.mode)
     .map((m) => [m, 0] as [ChatMode, number]);
