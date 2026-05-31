@@ -83,9 +83,15 @@ const SENTINEL_RE =
 const QUICKCODE_RE =
   /\b(typo|tipo|rename\s+\w+|fix\s+(typo|line|imports?|formatting)|d[üu]zelt\s+\w+|h[ıi]zl[ıi] (d[üu]zelt|fix))/i;
 
-/** Multi-step planning / architecture keywords → consortium. */
+/** Multi-step planning / architecture keywords → consortium.
+ *  NB: "mimari" (architecture) must be paired with a BUILD verb
+ *  (kur / tasarla / oluştur / planla / çıkar / hazırla) — a bare
+ *  mention used to hijack compare prompts like "monolitik mimari ile
+ *  mikroservis mimarisini karşılaştır", which is really a Thinking
+ *  tradeoff question.  Now only "X mimarisi kur / tasarla" reaches
+ *  Consortium; the compare prompt falls through to THINKING (rule 4). */
 const CONSORTIUM_RE =
-  /\b(plan(?:la)? proje|build (?:a|the) (?:full|whole) (?:app|system)|t[üu]m projeyi|mimari[\s,]|architecture\s+(?:plan|review)|son\s+(?:[üu]r[üu]n[üu]?|product))/i;
+  /\b(plan(?:la)? proje|build (?:a|the) (?:full|whole) (?:app|system)|t[üu]m projeyi|mimari[a-zçğıöşü]*\s+(?:kur|tasarla|olu[şs]tur|planla|[çc][ıi]kar|haz[ıi]rla|dizayn)|architecture\s+(?:plan|review|design)|son\s+(?:[üu]r[üu]n[üu]?|product))/i;
 
 /** Deep-think trigger — heavy reasoning prompts.  We deliberately
  *  exclude generic "why does X" patterns — those are factual
@@ -96,6 +102,27 @@ const THINKING_RE =
 /** Loose vs-style compare: "A vs B" / "A ile B karşılaştır". */
 const VS_COMPARE_RE =
   /\b([a-z][a-z0-9-]*)\s+(?:vs\.?|ile)\s+([a-z][a-z0-9-]*)\b/i;
+
+/** Research / explain / write-up intent — Turkish + English.  Verbs
+ *  that ask AMOR to investigate a topic, explain it, summarise it, or
+ *  produce an article / essay / report.  Routes to the Research
+ *  pipeline (multi-source synthesis) instead of falling through to the
+ *  sticky previous mode (which used to misroute "X hakkında araştırma
+ *  yap" / "şunu araştır" / "makale olarak ver" to the fast chat lane).
+ *
+ *  Deliberately does NOT include the bare code verbs ("yaz", "oluştur")
+ *  — those need a language token to become Build (rule 3, checked
+ *  first), so "fonksiyon yaz" stays Build while "makale yaz" lands
+ *  here.  "compare / vs / tradeoff" is handled by THINKING (rule 4,
+ *  checked first), so a compare prompt still wins Thinking. */
+//  NB: a leading Unicode boundary `(?<![\p{L}\p{N}_])` is used instead
+//  of `\b` — JS `\b` is ASCII-only, so `\bözetle` / `\bаçıkla` fail
+//  because Turkish letters (ö, ç, ş, ı, ü, ğ) aren't ASCII word chars
+//  and there's no boundary between a space and "ö".  No TRAILING
+//  boundary so Turkish agglutinative suffixes still match ("araştır" →
+//  "araştırması", "açıkla" → "açıklar mısın", "incele" → "incelemek").
+const RESEARCH_RE =
+  /(?<![\p{L}\p{N}_])(?:ara[şs]t[ıi]r|incele|analiz\s+et|[öo]zetle|[öo]zet\s+(?:[çc][ıi]kar|ver|haz[ıi]rla)|a[çc][ıi]kla|anlat|detayland[ıi]r|derle|makale|yaz[ıi]\s+olarak|rapor\s+(?:haz[ıi]rla|yaz|olu[şs]tur)|hakk[ıi]nda\s+(?:bilgi|yaz|detay)|bilgi\s+ver|research|investigate|summar(?:ize|ise|y)|explain|describe|essay|article|write\s+(?:an?\s+)?(?:article|essay|report|post|blog|piece)|report\s+on|look\s+up|find\s+out|tell\s+me\s+about|give\s+me\s+(?:an?\s+)?(?:article|report|summary|overview))/iu;
 
 // ────────────────────────────────────────────────────────────────────
 
@@ -174,7 +201,12 @@ export function classifyByHeuristic(rawPrompt: string): HeuristicHit | null {
       confidence: 0.95,
     };
   }
-  if (hasCsKeyword) {
+  // A bare CS-domain keyword ("mikroservis", "dashboard", …) implies
+  // Build ONLY when the user isn't clearly asking to COMPARE it — e.g.
+  // "mikroservis mimarisini karşılaştır" is a Thinking tradeoff, not a
+  // request to build a microservice.  Guard with the explicit compare/
+  // tradeoff signal so those fall through to THINKING (rule 4).
+  if (hasCsKeyword && !THINKING_RE.test(prompt)) {
     return {
       mode: "build",
       reason: "CS-domain keyword (snake game / calculator / todo / …)",
@@ -221,11 +253,19 @@ export function classifyByHeuristic(rawPrompt: string): HeuristicHit | null {
     QUESTION_STEMS_START_RE.test(prompt) ||
     QUESTION_STEMS_MIDDLE_RE.test(prompt) ||
     QUESTION_END_RE.test(prompt);
-  if (isQuestion && !CHITCHAT_RE.test(prompt)) {
+  // Research-intent verb ("araştır / incele / analiz et / makale /
+  // explain / summarize / write an article") is a STRONGER signal than
+  // a bare question mark — it's an explicit ask to investigate + write
+  // up, so it routes to Research even without a "?".  Checked together
+  // with the question stems; chitchat still short-circuits to chat.
+  const isResearchVerb = RESEARCH_RE.test(prompt);
+  if ((isResearchVerb || isQuestion) && !CHITCHAT_RE.test(prompt)) {
     return {
       mode: "research",
-      reason: "question stem (ne / nedir / nasıl / what / how / why / ?)",
-      confidence: 0.86,
+      reason: isResearchVerb
+        ? "research/explain/write intent (araştır / incele / makale / explain / summarize / …)"
+        : "question stem (ne / nedir / nasıl / what / how / why / ?)",
+      confidence: isResearchVerb ? 0.9 : 0.86,
     };
   }
 

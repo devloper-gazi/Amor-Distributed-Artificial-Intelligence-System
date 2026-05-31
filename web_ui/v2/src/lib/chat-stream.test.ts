@@ -21,7 +21,39 @@ import {
   RESEARCH_REDUCER,
   SIMPLE_TEXT_REDUCER,
   UNIFIED_REDUCER,
+  normaliseErrorDetail,
 } from "./chat-stream";
+
+
+// ─── error detail normalisation ─────────────────────────────
+
+
+describe("normaliseErrorDetail", () => {
+  it("passes a plain string through", () => {
+    expect(normaliseErrorDetail("boom")).toBe("boom");
+  });
+
+  it("flattens a FastAPI 422 detail array (no '[object Object]')", () => {
+    const detail = [
+      { loc: ["body", "goal"], msg: "Field required", type: "missing" },
+      { loc: ["body", "depth"], msg: "too short", type: "value_error" },
+    ];
+    const out = normaliseErrorDetail(detail);
+    expect(out).toBe("goal: Field required; depth: too short");
+    expect(out).not.toContain("[object Object]");
+  });
+
+  it("reads .msg / .message off a single object", () => {
+    expect(normaliseErrorDetail({ msg: "nope" })).toBe("nope");
+    expect(normaliseErrorDetail({ message: "bad" })).toBe("bad");
+  });
+
+  it("returns null for null/empty so caller can fall back", () => {
+    expect(normaliseErrorDetail(null)).toBeNull();
+    expect(normaliseErrorDetail("")).toBeNull();
+    expect(normaliseErrorDetail([])).toBeNull();
+  });
+});
 
 
 // ─── progress events ────────────────────────────────────────

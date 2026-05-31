@@ -33,7 +33,22 @@ def _normalize_mode(mode: str) -> str:
     # `code` = the new Code Intelligence multi-agent mode; `coding` is
     # the legacy single-shot Claude/Local code chat. Both stay valid so
     # existing chat sessions render correctly.
-    if m not in {"research", "thinking", "coding", "code"}:
+    #
+    # v2.9: the unified composer (UnifiedChat.tsx MODE_ADAPTERS) persists
+    # a chat_session for EVERY mode it dispatches, using these
+    # `chatSessionMode` values: code / research / thinking / consortium /
+    # sentinel / chat. The whitelist must cover all of them or the
+    # transcript-persist POST 400s (consortium, sentinel + the new fast
+    # `chat` lane were silently failing to save before this).
+    if m not in {
+        "research",
+        "thinking",
+        "coding",
+        "code",
+        "consortium",
+        "sentinel",
+        "chat",
+    }:
         raise HTTPException(status_code=400, detail="Invalid mode")
     return m
 
