@@ -137,6 +137,15 @@ class ThinkingPhase:
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE)
 
+# Reasoning models (qwen3:8b, deepseek-r1, …) emit a <think>…</think>
+# chain-of-thought block before the answer.  That prose routinely
+# contains stray { } braces, which wrecks the "widest balanced braces"
+# fallback in _extract_json (it would span from a brace INSIDE the think
+# block to the real closing brace and fail to parse) — the observed
+# `thinking.phase_failed phase=decompose` JSON error.  Strip the block
+# (closed, or truncated-open if generation was cut off) before parsing.
+_THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>[\s\S]*?(?:</think>|\Z)", re.IGNORECASE)
+
 
 def _extract_json(raw: str) -> Dict[str, Any]:
     """
@@ -148,6 +157,10 @@ def _extract_json(raw: str) -> Dict[str, Any]:
     """
     if not raw:
         raise ValueError("empty model output")
+
+    # Drop any reasoning-model <think>…</think> block first so its stray
+    # braces can't corrupt the balanced-brace fallback below.
+    raw = _THINK_BLOCK_RE.sub("", raw)
 
     # Try direct parse first
     stripped = raw.strip()

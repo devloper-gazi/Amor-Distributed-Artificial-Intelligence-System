@@ -125,6 +125,67 @@ describe("classifyByHeuristic — chitchat / greetings", () => {
 });
 
 
+describe("classifyByHeuristic — research/explain/write intent", () => {
+  // v2.9.1 — the heuristic used to have NO rule for the research verb,
+  // so "X hakkında araştırma yap" fell through to the sticky previous
+  // mode (often chat). These assert the explicit research-intent route.
+  it("routes 'araştır' / 'araştırma yap' to research", () => {
+    expect(classifyByHeuristic("şunu araştır")?.mode).toBe("research");
+    expect(
+      classifyByHeuristic("yapay zeka etiği hakkında araştırma yap")?.mode,
+    ).toBe("research");
+  });
+
+  it("routes 'makale / yazı olarak ver' to research", () => {
+    expect(
+      classifyByHeuristic(
+        "yapay zeka etiği hakkında araştırma yap ve bana kısa bir makale olarak sun",
+      )?.mode,
+    ).toBe("research");
+    expect(
+      classifyByHeuristic("blokzincir teknolojisini makale olarak yaz")?.mode,
+    ).toBe("research");
+  });
+
+  it("routes 'incele / analiz et / özetle / açıkla' to research", () => {
+    expect(classifyByHeuristic("bu konuyu incele")?.mode).toBe("research");
+    expect(classifyByHeuristic("şu veriyi analiz et")?.mode).toBe("research");
+    expect(classifyByHeuristic("kuantum bilgisayarları özetle")?.mode).toBe(
+      "research",
+    );
+    expect(classifyByHeuristic("transformer mimarisini açıkla")?.mode).toBe(
+      "research",
+    );
+  });
+
+  it("routes English research verbs to research", () => {
+    expect(classifyByHeuristic("research the history of TLS")?.mode).toBe(
+      "research",
+    );
+    expect(classifyByHeuristic("summarize this topic for me")?.mode).toBe(
+      "research",
+    );
+    expect(
+      classifyByHeuristic("write an article about quantum computing")?.mode,
+    ).toBe("research");
+  });
+
+  it("does NOT hijack code prompts (language+verb stays build)", () => {
+    // "fonksiyon yaz" has no research verb; "python ile" forces build.
+    expect(classifyByHeuristic("python ile bir fonksiyon yaz")?.mode).toBe(
+      "build",
+    );
+  });
+
+  it("does NOT hijack compare prompts (stays thinking)", () => {
+    // THINKING is checked before research; a compare prompt wins.
+    expect(
+      classifyByHeuristic("react vs vue karşılaştır ve araştır")?.mode,
+    ).toBe("thinking");
+  });
+});
+
+
 describe("classifyByHeuristic — deep think", () => {
   it("routes 'compare / tradeoff' to thinking", () => {
     expect(
@@ -141,6 +202,16 @@ describe("classifyByHeuristic — deep think", () => {
       "thinking",
     );
   });
+
+  it("routes 'X mimari ile Y mimari karşılaştır' to thinking (not consortium)", () => {
+    // v2.9.1 — "mimari" alone used to hijack this to consortium; a
+    // compare/tradeoff question must stay thinking.
+    expect(
+      classifyByHeuristic(
+        "monolitik mimari ile mikroservis mimarisini karşılaştır ve hangisini önerirsin",
+      )?.mode,
+    ).toBe("thinking");
+  });
 });
 
 
@@ -151,6 +222,15 @@ describe("classifyByHeuristic — multi-step / consortium", () => {
     ).toBe("consortium");
     expect(
       classifyByHeuristic("build a full system")?.mode,
+    ).toBe("consortium");
+  });
+
+  it("routes 'mimari kur / tasarla' (architecture + build verb) to consortium", () => {
+    expect(classifyByHeuristic("mikroservis mimarisi kur")?.mode).toBe(
+      "consortium",
+    );
+    expect(
+      classifyByHeuristic("ölçeklenebilir bir mimari tasarla")?.mode,
     ).toBe("consortium");
   });
 });

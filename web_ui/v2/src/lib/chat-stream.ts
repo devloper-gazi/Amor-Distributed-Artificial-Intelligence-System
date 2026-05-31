@@ -183,6 +183,46 @@ export function resetAllChatStreams(): void {
   _streamCache.clear();
 }
 
+/** Coerce a backend error `detail` into one readable line.
+ *
+ *  FastAPI validation errors (HTTP 422) return `detail` as an ARRAY of
+ *  `{ loc, msg, type }` objects; other handlers return a plain string;
+ *  some return a single `{ msg }` object.  `String(detail)` on the
+ *  array shape yields "[object Object]" — what the user saw when the
+ *  Consortium start body was malformed.  This flattens every shape into
+ *  a human sentence so the chat bubble never shows "[object Object]". */
+export function normaliseErrorDetail(detail: unknown): string | null {
+  if (detail == null) return null;
+  if (typeof detail === "string") return detail.trim() || null;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        if (d && typeof d === "object") {
+          const o = d as { msg?: unknown; loc?: unknown };
+          const loc = Array.isArray(o.loc)
+            ? o.loc.filter((p) => p !== "body" && p !== "query").join(".")
+            : "";
+          const msg = typeof o.msg === "string" ? o.msg : "";
+          return loc && msg ? `${loc}: ${msg}` : msg || loc;
+        }
+        return typeof d === "string" ? d : "";
+      })
+      .filter(Boolean);
+    return parts.length ? parts.join("; ") : null;
+  }
+  if (typeof detail === "object") {
+    const o = detail as { msg?: unknown; message?: unknown };
+    if (typeof o.msg === "string") return o.msg;
+    if (typeof o.message === "string") return o.message;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return null;
+    }
+  }
+  return String(detail);
+}
+
 export function createChatStream<StartReq>(
   cfg: ChatStreamConfig<StartReq>,
 ): ChatStreamApi {
@@ -365,11 +405,11 @@ export function createChatStream<StartReq>(
     } catch (err: unknown) {
       const apiErr = err as ApiError | undefined;
       const detail =
-        (apiErr?.body as { detail?: string } | undefined)?.detail ??
+        normaliseErrorDetail((apiErr?.body as { detail?: unknown } | undefined)?.detail) ??
         (err instanceof Error ? err.message : "Failed to start");
       setBusy(false);
       setStatus("closed");
-      patchAssistant(`**Error:** ${String(detail)}`, "failed");
+      patchAssistant(`**Error:** ${detail}`, "failed");
       bumpChatSession();
     }
   };

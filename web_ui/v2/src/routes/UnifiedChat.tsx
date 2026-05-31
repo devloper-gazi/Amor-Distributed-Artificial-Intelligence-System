@@ -100,7 +100,10 @@ const MODE_ADAPTERS: Record<ModeKey, ModeAdapter> = {
     startPath: "/api/consortium/start",
     eventsPath: (sid) => `/api/consortium/${sid}/events`,
     cancelPath: (sid) => `/api/consortium/${sid}/cancel`,
-    buildStartBody: (prompt) => ({ prompt, depth: "medium" }),
+    // Backend ConsortiumStartRequest requires `goal` (min_length 8),
+    // NOT `prompt` — sending `prompt` 422'd the start call (rendered as
+    // "Error: [object Object]").  Map the composer text → goal.
+    buildStartBody: (prompt) => ({ goal: prompt, depth: "medium" }),
     chatSessionMode: "consortium",
   },
   sentinel: {
